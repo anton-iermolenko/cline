@@ -2,7 +2,7 @@
 set -euo pipefail
 [[ $EUID == 0 ]] || { echo 'Run with sudo' >&2; exit 1; }
 package_dir=${1:?Pass the compiled CLI package directory}
-release=${2:-3.0.69-local-model-limits-$(date -u +%Y%m%dT%H%M%SZ)}
+release=${2:-3.0.69-local-$(date -u +%Y%m%dT%H%M%SZ)}
 [[ $release =~ ^[a-zA-Z0-9._-]+$ ]] || exit 1
 [[ -x "$package_dir/bin/cline" ]] || { echo 'Compiled binary missing' >&2; exit 1; }
 base=/opt/cline-local

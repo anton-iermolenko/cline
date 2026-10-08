@@ -1,6 +1,6 @@
 import type { AgentEvent, TeamEvent } from "@cline/core";
 import { formatDisplayUserInput } from "@cline/shared";
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import type {
 	PendingPromptSnapshot,
 	PendingPromptSubmittedEvent,
@@ -15,6 +15,7 @@ import {
 } from "../../utils/helpers";
 import type { ChatEntry, InlineStream, TuiProps } from "../types";
 import { parseCompactionNoticeMetadata } from "../utils/compaction-status";
+import { ReasoningStreamBuffer } from "../utils/reasoning-preview";
 
 interface AgentEventDeps {
 	appendEntry: (entry: ChatEntry) => void;
@@ -40,7 +41,7 @@ export function useAgentEventHandlers(deps: AgentEventDeps) {
 		appendEntry,
 		updateLastEntry,
 		updateEntry,
-		closeInlineStream,
+		closeInlineStream: closeInlineStreamEntry,
 		activeInlineStreamRef,
 		setIsRunning,
 		setIsStreaming,
@@ -49,6 +50,28 @@ export function useAgentEventHandlers(deps: AgentEventDeps) {
 		verbose,
 		modelId,
 	} = deps;
+
+	const reasoningBuffer = useMemo(
+		() =>
+			new ReasoningStreamBuffer((text) => {
+				updateLastEntry((prev) =>
+					prev.kind === "reasoning" && prev.streaming
+						? { ...prev, text }
+						: prev,
+				);
+			}),
+		[updateLastEntry],
+	);
+	useEffect(() => () => reasoningBuffer.dispose(), [reasoningBuffer]);
+	const closeInlineStream = useCallback(() => {
+		const text = reasoningBuffer.finish();
+		if (text !== undefined) {
+			updateLastEntry((prev) =>
+				prev.kind === "reasoning" ? { ...prev, text } : prev,
+			);
+		}
+		closeInlineStreamEntry();
+	}, [reasoningBuffer, updateLastEntry, closeInlineStreamEntry]);
 
 	// Compaction dividers that arrived while an assistant message was still
 	// streaming. Appending them immediately would split the message in two, so
@@ -167,15 +190,11 @@ export function useAgentEventHandlers(deps: AgentEventDeps) {
 								activeInlineStreamRef.current = "reasoning";
 								appendEntry({
 									kind: "reasoning",
-									text: chunk,
+									text: reasoningBuffer.start(chunk),
 									streaming: true,
 								});
 							} else {
-								updateLastEntry((prev) =>
-									prev.kind === "reasoning"
-										? { ...prev, text: prev.text + chunk }
-										: prev,
-								);
+								reasoningBuffer.append(chunk);
 							}
 							break;
 						}
@@ -325,6 +344,7 @@ export function useAgentEventHandlers(deps: AgentEventDeps) {
 			onTurnErrorReported,
 			verbose,
 			modelId,
+			reasoningBuffer,
 			closeToolEntry,
 			finalizeDanglingCompactionEntry,
 			flushPendingCompactionEntries,

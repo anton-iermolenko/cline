@@ -3,6 +3,7 @@
 import http.server, json, os, pathlib, subprocess, tempfile, threading, sys, pty, select, time, signal, fcntl, termios, struct
 BINARY = sys.argv[1]
 requests = []
+stress_chunks=[f'thinking line {i % 3}: verify repeated lines and batching\n' for i in range(5000)] if '--reasoning' in sys.argv else []
 class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *args): pass
     def do_GET(self):
@@ -12,6 +13,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         body=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         requests.append({**{k: body.get(k) for k in ['model','max_tokens','max_completion_tokens','reasoning_effort']},'input_chars':len(json.dumps(body.get('messages',[])))})
         self.send_response(200); self.send_header('Content-Type','text/event-stream'); self.end_headers()
+        for i, text in enumerate(stress_chunks):
+            chunk={'id':'smoke','object':'chat.completion.chunk','choices':[{'index':0,'delta':{'reasoning_content':text},'finish_reason':None}]}
+            self.wfile.write(('data: '+json.dumps(chunk)+'\n\n').encode())
+            if i % 50 == 0: self.wfile.flush(); time.sleep(0.01)
         chunks=[{'id':'smoke','object':'chat.completion.chunk','choices':[{'index':0,'delta':{'role':'assistant','content':'READY'},'finish_reason':None}]}, {'id':'smoke','object':'chat.completion.chunk','choices':[{'index':0,'delta':{},'finish_reason':'stop'}],'usage':{'prompt_tokens':20,'completion_tokens':1,'total_tokens':21}}]
         for chunk in chunks: self.wfile.write(('data: '+json.dumps(chunk)+'\n\n').encode())
         self.wfile.write(b'data: [DONE]\n\n'); self.wfile.flush()
@@ -34,8 +39,12 @@ with tempfile.TemporaryDirectory(prefix='cline-fork-verify-') as temp:
         master, slave=pty.openpty()
         fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',35,120,0,0))
         process=subprocess.Popen(args,env={**env,'TERM':'xterm-256color'},stdin=slave,stdout=slave,stderr=slave,start_new_session=True)
-        os.close(slave); output=b''; deadline=time.monotonic()+35; received_at=None
+        os.close(slave); peak_rss_kib=0; output=b''; deadline=time.monotonic()+35; received_at=None
         while time.monotonic()<deadline and process.poll() is None:
+            try:
+                rss=next(line for line in pathlib.Path(f'/proc/{process.pid}/status').read_text().splitlines() if line.startswith('VmRSS:'))
+                peak_rss_kib=max(peak_rss_kib,int(rss.split()[1]))
+            except (FileNotFoundError,StopIteration): pass
             if select.select([master],[],[],0.25)[0]:
                 try: output+=os.read(master,65536)
                 except OSError: break
@@ -65,6 +74,10 @@ with tempfile.TemporaryDirectory(prefix='cline-fork-verify-') as temp:
     expected={'contextWindow':81920,'maxInputTokens':73728,'maxTokens':8192}
     matched=[{key: info.get(key) for key in ['id','provider',*expected]} for info in infos if all(info.get(k)==v for k,v in expected.items())]
     persisted_ready=any(any(m.get('role')=='assistant' and any(c.get('text')=='READY' for c in m.get('content',[]) if isinstance(c,dict)) for m in json.loads(p.read_text()).get('messages',[])) for p in root.rglob('*.messages.json'))
+    if stress_chunks:
+        persisted_thinking=''.join(c.get('thinking','') for p in root.rglob('*.messages.json') for m in json.loads(p.read_text()).get('messages',[]) for c in m.get('content',[]) if isinstance(c,dict) and c.get('type')=='thinking')
+        assert persisted_thinking == ''.join(stress_chunks), (len(persisted_thinking),sum(map(len,stress_chunks)))
+        print(json.dumps({'reasoning_chunks':len(stress_chunks),'preserved_reasoning_chars':len(persisted_thinking),'terminal_output_bytes':len(output),'sampled_peak_rss_mib':round(peak_rss_kib/1024,1)}))
     print(json.dumps({'persisted_ready':persisted_ready,'exit_code':result.returncode,'requests':requests,'runtime_model_info':matched,'ready_received':'READY' in result.stdout},indent=2))
     if ('--live' not in sys.argv and not requests) or result.returncode != 0 or ('--tui' not in sys.argv and not matched) or ('--tui' in sys.argv and not persisted_ready):
         print(result.stdout[-1200:]); print(result.stderr[-2000:]); raise SystemExit(1)

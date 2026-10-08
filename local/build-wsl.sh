@@ -15,7 +15,7 @@ for package in shared llms agents core sdk ui; do
 done
 cd apps/cli
 bun run typecheck
-bun x biome check src/utils/local-model-limits.ts src/utils/local-model-limits.test.ts src/main.ts src/runtime/run-interactive.ts
-bun x vitest run --config vitest.config.ts src/utils/local-model-limits.test.ts src/runtime/run-interactive.test.ts src/runtime/interactive/compaction.test.ts
+bun x biome check --skip=lint/a11y/noStaticElementInteractions src/tui/utils/reasoning-preview.ts src/tui/utils/reasoning-preview.test.ts src/tui/hooks/use-agent-events.ts src/tui/components/chat-entry.tsx src/utils/local-model-limits.ts src/utils/local-model-limits.test.ts src/main.ts src/runtime/run-interactive.ts
+bun x vitest run --config vitest.config.ts src/utils/local-model-limits.test.ts src/runtime/run-interactive.test.ts src/runtime/interactive/compaction.test.ts src/tui/utils/reasoning-preview.test.ts
 bun script/build.ts --single --skip-install --skip-sdk-build
 printf 'Built package: %s\n' "$PWD/dist/cli-linux-x64"

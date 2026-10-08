@@ -62,3 +62,17 @@ User settings, history, and workspaces are preserved. Deployment changes the nex
 ## Verified
 
 2026-10-08: CLI typecheck passed; Biome checks passed after import sorting; 22 focused tests passed (local registry + interactive model change + manual compaction). Compiled Linux x64 binary passed version and isolated hub start/status/stop smoke tests. Compiled headless and interactive mock requests sent max_tokens=8192 and reasoning_effort=medium. Live llama-adapter READY request completed with resolved 81920/73728/8192 limits.
+
+## Reasoning display patch
+
+Streaming thinking now publishes only the latest 2048 characters and eight logical lines, at most once every 100 ms. Chunks are retained separately and joined once when the reasoning block closes; the complete text is restored to the expandable entry and remains in session history. Switching to text/tools, completion, errors, and unmount cancel pending preview timers.
+
+The reasoning renderer uses one stable text node instead of one React element per line keyed by its changing contents. Completed blocks are memoized and their collapsed tail is formatted from a bounded substring. Expanding a completed block still shows the full reasoning. SDK source is unchanged; only the CLI executable needs rebuilding.
+
+Additional compiled stress verification:
+
+```sh
+python3 ./local/verify-binary.py ~/.cache/cline-fork-build/source/apps/cli/dist/cli-linux-x64/bin/cline --tui --reasoning
+```
+
+2026-10-08: 26 focused tests and complete CLI typecheck passed. Changed-file Biome checks passed with the existing DOM accessibility rule excluded for OpenTUI terminal mouse handlers. The compiled TUI handled 5000 streamed reasoning chunks, preserved all 260000 characters exactly, and emitted 28379 terminal-output bytes in this synthetic run. These checks verify the rendering fix; they do not establish the cause of every earlier CPU or memory incident.

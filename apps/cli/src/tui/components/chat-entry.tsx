@@ -4,7 +4,7 @@ import {
 } from "@cline/core";
 import { useTerminalDimensions } from "@opentui/react";
 import type React from "react";
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import "opentui-spinner/react";
 import {
 	getClineOrgIndividualInferenceSubscriptionMessage,
@@ -25,6 +25,7 @@ import { getUserMessageBackground } from "../palette";
 import type { ResolvedTheme } from "../themes";
 import type { ChatEntry } from "../types";
 import { formatCompactionDividerLabel } from "../utils/compaction-status";
+import { reasoningPreview } from "../utils/reasoning-preview";
 import { getSyntaxStyle, type SyntaxAccentMode } from "../utils/syntax-style";
 import { isWarningToolError } from "../utils/tool-errors";
 import {
@@ -52,17 +53,22 @@ function formatMediaSize(byteLength: number): string {
 	return `${(byteLength / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
-function ReasoningBlock(props: { text: string; streaming: boolean }) {
+const ReasoningBlock = memo(function ReasoningBlock(props: {
+	text: string;
+	streaming: boolean;
+}) {
 	const [expanded, setExpanded] = useState(false);
 	const { width } = useTerminalDimensions();
-	const content = trimLeading(props.text);
+	const content = trimLeading(
+		props.streaming ? reasoningPreview(props.text) : props.text,
+	);
 	if (!content.trim()) {
 		if (props.streaming) {
 			return (
 				<box flexDirection="row" gap={1}>
 					<spinner name="dots" color="gray" />
 					<text fg="gray">
-						<em>Thinking...</em>
+						<em>Thinking (latest preview)...</em>
 					</text>
 				</box>
 			);
@@ -71,39 +77,33 @@ function ReasoningBlock(props: { text: string; streaming: boolean }) {
 	}
 
 	if (props.streaming) {
-		const lines = content.split("\n");
 		return (
 			<box flexDirection="column">
 				<box flexDirection="row" gap={1}>
 					<spinner name="dots" color="gray" />
 					<text fg="gray">
-						<em>Thinking...</em>
+						<em>Thinking (latest preview)...</em>
 					</text>
 				</box>
 				<box flexDirection="column" paddingLeft={2}>
-					{lines.map((line) => (
-						<text key={line} fg="gray" selectable>
-							<em>{line || " "}</em>
-						</text>
-					))}
+					<text key="reasoning-content" fg="gray" selectable>
+						<em>{content}</em>
+					</text>
 				</box>
 			</box>
 		);
 	}
 
 	if (expanded) {
-		const lines = content.split("\n");
 		return (
 			<box flexDirection="column" onMouseDown={() => setExpanded(false)}>
 				<text fg="gray">
 					{"\u25bc"} <em>Thinking:</em>
 				</text>
 				<box flexDirection="column" paddingLeft={2}>
-					{lines.map((line) => (
-						<text key={line} fg="gray" selectable>
-							<em>{line || " "}</em>
-						</text>
-					))}
+					<text key="reasoning-content" fg="gray" selectable>
+						<em>{content}</em>
+					</text>
 				</box>
 			</box>
 		);
@@ -112,7 +112,10 @@ function ReasoningBlock(props: { text: string; streaming: boolean }) {
 	const padding = 4;
 	const prefix = "\u25b6 Thinking: ";
 	const available = Math.max(10, width - padding - prefix.length - 3);
-	const flat = content.replace(/\n/g, " ").trim();
+	const flat = content
+		.slice(-(available + 1))
+		.replace(/\n/g, " ")
+		.trim();
 	const tail =
 		flat.length <= available
 			? flat
@@ -125,7 +128,7 @@ function ReasoningBlock(props: { text: string; streaming: boolean }) {
 			</text>
 		</box>
 	);
-}
+});
 
 function formatToolParams(
 	toolName: string,
