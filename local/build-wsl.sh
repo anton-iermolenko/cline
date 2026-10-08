@@ -10,10 +10,12 @@ mkdir -p "$build_root/source"
 rsync -a --exclude=.git --exclude=node_modules --exclude=dist "$source_dir/" "$build_root/source/"
 cd "$build_root/source"
 bun install --frozen-lockfile
+cd sdk
 for package in shared llms agents core sdk ui; do
     bun --filter "@cline/$package" build
 done
-cd apps/cli
+bun --filter @cline/core test:unit src/extensions/context/compaction.test.ts src/extensions/context/budget-projection/project.test.ts
+cd ../apps/cli
 bun run typecheck
 bun x biome check --skip=lint/a11y/noStaticElementInteractions src/tui/utils/reasoning-preview.ts src/tui/utils/reasoning-preview.test.ts src/tui/hooks/use-agent-events.ts src/tui/components/chat-entry.tsx src/utils/local-model-limits.ts src/utils/local-model-limits.test.ts src/main.ts src/runtime/run-interactive.ts
 bun x vitest run --config vitest.config.ts src/utils/local-model-limits.test.ts src/runtime/run-interactive.test.ts src/runtime/interactive/compaction.test.ts src/tui/utils/reasoning-preview.test.ts

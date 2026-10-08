@@ -453,6 +453,8 @@ export function runBasicCompaction(options: {
 	context: CoreCompactionContext;
 	estimateMessageTokens: EstimateMessageTokens;
 	logger?: BasicLogger;
+	/** Emergency retry may fold earlier preserved output to meet the live budget. */
+	refoldPreserved?: boolean;
 }): CoreCompactionResult | undefined {
 	const originalMessages = options.context.messages;
 	const estimate = options.estimateMessageTokens;
@@ -504,7 +506,10 @@ export function runBasicCompaction(options: {
 		if (sanitizedTypedByIndex.has(index)) {
 			continue;
 		}
-		if (isPreservedByCompaction(originalMessages[index])) {
+		if (
+			!options.refoldPreserved &&
+			isPreservedByCompaction(originalMessages[index])
+		) {
 			frozenIndices.add(index);
 			totalTokens += estimate(originalMessages[index]);
 		}

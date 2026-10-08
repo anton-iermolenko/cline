@@ -1378,10 +1378,10 @@ describe("createContextCompactionPrepareTurn", () => {
 		expect(explicitWins.maxOutputTokens).toBe(6_000);
 	});
 
-	it("skips with a diagnostic warning when the summarizer only produced reasoning output", async () => {
+	it("falls back to a bounded fold when the summarizer only produced reasoning output", async () => {
 		// Repro for CLINE-2911: a reasoning model can spend the entire output
 		// budget thinking. Reasoning chunks are discarded, so no summary text
-		// arrives and compaction is skipped — that skip must be diagnosable.
+		// arrives; automatic compaction must recover without another oversized request.
 		const logger = { debug: vi.fn(), log: vi.fn() };
 		const emitStatusNotice = vi.fn();
 		createHandlerMock.mockReturnValue({
@@ -1427,28 +1427,31 @@ describe("createContextCompactionPrepareTurn", () => {
 			tools: [],
 			messages: [
 				{ role: "user", content: "Old turn" },
-				{ role: "assistant", content: "Old answer" },
+				{ role: "assistant", content: "Old answer".repeat(200) },
 				{ role: "user", content: "Latest turn" },
 				{ role: "assistant", content: "Latest answer" },
 			],
 			apiMessages: [
 				{ role: "user", content: "Old turn" },
-				{ role: "assistant", content: "Old answer" },
+				{ role: "assistant", content: "Old answer".repeat(200) },
 				{ role: "user", content: "Latest turn" },
 				{ role: "assistant", content: "Latest answer" },
 			],
 			model: {
 				id: "local-reasoner",
 				provider: "openai",
-				info: { id: "local-reasoner", maxInputTokens: 10 },
+				info: { id: "local-reasoner", maxInputTokens: 200 },
 			},
 			emitStatusNotice,
 		});
 
-		expect(result).toBeUndefined();
+		expect(result?.messages).toBeDefined();
+		expect(
+			result?.messages.reduce((sum, m) => sum + createTokenEstimator()(m), 0),
+		).toBeLessThan(180);
 		expect(emitStatusNotice).toHaveBeenCalledWith(
-			"auto-compaction-skipped",
-			expect.objectContaining({ phase: "skipped" }),
+			"auto-compacted",
+			expect.objectContaining({ phase: "completed" }),
 		);
 		expect(logger.log).toHaveBeenCalledWith(
 			"Skipped agentic compaction: summarizer returned no summary text",
@@ -1519,7 +1522,7 @@ describe("createContextCompactionPrepareTurn", () => {
 			tools: [],
 			messages: [
 				{ role: "user", content: "Old turn to compact" },
-				{ role: "assistant", content: "Old answer" },
+				{ role: "assistant", content: "Old answer".repeat(2000) },
 				{ role: "user", content: "Older follow-up to compact" },
 				{ role: "assistant", content: "Older follow-up answer" },
 				{ role: "user", content: "Implement the change" },
@@ -1549,7 +1552,7 @@ describe("createContextCompactionPrepareTurn", () => {
 			],
 			apiMessages: [
 				{ role: "user", content: "Old turn to compact" },
-				{ role: "assistant", content: "Old answer" },
+				{ role: "assistant", content: "Old answer".repeat(2000) },
 				{ role: "user", content: "Older follow-up to compact" },
 				{ role: "assistant", content: "Older follow-up answer" },
 				{ role: "user", content: "Implement the change" },
@@ -1580,7 +1583,7 @@ describe("createContextCompactionPrepareTurn", () => {
 			model: {
 				id: "mock-model",
 				provider: "anthropic",
-				info: { id: "mock-model", maxInputTokens: 10 },
+				info: { id: "mock-model", maxInputTokens: 2000 },
 			},
 		});
 
@@ -1629,7 +1632,7 @@ describe("createContextCompactionPrepareTurn", () => {
 	describe("summarizer connection resolution", () => {
 		const messages: LlmsProviders.Message[] = [
 			{ role: "user", content: "Old turn to compact" },
-			{ role: "assistant", content: "Old answer" },
+			{ role: "assistant", content: "Old answer".repeat(2000) },
 			{ role: "user", content: "Recent turn" },
 			{ role: "assistant", content: "Recent assistant state" },
 		];
@@ -1646,7 +1649,7 @@ describe("createContextCompactionPrepareTurn", () => {
 			model: {
 				id: "mock-model",
 				provider: "cline",
-				info: { id: "mock-model", maxInputTokens: 10 },
+				info: { id: "mock-model", maxInputTokens: 2000 },
 			},
 		};
 		// Mirrors bootstrap.config: the nested providerConfig is a snapshot of
@@ -1741,7 +1744,7 @@ describe("createContextCompactionPrepareTurn", () => {
 		const log = vi.fn();
 		const messages: LlmsProviders.Message[] = [
 			{ role: "user", content: "Original task" },
-			{ role: "assistant", content: `Old answer ${"x".repeat(500)}` },
+			{ role: "assistant", content: `Old answer ${"x".repeat(12000)}` },
 			{ role: "user", content: "Older follow-up" },
 			{ role: "assistant", content: "Older response" },
 			{ role: "user", content: "Latest request" },
@@ -1774,7 +1777,7 @@ describe("createContextCompactionPrepareTurn", () => {
 			model: {
 				id: "mock-model",
 				provider: "anthropic",
-				info: { id: "mock-model", maxInputTokens: 10 },
+				info: { id: "mock-model", maxInputTokens: 2000 },
 			},
 		});
 
@@ -1940,7 +1943,7 @@ describe("createContextCompactionPrepareTurn", () => {
 			model: {
 				id: "mock-model",
 				provider: "anthropic",
-				info: { id: "mock-model", maxInputTokens: 10 },
+				info: { id: "mock-model", maxInputTokens: 2000 },
 			},
 		});
 
@@ -2034,7 +2037,7 @@ describe("createContextCompactionPrepareTurn", () => {
 		const heavyToolOutput = "x".repeat(1_500);
 		const sharedMessages = [
 			{ role: "user" as const, content: "Old turn to summarize" },
-			{ role: "assistant" as const, content: "Old reply" },
+			{ role: "assistant" as const, content: "Old reply".repeat(2000) },
 			{ role: "user" as const, content: "Read the file" },
 			{
 				role: "assistant" as const,
@@ -2074,7 +2077,7 @@ describe("createContextCompactionPrepareTurn", () => {
 			model: {
 				id: "mock-model",
 				provider: "anthropic",
-				info: { id: "mock-model", maxInputTokens: 10 },
+				info: { id: "mock-model", maxInputTokens: 2000 },
 			},
 		});
 
@@ -2359,20 +2362,20 @@ describe("createContextCompactionPrepareTurn", () => {
 			tools: [],
 			messages: [
 				{ role: "user", content: "Old turn" },
-				{ role: "assistant", content: "Old answer" },
+				{ role: "assistant", content: "Old answer".repeat(2000) },
 				{ role: "user", content: "Latest turn" },
 				{ role: "assistant", content: "Latest answer" },
 			],
 			apiMessages: [
 				{ role: "user", content: "Old turn" },
-				{ role: "assistant", content: "Old answer" },
+				{ role: "assistant", content: "Old answer".repeat(2000) },
 				{ role: "user", content: "Latest turn" },
 				{ role: "assistant", content: "Latest answer" },
 			],
 			model: {
 				id: "primary-model",
 				provider: "anthropic",
-				info: { id: "primary-model", maxInputTokens: 10 },
+				info: { id: "primary-model", maxInputTokens: 2000 },
 			},
 		});
 
@@ -3875,7 +3878,7 @@ describe("createContextCompactionPrepareTurn", () => {
 		expect(result?.messages.length).toBeLessThan(4);
 	});
 
-	it("automatic agentic compaction clamps preservation to a small model budget", async () => {
+	it("automatic compaction refolds an oversized preserved tail for a small model budget", async () => {
 		createHandlerMock.mockReturnValue({
 			createMessage: vi.fn(() =>
 				streamChunks([
@@ -3926,9 +3929,12 @@ describe("createContextCompactionPrepareTurn", () => {
 		expect(createHandlerMock).toHaveBeenCalledTimes(1);
 		expect(result?.messages[0]).toMatchObject({
 			role: "user",
-			metadata: expect.objectContaining({ kind: "compaction_summary" }),
+			metadata: expect.objectContaining({ kind: "compaction" }),
 		});
 		expect(result?.messages.length).toBeLessThan(messages.length);
+		expect(
+			result?.messages.reduce((sum, m) => sum + createTokenEstimator()(m), 0),
+		).toBeLessThan(1800);
 	});
 
 	it("drops old user image blocks during basic compaction sanitization", () => {
@@ -4044,7 +4050,7 @@ describe("createContextCompactionPrepareTurn", () => {
 			model: {
 				id: "mock-model",
 				provider: "anthropic",
-				info: { id: "mock-model", maxInputTokens: 100 },
+				info: { id: "mock-model", maxInputTokens: 200 },
 			},
 		});
 
@@ -4662,5 +4668,73 @@ describe("createContextCompactionPrepareTurn", () => {
 		expect(
 			projectSessionCompactionState(savedState, currentMessages),
 		).toBeDefined();
+	});
+});
+
+describe("automatic compaction no-result recovery", () => {
+	function prepare(messages: MessageWithMetadata[]) {
+		const handler = createContextCompactionPrepareTurn({
+			providerId: "openai",
+			modelId: "local",
+			compaction: { enabled: true, strategy: "agentic" },
+		});
+		return handler?.({
+			agentId: "test",
+			conversationId: "test",
+			parentAgentId: null,
+			iteration: 1,
+			abortSignal: new AbortController().signal,
+			systemPrompt: "",
+			tools: [],
+			messages,
+			apiMessages: messages,
+			model: {
+				id: "local",
+				provider: "openai",
+				info: { id: "local", maxInputTokens: 2000, maxTokens: 1000 },
+			},
+		});
+	}
+	it("folds an oversized latest turn when no safe summary cut exists", async () => {
+		const messages: MessageWithMetadata[] = [
+			{ role: "user", content: "Keep my latest request" },
+			{ role: "assistant", content: "x".repeat(30000) },
+		];
+		const result = await prepare(messages);
+		expect(result?.messages).toBeDefined();
+		expect(
+			result?.messages.reduce((sum, m) => sum + createTokenEstimator()(m), 0),
+		).toBeLessThan(1800);
+		expect(JSON.stringify(result?.messages)).toContain(
+			"Keep my latest request",
+		);
+	});
+	it("can re-fold previously frozen messages to fit the current budget", async () => {
+		const messages: MessageWithMetadata[] = [
+			{ role: "user", content: "Keep my latest request" },
+			{
+				role: "assistant",
+				content: "x".repeat(15000),
+				metadata: { compaction: "preserved" },
+			},
+			{
+				role: "assistant",
+				content: "y".repeat(15000),
+				metadata: { compaction: "preserved" },
+			},
+		];
+		const result = await prepare(messages);
+		expect(result?.messages).toBeDefined();
+		expect(
+			result?.messages.reduce((sum, m) => sum + createTokenEstimator()(m), 0),
+		).toBeLessThan(1800);
+		expect(JSON.stringify(result?.messages)).toContain(
+			"Keep my latest request",
+		);
+	});
+	it("stops before sending when the only protected prompt cannot fit", async () => {
+		await expect(
+			prepare([{ role: "user", content: "x".repeat(30000) }]),
+		).rejects.toThrow("Compaction cannot fit");
 	});
 });

@@ -565,6 +565,59 @@ export function createContextCompactionPrepareTurn(
 			}
 		}
 
+		// A declined summary is not a reason to send the same oversized request.
+		// Retry with a deterministic fold, including previously preserved output.
+		if (
+			!userCompaction?.compact &&
+			strategy === "agentic" &&
+			effectiveMode === "auto"
+		) {
+			const resultTokens = result?.messages?.reduce(
+				(total, message) => total + estimateMessageTokens(message),
+				0,
+			);
+			if (
+				resultTokens === undefined ||
+				resultTokens > messageTargetTokens ||
+				resultTokens >= messageInputTokens
+			) {
+				context.abortSignal.throwIfAborted();
+				config.logger?.log(
+					"Compaction returned no usable bounded context; retrying basic fold",
+					{
+						severity: "warn",
+						mode: effectiveMode,
+						strategy: executedStrategy,
+						reason: resultTokens === undefined ? "no_result" : "over_target",
+						resultTokens,
+						messageInputTokens,
+						messageTargetTokens,
+						maxInputTokens,
+					},
+				);
+				executedStrategy = "basic";
+				result = runBasicCompaction({
+					context: compactionContext,
+					estimateMessageTokens,
+					logger: config.logger,
+					refoldPreserved: true,
+				});
+			}
+			const finalTokens = result?.messages?.reduce(
+				(total, message) => total + estimateMessageTokens(message),
+				0,
+			);
+			if (
+				!result?.messages?.length ||
+				finalTokens === undefined ||
+				finalTokens + requestOverheadTokens >= requestTriggerTokens
+			) {
+				throw new Error(
+					`Compaction cannot fit the protected prompt and request overhead within the input budget (${Math.floor(requestTriggerTokens)} tokens). Reduce the prompt/attachments or tool overhead before retrying.`,
+				);
+			}
+		}
+
 		const durationMs = Date.now() - startedAt;
 		// Telemetry identity: surface the agent/conversation passed into the
 		// prepareTurn so multi-agent runs can attribute compactions correctly.

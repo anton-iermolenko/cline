@@ -3,6 +3,7 @@
 import http.server, json, os, pathlib, subprocess, tempfile, threading, sys, pty, select, time, signal, fcntl, termios, struct
 BINARY = sys.argv[1]
 requests = []
+compaction_guard = '--compaction-guard' in sys.argv
 stress_chunks=[f'thinking line {i % 3}: verify repeated lines and batching\n' for i in range(5000)] if '--reasoning' in sys.argv else []
 class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *args): pass
@@ -31,9 +32,13 @@ with tempfile.TemporaryDirectory(prefix='cline-fork-verify-') as temp:
         provider.pop('contextWindow',None); provider.pop('maxTokens',None)
     (settings/'providers.json').write_text(json.dumps({'version':1,'lastUsedProvider':'openai-compatible','providers':{'openai-compatible':{'settings':provider,'updatedAt':'2026-10-08T00:00:00Z'}}}))
     model={'id':'qwen-27b','contextWindow':81920,'maxInputTokens':73728,'maxTokens':8192}
+    if compaction_guard: model.update(contextWindow=12000, maxInputTokens=10000, maxTokens=2000)
     (settings/'models.json').write_text(json.dumps({'version':1,'providers':{'openai-compatible':{'models':{'qwen-27b':model}}}}))
     env={**os.environ,'HOME':temp,'CLINE_DIR':str(root/'.cline'),'CLINE_DATA_DIR':str(data),'CLINE_NO_AUTO_UPDATE':'1'}
     args=[BINARY,'--data-dir',str(data),'--cwd',str(root/'workspace'),'--hooks-dir',str(root/'hooks'),'--provider','openai-compatible','--model','qwen-27b','--json','--compaction','basic','--timeout','30','Reply READY. Do not call tools.']
+    if compaction_guard:
+        args[args.index('--compaction')+1] = 'agentic'
+        args[-1] = 'Keep this full protected prompt: ' + 'x' * 60000
     if '--tui' in sys.argv:
         args.remove('--json'); args.insert(1,'--tui')
         master, slave=pty.openpty()
@@ -57,6 +62,12 @@ with tempfile.TemporaryDirectory(prefix='cline-fork-verify-') as temp:
         result=subprocess.CompletedProcess(args,0 if requests else 1,output.decode(errors='replace'),'')
     else:
         result=subprocess.run(args,env=env,capture_output=True,text=True,timeout=90)
+    if compaction_guard:
+        rejected = 'Compaction cannot fit' in result.stdout + result.stderr
+        print(json.dumps({'compaction_guard': rejected, 'api_requests': len(requests), 'exit_code': result.returncode}))
+        assert rejected and not requests, 'Expected the protected-prompt guard before an API request'
+        server.shutdown()
+        raise SystemExit(0)
     infos=[]
     def walk(value):
         if isinstance(value,dict):
