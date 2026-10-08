@@ -33,6 +33,7 @@ import {
 	normalizeAutoApproveArgs,
 	resolveWorkspaceRoot,
 } from "./utils/helpers";
+import { applyLocalModelLimits } from "./utils/local-model-limits";
 import {
 	c,
 	installStreamErrorGuards,
@@ -1111,6 +1112,7 @@ export async function runCli(): Promise<void> {
 			},
 			teamName: !isYoloMode ? args.teamName?.trim() || undefined : undefined,
 		};
+		applyLocalModelLimits(config, providerSettingsManager);
 		try {
 			// For OAuth providers, don't write the resolved key into apiKey;
 			// the token lives in auth.accessToken and apiKey is reserved for

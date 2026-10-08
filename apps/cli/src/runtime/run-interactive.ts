@@ -36,6 +36,7 @@ import {
 	zeroCliAgentEventCost,
 	zeroCliUsageCost,
 } from "../utils/free-model-cost";
+import { applyLocalModelLimits } from "../utils/local-model-limits";
 import {
 	prepareTerminalForPostTuiOutput,
 	writeErr,
@@ -128,6 +129,8 @@ export async function applyInteractiveModelChange(input: {
 		model: config.modelId,
 		...(reasoning === undefined ? {} : { reasoning }),
 	});
+
+	applyLocalModelLimits(config, new ProviderSettingsManager());
 
 	// Provider changes affect more than the model connection: startup resolves
 	// the endpoint, headers, provider-specific options, tools, and plugins. Rebuild
