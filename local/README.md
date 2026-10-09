@@ -1,6 +1,6 @@
 # Local Cline CLI model-limit patch
 
-Source: `.`, branch `local/model-limits`.
+Source: `.`, fix-oriented branches under `codex/`.
 Upstream: tag `cli-v3.0.69`, commit `ef9430ffb4ceae9a7ab0b95d27cad8133ea7c576`.
 
 The SDK captures the built-in provider catalog before local models.json is loaded. Custom model aliases consequently lose their numeric limits in the runtime even though the model picker displays them. VS Code also intentionally removes provider-wide contextWindow/maxTokens fields when saving an OpenAI-compatible model.
