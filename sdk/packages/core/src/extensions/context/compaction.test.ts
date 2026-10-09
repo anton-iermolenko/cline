@@ -2589,7 +2589,7 @@ describe("createContextCompactionPrepareTurn", () => {
 			model: {
 				id: "mock-model",
 				provider: "anthropic",
-				info: { id: "mock-model", maxInputTokens: 10 },
+				info: { id: "mock-model", maxInputTokens: 200 },
 			},
 		});
 
@@ -4117,7 +4117,7 @@ describe("createContextCompactionPrepareTurn", () => {
 			model: {
 				id: "mock-model",
 				provider: "anthropic",
-				info: { id: "mock-model", maxInputTokens: 100 },
+				info: { id: "mock-model", maxInputTokens: 200 },
 			},
 		});
 

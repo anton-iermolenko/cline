@@ -13,6 +13,7 @@ import {
 	type EstimateMessageTokens,
 	formatToolActivitySummary,
 	hasToolActivity,
+	isCompactionSummaryMessage,
 	isTurnStartMessage,
 	summarizeToolActivity,
 	type ToolActivitySummary,
@@ -485,7 +486,48 @@ export function runBasicCompaction(options: {
 		}
 	}
 	if (sanitizedTypedByIndex.size === 0) {
-		return undefined;
+		// Agentic compaction can replace every typed turn with a system summary.
+		// Keep that continuation anchor without reclassifying it as user input.
+		let summaryIndex = originalMessages.length - 1;
+		while (
+			summaryIndex >= 0 &&
+			!isCompactionSummaryMessage(originalMessages[summaryIndex])
+		) {
+			summaryIndex -= 1;
+		}
+		if (summaryIndex < 0) return undefined;
+		const summary = stripStaleMetrics(originalMessages[summaryIndex]);
+		let remaining = totalTargetTokens - estimate(summary);
+		let start = originalMessages.length;
+		for (
+			let index = originalMessages.length - 1;
+			index > summaryIndex;
+			index -= 1
+		) {
+			const cost = estimate(originalMessages[index]);
+			if (cost > remaining) break;
+			remaining -= cost;
+			start = index;
+		}
+		// A retained tool result must travel with its assistant tool call.
+		while (
+			start < originalMessages.length &&
+			originalMessages[start].role !== "assistant"
+		) {
+			start += 1;
+		}
+		const messages = [
+			summary,
+			...originalMessages
+				.slice(start)
+				.map((message) =>
+					stripStaleMetrics(markPreservedByCompaction(message)),
+				),
+		];
+		if (!haveMessagesChanged(originalMessages, messages)) return undefined;
+		// An oversized summary remains intact; the caller reports the measured
+		// failure instead of silently erasing the continuation instructions.
+		return { messages };
 	}
 	const latestTypedOriginalIndex = typedIndices[typedIndices.length - 1];
 

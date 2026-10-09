@@ -569,8 +569,9 @@ export function createContextCompactionPrepareTurn(
 		// Retry with a deterministic fold, including previously preserved output.
 		if (
 			!userCompaction?.compact &&
-			strategy === "agentic" &&
-			effectiveMode === "auto"
+			(effectiveMode === "auto" ||
+				(effectiveMode === "manual" &&
+					requestInputTokens >= requestTriggerTokens))
 		) {
 			const resultTokens = result?.messages?.reduce(
 				(total, message) => total + estimateMessageTokens(message),
@@ -578,7 +579,10 @@ export function createContextCompactionPrepareTurn(
 			);
 			if (
 				resultTokens === undefined ||
-				resultTokens > messageTargetTokens ||
+				resultTokens >
+					(effectiveMode === "manual"
+						? messageTriggerTokens
+						: messageTargetTokens) ||
 				resultTokens >= messageInputTokens
 			) {
 				context.abortSignal.throwIfAborted();
@@ -612,8 +616,26 @@ export function createContextCompactionPrepareTurn(
 				finalTokens === undefined ||
 				finalTokens + requestOverheadTokens >= requestTriggerTokens
 			) {
+				const reason =
+					!result?.messages?.length || finalTokens === undefined
+						? "no_usable_result"
+						: "result_over_threshold";
+				config.logger?.log("Compaction could not produce bounded context", {
+					severity: "warn",
+					mode: effectiveMode,
+					reason,
+					messageInputTokens,
+					finalMessageTokens: finalTokens,
+					requestOverheadTokens,
+					requestTriggerTokens,
+					maxInputTokens,
+				});
 				throw new Error(
-					`Compaction cannot fit the protected prompt and request overhead within the input budget (${Math.floor(requestTriggerTokens)} tokens). Reduce the prompt/attachments or tool overhead before retrying.`,
+					`Compaction cannot fit the request below the compaction threshold (${Math.floor(requestTriggerTokens)} tokens; input allowance ${Math.floor(maxInputTokens)} tokens). ` +
+						(reason === "no_usable_result"
+							? "The fallback returned no usable context; this does not establish that the protected prompt is too large. "
+							: `Remaining message estimate: ${finalTokens} tokens; request overhead: ${requestOverheadTokens} tokens. `) +
+						"Reduce retained context or request overhead before retrying.",
 				);
 			}
 		}

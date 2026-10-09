@@ -93,3 +93,12 @@ CLI auto backend may reuse a compatible already-running hub, whose SDK is still 
 ```sh
 python3 ./local/verify-binary.py ~/.cache/cline-fork-build/source/apps/cli/dist/cli-linux-x64/bin/cline --compaction-guard
 ```
+## October 9 summary-only recovery fix
+
+The basic fallback now supports a working context consisting of a prior agentic summary and tool activity, with no literal user turns. It preserves the summary's system metadata and a bounded recent tool sequence. Automatic basic/agentic compaction and oversized manual compaction enforce bounded results before reporting completion. Errors distinguish a missing fallback result from excessive retained context and label the trigger separately from the input allowance.
+
+Regression coverage: sequential agentic compaction followed by empty, failed, or oversized summarization; oversized manual recovery; summary provenance and tool pairing; truly oversized summaries; missing anchors. The compaction/projection suite passes 107 tests. Offline replay of session example-replay-session reduces 55016 to 33272 estimated message tokens with a 36448-token message target, preserving the original summary metadata. This replay does not edit session state.
+
+The 81920 total context, 73728 request-input allowance, 8192 output cap, and 66355 early-compaction trigger are unchanged.
+
+Deployment verified: `/opt/cline-local/current` selects `3.0.69-local-20261009-compaction-recovery`. SDK and CLI typechecks, 107 compaction/projection tests, 13 CLI tests, compiled model-limit request, compiled oversized-request guard (zero API requests), and isolated hub smoke checks passed. Existing CLI processes must be restarted to load the new bundle; the previous release is retained.
