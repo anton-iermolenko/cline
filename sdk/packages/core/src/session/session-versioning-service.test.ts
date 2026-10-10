@@ -535,6 +535,19 @@ describe("checkpoint restore compaction inheritance", () => {
 		expect(result.messages).toEqual(messages.slice(0, omit ? 2 : 3));
 		expect(JSON.stringify(sourceState)).toBe(before);
 	});
+
+	it("inherits an old copied summary after Undo removes its unsummarized tail", async () => {
+		const oldCopy = createSessionCompactionState({
+			sourceMessages: messages,
+			compactedMessages: [summary, ...messages.slice(2)],
+		});
+		const first = await restore(oldCopy, 2, false);
+		expect(first.state?.source_message_count).toBe(2);
+		const undone = await restore(first.state, 2, true);
+		expect(
+			projectSessionCompactionState(undone.state!, undone.messages),
+		).toEqual([summary]);
+	});
 	it("keeps full canonical history when no summary exists", async () => {
 		const result = await restore(undefined);
 		expect(result.state).toBeUndefined();

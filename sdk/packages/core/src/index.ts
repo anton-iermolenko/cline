@@ -1098,6 +1098,7 @@ export {
 } from "./services/telemetry/TelemetryService";
 export {
 	createSessionCompactionState,
+	deriveSessionCompactionState,
 	parseSessionCompactionState,
 	projectSessionCompactionState,
 	type SessionCompactionState,

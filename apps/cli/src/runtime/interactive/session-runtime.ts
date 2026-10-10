@@ -6,11 +6,10 @@ import {
 	type CoreSettingsMutationResult,
 	type CoreSettingsSnapshot,
 	type CoreSettingsToggleInput,
-	createSessionCompactionState,
+	deriveSessionCompactionState,
 	isSessionNotFoundError,
 	type PendingPromptMutationResult,
 	type ProviderSettingsManager,
-	projectSessionCompactionState,
 	readSessionCheckpointHistory,
 	type SessionCompactionState,
 	SessionSource,
@@ -494,21 +493,15 @@ export function createInteractiveSessionRuntime(input: {
 			// operation changed the active session while this read was in flight.
 			return;
 		}
-		const projectedMessages = compactionState
-			? projectSessionCompactionState(compactionState, messages)
+		const carriedState = compactionState
+			? deriveSessionCompactionState({
+					state: compactionState,
+					sourceMessages: messages,
+				})
 			: undefined;
-		await restartWithMessages(
-			messages,
-			undefined,
-			projectedMessages
-				? createSessionCompactionState({
-						sourceMessages: messages,
-						compactedMessages: projectedMessages,
-						systemPrompt: compactionState?.system_prompt,
-					})
-				: undefined,
-			{ preserveSessionId: true },
-		);
+		await restartWithMessages(messages, undefined, carriedState, {
+			preserveSessionId: true,
+		});
 	};
 
 	const updateCurrentSessionConnection = async (
@@ -637,8 +630,11 @@ export function createInteractiveSessionRuntime(input: {
 			throw new Error("Cannot fork an empty session.");
 		}
 		const compactionState = await readCompactionState(forkedFromSessionId);
-		const projectedMessages = compactionState
-			? projectSessionCompactionState(compactionState, messages)
+		const carriedState = compactionState
+			? deriveSessionCompactionState({
+					state: compactionState,
+					sourceMessages: messages,
+				})
 			: undefined;
 		await manager.stop(forkedFromSessionId);
 		const forkMetadata = buildForkSessionMetadata({
@@ -647,21 +643,11 @@ export function createInteractiveSessionRuntime(input: {
 			sourceSession: sessionRecord,
 			messages,
 		});
-		await startFreshSession(
-			messages,
-			forkMetadata,
-			projectedMessages
-				? createSessionCompactionState({
-						sourceMessages: messages,
-						compactedMessages: projectedMessages,
-						systemPrompt: compactionState?.system_prompt,
-					})
-				: undefined,
-		);
+		await startFreshSession(messages, forkMetadata, carriedState);
 		// Report carried context from what the new session actually accepted:
 		// the host can reject the inherited state (e.g. stale anchor), and the
 		// UI must not claim a carry-over that did not happen.
-		const acceptedState = projectedMessages
+		const acceptedState = carriedState
 			? await readCompactionState(activeSessionId)
 			: undefined;
 		return {

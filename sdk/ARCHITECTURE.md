@@ -1071,3 +1071,5 @@ Core recounts compaction candidates using an independent message-builder preview
 ## Compaction state during checkpoint restore
 
 Checkpoint restore reads the source compaction artifact in the shared SessionVersioningService, validates it against the checkpoint-trimmed canonical prefix, and reanchors the projected summary plus retained tail for the new session. Both local and hub restore paths carry this state unless an explicit initial state was provided. A checkpoint earlier than the covered prefix, or an edited prefix, discards that artifact rather than leaking later context; workspace-only restore does not load it.
+
+Compaction state copies validate the original canonical anchor, move an identical retained suffix outside the summarized prefix, and validate that prefix against the restore target. Checkpoint Undo can remove or replace unsummarized tail messages without discarding the summary. Restores preceding summarized content still reject that state. CLI restart and fork use the same core derivation so later Undo retains this boundary.

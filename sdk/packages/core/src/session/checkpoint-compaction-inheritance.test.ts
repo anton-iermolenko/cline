@@ -164,6 +164,18 @@ describe.each([
 		).toEqual([summary]);
 		expect(carried?.conversation_id).toBeUndefined();
 	});
+
+	it("inherits a copied summary when Undo removes unchanged retained messages", async () => {
+		const oldCopy = createSessionCompactionState({
+			sourceMessages: messages,
+			compactedMessages: [summary, ...messages.slice(2)],
+		});
+		const carried = await restore(path, oldCopy);
+		expect(carried?.source_message_count).toBe(2);
+		expect(
+			projectSessionCompactionState(carried!, messages.slice(0, 2)),
+		).toEqual([summary]);
+	});
 	it("keeps an explicit initial state authoritative", async () => {
 		const sourceState = createSessionCompactionState({
 			sourceMessages: messages.slice(0, 2),

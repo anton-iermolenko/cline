@@ -197,6 +197,45 @@ export function projectSessionCompactionState(
 	];
 }
 
+/** Copy a validated summary while keeping the unchanged canonical tail outside
+ * its protected boundary. Older copies anchored that tail as if summarized;
+ * peel it back only after validating the complete original anchor. */
+export function deriveSessionCompactionState(input: {
+	state: SessionCompactionState;
+	sourceMessages: readonly MessageWithMetadata[];
+	targetMessages?: readonly MessageWithMetadata[];
+	conversationId?: string;
+}): SessionCompactionState | undefined {
+	const { state } = input;
+	if (!projectSessionCompactionState(state, input.sourceMessages)) {
+		return undefined;
+	}
+	const source = canonicalSourceMessages(input.sourceMessages);
+	let boundary = state.source_message_count;
+	let workingCount = state.messages.length;
+	while (
+		boundary > 0 &&
+		workingCount > 0 &&
+		JSON.stringify(sourceMessageHashInput(source[boundary - 1]!)) ===
+			JSON.stringify(sourceMessageHashInput(state.messages[workingCount - 1]!))
+	) {
+		boundary--;
+		workingCount--;
+	}
+	const derived = createSessionCompactionState({
+		sourceMessages: source.slice(0, boundary),
+		compactedMessages: state.messages.slice(0, workingCount),
+		conversationId: input.conversationId,
+		systemPrompt: state.system_prompt,
+	});
+	return projectSessionCompactionState(
+		derived,
+		input.targetMessages ?? input.sourceMessages,
+	)
+		? derived
+		: undefined;
+}
+
 export function parseSessionCompactionState(
 	value: unknown,
 ): SessionCompactionState | undefined {

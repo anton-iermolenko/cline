@@ -17,8 +17,7 @@ import {
 	type WorktreeRestoreTransaction,
 } from "./checkpoint-restore";
 import {
-	createSessionCompactionState,
-	projectSessionCompactionState,
+	deriveSessionCompactionState,
 	type SessionCompactionState,
 } from "./models/session-compaction";
 import {
@@ -268,19 +267,16 @@ export class SessionVersioningService {
 						input.checkpointRunCount,
 					)
 				: (plan.messages ?? []);
-			// Validate against the restored prefix, not the full source transcript:
-			// a later summary must never leak context past the selected checkpoint.
 			const sourceCompactionState = await input.readCompactionState?.(
 				sourceSession.sessionId,
 			);
-			const projectedMessages = sourceCompactionState
-				? projectSessionCompactionState(sourceCompactionState, initialMessages)
-				: undefined;
-			const initialCompactionState = projectedMessages
-				? createSessionCompactionState({
-						sourceMessages: initialMessages,
-						compactedMessages: projectedMessages,
-						systemPrompt: sourceCompactionState?.system_prompt,
+			// Validate the original anchor before removing an unchanged tail, then
+			// require the summarized prefix to fit the selected checkpoint.
+			const initialCompactionState = sourceCompactionState
+				? deriveSessionCompactionState({
+						state: sourceCompactionState,
+						sourceMessages: sourceMessages ?? [],
+						targetMessages: initialMessages,
 					})
 				: undefined;
 			const context: SessionCheckpointRestoreContext = {

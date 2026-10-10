@@ -366,3 +366,5 @@ When prior agentic compaction has replaced all typed user turns, the basic fold 
 ## Compaction state during checkpoint restore
 
 Checkpoint message restoration preserves compatible compacted working context while retaining the full restored canonical transcript. The saved source prefix must still match and end at or before the restored boundary. State covering later messages is not inherited. The shared service reanchors eligible state for the replacement session, including its saved system prompt; an explicitly supplied initialCompactionState retains precedence.
+
+Compaction state copies validate the original canonical anchor, move an identical retained suffix outside the summarized prefix, and validate that prefix against the restore target. Checkpoint Undo can remove or replace unsummarized tail messages without discarding the summary. Restores preceding summarized content still reject that state. CLI restart and fork use the same core derivation so later Undo retains this boundary.

@@ -480,8 +480,8 @@ describe("createInteractiveSessionRuntime", () => {
 		expect(restartInput).toMatchObject({
 			initialMessages: messages,
 			initialCompactionState: expect.objectContaining({
-				source_message_count: messages.length,
-				messages: [summaryMessage, tailMessage],
+				source_message_count: 1,
+				messages: [summaryMessage],
 				system_prompt: "compacted system",
 			}),
 		});
