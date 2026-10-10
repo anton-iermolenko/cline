@@ -1056,6 +1056,8 @@ export class LocalRuntimeHost implements RuntimeHost {
 			telemetry: this.defaultTelemetry,
 			getSession: (sessionId) => this.getSession(sessionId),
 			readMessages: (sessionId) => this.readSessionMessages(sessionId),
+			readCompactionState: (sessionId) =>
+				this.readSessionCompactionState(sessionId),
 			buildStartInput: (context, startInput) => {
 				const sessionMetadata = context.restoredCheckpointMetadata
 					? {
@@ -1067,6 +1069,8 @@ export class LocalRuntimeHost implements RuntimeHost {
 					...startInput,
 					...(sessionMetadata ? { sessionMetadata } : {}),
 					initialMessages: context.initialMessages,
+					initialCompactionState:
+						startInput.initialCompactionState ?? context.initialCompactionState,
 				};
 			},
 			startSession: (startInput) => this.startSession(startInput),

@@ -362,3 +362,7 @@ When prior agentic compaction has replaced all typed user turns, the basic fold 
 ### Counted local requests
 
 `AgentModel.countInputTokens(request)` is optional and returns a source-labeled measurement or undefined for unsupported providers without generating. Configured local model entries may specify `inputTokenCountUrl`. `compaction.bufferTokens` selects proactive headroom for tokenized/bounded requests; default 2048. Every candidate is recounted before acceptance. Unavailable counters preserve the original context; the local adapter never forwards a request that exceeds its verified input allowance.
+
+## Compaction state during checkpoint restore
+
+Checkpoint message restoration preserves compatible compacted working context while retaining the full restored canonical transcript. The saved source prefix must still match and end at or before the restored boundary. State covering later messages is not inherited. The shared service reanchors eligible state for the replacement session, including its saved system prompt; an explicitly supplied initialCompactionState retains precedence.

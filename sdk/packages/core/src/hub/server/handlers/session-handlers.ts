@@ -660,6 +660,8 @@ export async function handleSessionRestore(
 			getSession: (sessionId) => ctx.sessionHost.getSession(sessionId),
 			readMessages: (sessionId) =>
 				ctx.sessionHost.readSessionMessages(sessionId),
+			readCompactionState: (sessionId) =>
+				ctx.sessionHost.readSessionCompactionState(sessionId),
 			buildStartInput: (context) => {
 				if (context.restoredCheckpointMetadata) {
 					metadata.checkpoint = context.restoredCheckpointMetadata;
@@ -687,7 +689,8 @@ export async function handleSessionRestore(
 						restoredCheckpointRunCount: checkpointRunCount,
 					},
 					initialMessages: context.initialMessages,
-					initialCompactionState,
+					initialCompactionState:
+						initialCompactionState ?? context.initialCompactionState,
 					localRuntime: {
 						modelCatalogDefaults: {
 							loadLatestOnInit: true,

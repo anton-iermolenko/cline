@@ -1,6 +1,12 @@
+import type { MessageWithMetadata } from "@cline/llms";
 import { describe, expect, it, vi } from "vitest";
 import { SessionSource } from "../types/common";
 import type { SessionRecord } from "../types/sessions";
+import {
+	createSessionCompactionState,
+	projectSessionCompactionState,
+	type SessionCompactionState,
+} from "./models/session-compaction";
 import { createCoreSessionSnapshot } from "./session-snapshot";
 import {
 	type SessionVersioningError,
@@ -468,5 +474,125 @@ describe("SessionVersioningService", () => {
 			outcome: "failed",
 			phase: "plan",
 		});
+	});
+});
+
+describe("checkpoint restore compaction inheritance", () => {
+	const summary = {
+		role: "user" as const,
+		content: "Summary of the first run",
+		metadata: { kind: "compaction_summary" },
+	};
+	const sourceState = createSessionCompactionState({
+		sourceMessages: messages.slice(0, 2),
+		compactedMessages: [summary],
+		conversationId: "source-session",
+		systemPrompt: "saved instructions",
+	});
+	async function restore(
+		state: SessionCompactionState | undefined,
+		runCount = 2,
+		omit = true,
+	) {
+		let startedState: SessionCompactionState | undefined;
+		let startedMessages: MessageWithMetadata[] = messages;
+		await new SessionVersioningService().restoreCheckpoint({
+			sessionId: "source-session",
+			checkpointRunCount: runCount,
+			restore: {
+				messages: true,
+				workspace: false,
+				omitCheckpointMessageFromSession: omit,
+			},
+			start: {},
+			getSession: async () => makeSession(),
+			readMessages: async () => messages,
+			readCompactionState: async () => state,
+			buildStartInput: (context) => {
+				startedState = context.initialCompactionState;
+				startedMessages = context.initialMessages;
+				return context;
+			},
+			startSession: async () => ({ sessionId: "restored-session" }),
+			getStartedSessionId: (result) => result.sessionId,
+			cleanupStartedSession: async () => {},
+			retainCheckpointRefs: async () => {},
+		});
+		return { state: startedState, messages: startedMessages };
+	}
+	it.each([
+		true,
+		false,
+	])("carries a valid summary and retained tail (omit checkpoint prompt: %s)", async (omit) => {
+		const before = JSON.stringify(sourceState);
+		const result = await restore(sourceState, 2, omit);
+		expect(result.state).toBeDefined();
+		expect(result.state?.conversation_id).toBeUndefined();
+		expect(result.state?.system_prompt).toBe("saved instructions");
+		expect(
+			projectSessionCompactionState(result.state!, result.messages),
+		).toEqual(omit ? [summary] : [summary, messages[2]]);
+		expect(result.messages).toEqual(messages.slice(0, omit ? 2 : 3));
+		expect(JSON.stringify(sourceState)).toBe(before);
+	});
+	it("keeps full canonical history when no summary exists", async () => {
+		const result = await restore(undefined);
+		expect(result.state).toBeUndefined();
+		expect(result.messages).toEqual(messages.slice(0, 2));
+	});
+	it("rejects a summary whose covered prefix was edited", async () => {
+		const stale = createSessionCompactionState({
+			sourceMessages: [
+				{ ...messages[0], content: "different source" },
+				messages[1]!,
+			],
+			compactedMessages: [summary],
+		});
+		expect((await restore(stale)).state).toBeUndefined();
+	});
+	it.each([
+		true,
+		false,
+	])("rejects a summary covering later runs (omit checkpoint prompt: %s)", async (omit) => {
+		const later = createSessionCompactionState({
+			sourceMessages: messages,
+			compactedMessages: [summary],
+		});
+		expect((await restore(later, 2, omit)).state).toBeUndefined();
+	});
+	it("does not read compaction state for a workspace-only restore", async () => {
+		const readCompactionState = vi.fn(async () => sourceState);
+		await new SessionVersioningService().restoreCheckpoint({
+			sessionId: "source-session",
+			checkpointRunCount: 1,
+			restore: { messages: false, workspace: true },
+			getSession: async () => makeSession(),
+			readMessages: async () => messages,
+			readCompactionState,
+			applyWorkspaceCheckpoint: async () => {},
+		});
+		expect(readCompactionState).not.toHaveBeenCalled();
+	});
+	it("fails before workspace changes if the source state cannot be read", async () => {
+		const applyWorkspaceCheckpoint = vi.fn(async () => {});
+		await expect(
+			new SessionVersioningService().restoreCheckpoint({
+				sessionId: "source-session",
+				checkpointRunCount: 2,
+				restore: { messages: true, workspace: true },
+				start: {},
+				getSession: async () => makeSession(),
+				readMessages: async () => messages,
+				readCompactionState: async () => {
+					throw new Error("state unreadable");
+				},
+				buildStartInput: (context) => context,
+				startSession: async () => ({ sessionId: "replacement" }),
+				getStartedSessionId: (result) => result.sessionId,
+				cleanupStartedSession: async () => {},
+				applyWorkspaceCheckpoint,
+			}),
+		).rejects.toThrow("state unreadable");
+		expect(applyWorkspaceCheckpoint).not.toHaveBeenCalled();
 	});
 });

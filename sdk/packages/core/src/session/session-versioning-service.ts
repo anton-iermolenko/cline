@@ -17,6 +17,11 @@ import {
 	type WorktreeRestoreTransaction,
 } from "./checkpoint-restore";
 import {
+	createSessionCompactionState,
+	projectSessionCompactionState,
+	type SessionCompactionState,
+} from "./models/session-compaction";
+import {
 	type CoreSessionSnapshot,
 	createCoreSessionSnapshot,
 } from "./session-snapshot";
@@ -43,6 +48,7 @@ export interface SessionCheckpointRestoreContext {
 	plan: CheckpointRestorePlan;
 	restoredCheckpointMetadata?: CheckpointMetadata;
 	initialMessages: LlmsProviders.MessageWithMetadata[];
+	initialCompactionState?: SessionCompactionState;
 	restoreMessages: boolean;
 	restoreWorkspace: boolean;
 	checkpointRunCount: number;
@@ -69,6 +75,9 @@ export interface SessionCheckpointRestoreInput<
 	start?: TRestoreStartInput;
 	getSession(sessionId: string): Promise<SessionRecord | undefined>;
 	readMessages(sessionId: string): Promise<LlmsProviders.MessageWithMetadata[]>;
+	readCompactionState?: (
+		sessionId: string,
+	) => Promise<SessionCompactionState | undefined>;
 	buildStartInput?: (
 		context: SessionCheckpointRestoreContext,
 		start: TRestoreStartInput,
@@ -259,6 +268,21 @@ export class SessionVersioningService {
 						input.checkpointRunCount,
 					)
 				: (plan.messages ?? []);
+			// Validate against the restored prefix, not the full source transcript:
+			// a later summary must never leak context past the selected checkpoint.
+			const sourceCompactionState = await input.readCompactionState?.(
+				sourceSession.sessionId,
+			);
+			const projectedMessages = sourceCompactionState
+				? projectSessionCompactionState(sourceCompactionState, initialMessages)
+				: undefined;
+			const initialCompactionState = projectedMessages
+				? createSessionCompactionState({
+						sourceMessages: initialMessages,
+						compactedMessages: projectedMessages,
+						systemPrompt: sourceCompactionState?.system_prompt,
+					})
+				: undefined;
 			const context: SessionCheckpointRestoreContext = {
 				sourceSession,
 				sourceMessages,
@@ -266,6 +290,7 @@ export class SessionVersioningService {
 				plan,
 				restoredCheckpointMetadata,
 				initialMessages,
+				initialCompactionState,
 				restoreMessages,
 				restoreWorkspace,
 				checkpointRunCount: input.checkpointRunCount,

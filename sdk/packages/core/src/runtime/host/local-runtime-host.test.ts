@@ -6600,6 +6600,11 @@ describe("LocalRuntimeHost", () => {
 
 		// An aborted attempt is not an attempt: the next turn tries again.
 		let abortNext = true;
+		const abortController = new AbortController();
+		let markCompactorStarted!: () => void;
+		const compactorStarted = new Promise<void>((resolve) => {
+			markCompactorStarted = resolve;
+		});
 		const aborted = await startResumed(
 			"sess-imported-abort",
 			{ importedFrom: { tool: "claude-code", sourceSessionId: "abc" } },
@@ -6607,7 +6612,16 @@ describe("LocalRuntimeHost", () => {
 				compact: async () => {
 					if (abortNext) {
 						abortNext = false;
-						throw new DOMException("aborted", "AbortError");
+						markCompactorStarted();
+						await new Promise<void>((_, reject) => {
+							abortController.signal.addEventListener(
+								"abort",
+								() => {
+									reject(new DOMException("aborted", "AbortError"));
+								},
+								{ once: true },
+							);
+						});
 					}
 					return {
 						messages: [
@@ -6618,8 +6632,9 @@ describe("LocalRuntimeHost", () => {
 				},
 			},
 		);
-		const abortController = new AbortController();
 		const abortedRun = aborted.runPrepareTurn(abortController.signal);
+		// Abort after the compactor starts; preflight can yield before invoking it.
+		await compactorStarted;
 		abortController.abort();
 		await expect(abortedRun).rejects.toThrow("aborted");
 		expect((await aborted.runPrepareTurn())?.messages?.[0]).toEqual({
