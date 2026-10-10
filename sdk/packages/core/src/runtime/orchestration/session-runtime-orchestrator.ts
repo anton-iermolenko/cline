@@ -1220,6 +1220,28 @@ export class SessionRuntime {
 				iteration: context.iteration,
 				messages,
 				apiMessages,
+				countRequestInputTokens: async (
+					candidate,
+					candidateSystemPrompt = context.systemPrompt ?? "",
+				) => {
+					const counter = createAgentModelFromConfig(this.config, undefined);
+					const prepared =
+						candidate === messages
+							? apiMessages
+							: await this.prepareProviderMessagesForApi(candidate, true);
+					return counter.countInputTokens?.({
+						systemPrompt: candidateSystemPrompt,
+						messages: messagesToAgentMessages(prepared),
+						tools: context.tools,
+						signal: context.signal,
+						options: {
+							maxTokens: this.config.maxTokensPerTurn,
+							thinking: this.config.thinking,
+							reasoningEffort: this.config.reasoningEffort,
+							thinkingBudgetTokens: this.config.thinkingBudgetTokens,
+						},
+					});
+				},
 				abortSignal: context.signal ?? new AbortController().signal,
 				systemPrompt: context.systemPrompt ?? "",
 				tools,
@@ -1257,6 +1279,7 @@ export class SessionRuntime {
 
 	private async prepareProviderMessagesForApi(
 		messages: MessageWithMetadata[],
+		preview = false,
 	): Promise<MessageWithMetadata[]> {
 		let providerMessages = messages;
 		const messageBuilders =
@@ -1264,7 +1287,9 @@ export class SessionRuntime {
 		for (const builder of messageBuilders) {
 			providerMessages = await builder.build(providerMessages);
 		}
-		return this.messageBuilder.buildForApi(providerMessages);
+		return preview
+			? this.messageBuilder.buildPreviewForApi(providerMessages)
+			: this.messageBuilder.buildForApi(providerMessages);
 	}
 
 	private handleRuntimeEvent(event: AgentRuntimeEvent): void {
@@ -1638,9 +1663,6 @@ async function buildUserTurnContent(
 }
 
 function tryGetModelInfo(config: AgentConfig): ModelInfo | undefined {
-	if (config.knownModels?.[config.modelId]) {
-		return config.knownModels[config.modelId];
-	}
 	const resolvedKnownModels = resolveKnownModelsFromConfig(config);
 	if (resolvedKnownModels?.[config.modelId]) {
 		return resolvedKnownModels[config.modelId];

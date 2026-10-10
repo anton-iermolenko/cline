@@ -58,11 +58,12 @@ function formatCostText(providerId: string, totalCost: number): string {
 }
 
 export function formatStatusBarUsageText(input: {
+	inputTokenSource?: "prepared" | "last request";
 	totalTokens: number;
 	totalCost: number;
 	providerId: string;
 }): string {
-	const tokens = `(${input.totalTokens.toLocaleString()})`;
+	const tokens = `(${input.totalTokens.toLocaleString()} ${input.inputTokenSource === "prepared" ? "prepared input" : "last input"})`;
 	const costText = formatCostText(input.providerId, input.totalCost);
 
 	if (!costText) {
@@ -126,6 +127,7 @@ export function resolveModelMaxInputTokens(config: {
 }
 
 export interface StatusBarProps {
+	inputTokenSource?: "prepared" | "last request";
 	providerId: string;
 	modelId: string;
 	totalTokens: number;
@@ -189,6 +191,7 @@ export function StatusBar(props: StatusBarProps) {
 		totalTokens,
 		totalCost,
 		providerId: props.providerId,
+		inputTokenSource: props.inputTokenSource,
 	});
 	const contextText = bar
 		? ` ${bar.filled}${bar.empty} ${usageText}`

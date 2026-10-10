@@ -688,6 +688,7 @@ export type {
 } from "./services/plugin-uninstall";
 export { uninstallPlugin } from "./services/plugin-uninstall";
 export {
+	applyLocalModelLimits,
 	ensureCustomProvidersLoadedSync,
 	readModelsFileSync,
 	resolveModelsRegistryPath,

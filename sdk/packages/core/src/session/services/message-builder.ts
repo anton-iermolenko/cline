@@ -172,6 +172,22 @@ export class MessageBuilder {
 		this.committedOutdatedRewrites.clear();
 	}
 
+	buildPreviewForApi(messages: Message[]): Message[] {
+		const preview = new MessageBuilder({
+			getToolResultRecovery: this.getToolResultRecovery,
+			maxToolResultChars: this.maxToolResultChars,
+			maxFileContentChars: this.maxFileContentChars,
+			maxTotalTextBytes: this.maxTotalTextBytes,
+			mediaBudget: this.mediaBudget,
+			maxAssistantTextChars: this.maxAssistantTextChars,
+			maxAssistantToolMarkupChars: this.maxAssistantToolMarkupChars,
+			minOutdatedRewriteBytes: this.minOutdatedRewriteBytes,
+		});
+		for (const [id, locators] of this.committedOutdatedRewrites)
+			preview.committedOutdatedRewrites.set(id, new Set(locators));
+		return preview.buildForApi(messages);
+	}
+
 	buildForApi(messages: Message[]): Message[] {
 		this.recoveryNoticeBytes = 0;
 		this.reindex(messages);

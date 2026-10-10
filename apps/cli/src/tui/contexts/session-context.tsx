@@ -22,6 +22,8 @@ interface SessionContextValue {
 	autoApproveAll: boolean;
 	compactionMode: CliCompactionMode;
 	lastTotalTokens: number;
+	inputTokenSource: "prepared" | "last request";
+	setPreparedInputTokens: (tokens: number) => void;
 	lastTotalCost: number;
 	isExitRequested: boolean;
 
@@ -122,6 +124,14 @@ export function SessionProvider(props: {
 	const [lastTotalTokens, setLastTotalTokens] = useState(
 		() => initialUsage?.totalTokens ?? 0,
 	);
+	const [inputTokenSource, setInputTokenSource] = useState<
+		"prepared" | "last request"
+	>("last request");
+	const setPreparedInputTokens = useCallback((tokens: number) => {
+		if (!Number.isSafeInteger(tokens) || tokens < 0) return;
+		setLastTotalTokens(tokens);
+		setInputTokenSource("prepared");
+	}, []);
 	const [lastTotalCost, setLastTotalCost] = useState(
 		() => initialUsage?.totalCost ?? 0,
 	);
@@ -228,6 +238,7 @@ export function SessionProvider(props: {
 	const addUsageDelta = useCallback((usage: UsageDelta) => {
 		const nextTotalTokens = nextUsageTokenDisplay(0, usage);
 		if (nextTotalTokens > 0) {
+			setInputTokenSource("last request");
 			setLastTotalTokens((prev) => nextUsageTokenDisplay(prev, usage));
 		}
 		const costDelta = usage.cost;
@@ -258,6 +269,8 @@ export function SessionProvider(props: {
 		autoApproveAll,
 		compactionMode,
 		lastTotalTokens,
+		inputTokenSource,
+		setPreparedInputTokens,
 		lastTotalCost,
 		isExitRequested,
 		appendEntry,

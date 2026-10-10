@@ -1,11 +1,12 @@
-import type { ModelInfo, ToolResultContent } from "@cline/llms";
+import type { ToolResultContent } from "@cline/llms";
 import {
 	CHARS_PER_TOKEN,
 	estimateTokens,
 	type MessageWithMetadata,
+	resolveEffectiveMaxInputTokens,
 } from "@cline/shared";
 
-export { CHARS_PER_TOKEN, estimateTokens };
+export { CHARS_PER_TOKEN, estimateTokens, resolveEffectiveMaxInputTokens };
 
 import type { CoreCompactionSummarizerConfig } from "../../types/config";
 import type { ProviderConfig } from "../../types/provider-settings";
@@ -53,32 +54,6 @@ export type EstimateMessageTokens = (message: MessageWithMetadata) => number;
 
 function isPositiveFiniteNumber(value: unknown): value is number {
 	return typeof value === "number" && Number.isFinite(value) && value > 0;
-}
-
-/**
- * Resolve the model's usable prompt budget. A reported input limit is
- * authoritative but cannot exceed the context window. When the model only
- * reports a context window, retain a conservative margin for request overhead.
- */
-export function resolveEffectiveMaxInputTokens(
-	input: Pick<ModelInfo, "maxInputTokens" | "contextWindow">,
-): number | undefined {
-	const contextWindow = isPositiveFiniteNumber(input.contextWindow)
-		? input.contextWindow
-		: undefined;
-	const maxInputTokens = isPositiveFiniteNumber(input.maxInputTokens)
-		? input.maxInputTokens
-		: undefined;
-
-	if (maxInputTokens !== undefined) {
-		return contextWindow === undefined
-			? maxInputTokens
-			: Math.min(maxInputTokens, contextWindow);
-	}
-
-	return contextWindow === undefined
-		? undefined
-		: contextWindow * CONTEXT_WINDOW_INPUT_RATIO;
 }
 
 export function truncateText(text: string, limit: number): string {
@@ -203,7 +178,10 @@ export function createTokenEstimator(): EstimateMessageTokens {
 		}
 		let serialized: string;
 		try {
-			serialized = JSON.stringify(message);
+			serialized = JSON.stringify({
+				role: message.role,
+				content: message.content,
+			});
 		} catch {
 			serialized = serializeMessage(message);
 		}

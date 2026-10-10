@@ -5,10 +5,11 @@ import type {
 	CoreCompactionContext,
 	ProviderSettingsManager,
 } from "@cline/core";
+import { applyLocalModelLimits } from "@cline/core";
 import { estimateRequestInputTokens } from "@cline/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createContextCompactionPrepareTurn } from "../../../../sdk/packages/core/src/extensions/context/compaction";
-import { applyLocalModelLimits } from "./local-model-limits";
+import { normalizeUsage } from "../../../../sdk/packages/llms/src/providers/ai-sdk";
 import type { Config } from "./types";
 
 const roots: string[] = [];
@@ -33,6 +34,47 @@ afterEach(() => {
 });
 
 describe("local model limits", () => {
+	it("calculates custom model costs from stored per-million-token prices", () => {
+		const config = {
+			providerId: "openai-compatible",
+			modelId: "qwen-27b",
+		} as Pick<Config, "providerId" | "modelId" | "knownModels">;
+		applyLocalModelLimits(
+			config,
+			fixture({ "qwen-27b": { inputPrice: 0.02, outputPrice: 0.35 } }),
+		);
+		const usage = normalizeUsage(
+			{ inputTokens: 1000000, outputTokens: 1000000 },
+			undefined,
+			config.knownModels?.["qwen-27b"].pricing,
+		);
+		expect(usage.totalCost).toBeCloseTo(0.37);
+	});
+	it("preserves catalog rates for partial overrides and accepts zero cache prices", () => {
+		const config = {
+			providerId: "openai-compatible",
+			modelId: "custom",
+			knownModels: {
+				custom: {
+					id: "custom",
+					pricing: { input: 9, output: 2, cacheRead: 1, cacheWrite: 3 },
+				},
+			},
+		} as Pick<Config, "providerId" | "modelId" | "knownModels">;
+		applyLocalModelLimits(
+			config,
+			fixture({
+				custom: { inputPrice: 0, cacheReadsPrice: 0, cacheWritesPrice: 0 },
+			}),
+		);
+		expect(config.knownModels?.custom.pricing).toEqual({
+			input: 0,
+			output: 2,
+			cacheRead: 0,
+			cacheWrite: 0,
+		});
+	});
+
 	it("supplies custom model limits when the SDK catalog has no matching model", () => {
 		const config: Pick<Config, "providerId" | "modelId" | "knownModels"> = {
 			providerId: "openai-compatible",
@@ -181,6 +223,44 @@ describe("local model limits", () => {
 		expect(config.knownModels?.small.maxInputTokens).toBe(7168);
 		expect(original?.maxInputTokens).toBe(3584);
 	});
+	it("preserves an intentional lower input cap on a sparse output update", () => {
+		const config = {
+			providerId: "openai-compatible",
+			modelId: "custom",
+			knownModels: {
+				custom: {
+					id: "custom",
+					contextWindow: 81920,
+					maxInputTokens: 20000,
+					maxTokens: 8192,
+				},
+			},
+		};
+		applyLocalModelLimits(config, fixture({ custom: { maxTokens: 4096 } }));
+		expect(config.knownModels.custom.maxInputTokens).toBe(20000);
+	});
+	it.each([
+		0,
+		-1,
+		1.5,
+		"81920",
+	])("rejects invalid stored context %s", (contextWindow) => {
+		expect(() =>
+			applyLocalModelLimits(
+				{ providerId: "openai-compatible", modelId: "custom" },
+				fixture({ custom: { contextWindow } }),
+			),
+		).toThrow("positive integer");
+	});
+	it("rejects output that consumes the whole context", () => {
+		expect(() =>
+			applyLocalModelLimits(
+				{ providerId: "openai-compatible", modelId: "custom" },
+				fixture({ custom: { contextWindow: 8192, maxTokens: 8192 } }),
+			),
+		).toThrow("no input capacity");
+	});
+
 	it("keeps catalog-only models unchanged when no local override exists", () => {
 		const config = {
 			providerId: "openai-compatible",

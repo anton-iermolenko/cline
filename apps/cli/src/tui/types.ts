@@ -56,6 +56,7 @@ export type ChatEntry = (
 			kind: "compaction";
 			compactionMode: "auto" | "manual" | "inherited";
 			status: "started" | "completed" | "skipped" | "failed" | "cancelled";
+			countSource?: "tokenized" | "bounded" | "estimated";
 			tokensBefore?: number;
 			tokensAfter?: number;
 			messagesBefore?: number;

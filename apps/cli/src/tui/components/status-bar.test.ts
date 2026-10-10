@@ -58,7 +58,7 @@ describe("formatStatusBarUsageText", () => {
 				totalCost: 0.123,
 				providerId: "cline",
 			}),
-		).toBe("(12,345) $0.12");
+		).toBe("(12,345 last input) $0.12");
 	});
 
 	it("rounds cost to two decimals even when tiny", () => {
@@ -68,7 +68,7 @@ describe("formatStatusBarUsageText", () => {
 				totalCost: 0.0004,
 				providerId: "cline",
 			}),
-		).toBe("(12,345) $0.00");
+		).toBe("(12,345 last input) $0.00");
 	});
 
 	it("hides cost entirely for subscription providers", () => {
@@ -78,7 +78,7 @@ describe("formatStatusBarUsageText", () => {
 				totalCost: 0.123,
 				providerId: "cline-pass",
 			}),
-		).toBe("(12,345)");
+		).toBe("(12,345 last input)");
 	});
 });
 

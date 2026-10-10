@@ -146,6 +146,7 @@ export function ChatView(props: {
 					providerId={config.providerId}
 					modelId={modelDisplayName}
 					totalTokens={session.lastTotalTokens}
+					inputTokenSource={session.inputTokenSource}
 					totalCost={session.lastTotalCost}
 					maxInputTokens={maxInputTokens}
 					uiMode={session.uiMode}

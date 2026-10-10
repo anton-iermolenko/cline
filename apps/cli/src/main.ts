@@ -2,7 +2,7 @@ import { fstatSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename } from "node:path";
 import type { ToolPolicy } from "@cline/core";
-
+import { applyLocalModelLimits } from "@cline/core";
 import { registerDisposable } from "@cline/shared";
 import type { Command } from "commander";
 import { registerHistoryCommand } from "./commands/history-command";
@@ -33,7 +33,6 @@ import {
 	normalizeAutoApproveArgs,
 	resolveWorkspaceRoot,
 } from "./utils/helpers";
-import { applyLocalModelLimits } from "./utils/local-model-limits";
 import {
 	c,
 	installStreamErrorGuards,

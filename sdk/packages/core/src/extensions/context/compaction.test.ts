@@ -123,7 +123,10 @@ describe("createTokenEstimator", () => {
 		};
 
 		expect(estimateMessageTokens(message)).toBe(
-			Math.ceil(JSON.stringify(message).length / 3),
+			Math.ceil(
+				JSON.stringify({ role: message.role, content: message.content })
+					.length / 3,
+			),
 		);
 	});
 
@@ -138,7 +141,10 @@ describe("createTokenEstimator", () => {
 		};
 
 		expect(estimateMessageTokens(message)).toBe(
-			Math.ceil(JSON.stringify(message).length / 3),
+			Math.ceil(
+				JSON.stringify({ role: message.role, content: message.content })
+					.length / 3,
+			),
 		);
 	});
 });
@@ -1792,7 +1798,7 @@ describe("createContextCompactionPrepareTurn", () => {
 		);
 	});
 
-	it("does not fall back to basic compaction when agentic compaction is cancelled", async () => {
+	it("does not run the summarizer or basic compaction when already cancelled", async () => {
 		const providerError = new Error("request stopped");
 		createHandlerMock.mockReturnValue({
 			createMessage: vi.fn(() => {
@@ -1839,7 +1845,8 @@ describe("createContextCompactionPrepareTurn", () => {
 					info: { id: "mock-model", maxInputTokens: 10 },
 				},
 			}),
-		).rejects.toBe(providerError);
+		).rejects.toMatchObject({ name: "AbortError" });
+		expect(createHandlerMock).not.toHaveBeenCalled();
 		expect(log).not.toHaveBeenCalledWith(
 			"Agentic compaction failed; falling back to basic compaction",
 			expect.anything(),

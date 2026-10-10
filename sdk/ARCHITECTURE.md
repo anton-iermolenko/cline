@@ -1061,3 +1061,9 @@ session’s tool approval policies or approval callback, matching generic subage
 and teammates. The parent’s `subagent_<name>` delegation call still follows the
 parent’s approval policy. Tool allowlists and disabled-tool filtering remain in
 effect when constructing child tools. Inherited runtime hooks are unchanged.
+
+## Local measured input budgeting
+
+Core merges local model limits/pricing through the shared provider registry. Providers with `ModelInfo.metadata.inputTokenCountUrl` can count a candidate through the real AI SDK serializer using `AgentModel.countInputTokens`. Count-only transports never submit inference or execute tools. The native local adapter counts its normalized body with llama-server's `/v1/chat/completions/input_tokens`, verifies running capacity, and guards final submission.
+
+Core recounts compaction candidates using an independent message-builder preview before committing a sidecar. Tokenized input uses a configurable fixed compaction buffer (2048 by default), separate from completion reservation and server boundary slack. Estimated providers retain their existing percentage trigger. `input-token-count` is observational status, not provider usage or cost. Doctor reports the installed SDK fingerprint and running hub fingerprint because daemon code can differ from the client even at the same semver.

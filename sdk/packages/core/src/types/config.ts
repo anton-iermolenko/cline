@@ -131,6 +131,7 @@ export interface CoreCompactionBudgetMetadata {
 }
 
 export interface CoreCompactionResult {
+	systemPrompt?: string;
 	messages: MessageWithMetadata[];
 	budget?: CoreCompactionBudgetMetadata;
 }
@@ -156,6 +157,8 @@ export interface CoreCompactionSummarizerConfig {
 export type CoreCompactionStrategy = "basic" | "agentic";
 
 export interface CoreCompactionConfig {
+	/** Proactive input headroom for providers with token counting. Defaults to 2048. */
+	bufferTokens?: number;
 	enabled?: boolean;
 	strategy?: CoreCompactionStrategy;
 	preserveRecentTokens?: number;

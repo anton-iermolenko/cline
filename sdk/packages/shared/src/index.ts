@@ -265,6 +265,7 @@ export {
 	CHARS_PER_TOKEN,
 	estimateRequestInputTokens,
 	estimateTokens,
+	resolveEffectiveMaxInputTokens,
 	type TokenEstimatedRequest,
 } from "./llms/tokens";
 export type {

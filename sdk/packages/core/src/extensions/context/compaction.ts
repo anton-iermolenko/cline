@@ -1,5 +1,13 @@
-import { estimateRequestInputTokens } from "@cline/shared";
-import { resolveConnectionProviderConfig } from "../../services/llms/handler-factory";
+import {
+	estimateRequestInputTokens,
+	type RequestInputTokenCount,
+} from "@cline/shared";
+import { messagesToAgentMessages } from "../../runtime/config/agent-message-codec";
+import {
+	createAgentModelFromConfig,
+	resolveConnectionProviderConfig,
+	resolveKnownModelsFromConfig,
+} from "../../services/llms/handler-factory";
 import {
 	captureCompactionBudgetEmergency,
 	captureCompactionExecuted,
@@ -11,6 +19,10 @@ import {
 	projectSessionCompactionState,
 	type SessionCompactionState,
 } from "../../session/models/session-compaction";
+import {
+	getMessageBuilderOptionsFromEnv,
+	MessageBuilder,
+} from "../../session/services/message-builder";
 import type {
 	CoreCompactionConfig,
 	CoreCompactionContext,
@@ -29,6 +41,7 @@ import {
 	DEFAULT_PRESERVE_RECENT_TOKENS,
 	DEFAULT_TARGET_RATIO,
 	findLatestSummaryIndex,
+	isTurnStartMessage,
 	MAX_INPUT_UNDERESTIMATE_FACTOR,
 	resolveEffectiveMaxInputTokens,
 } from "./compaction-shared";
@@ -40,6 +53,10 @@ export interface ContextPipelinePrepareTurnInput {
 	iteration: number;
 	messages: CoreCompactionContext["messages"];
 	apiMessages: CoreCompactionContext["messages"];
+	countRequestInputTokens?: (
+		messages: CoreCompactionContext["messages"],
+		systemPrompt?: string,
+	) => Promise<RequestInputTokenCount | undefined>;
 	abortSignal: AbortSignal;
 	systemPrompt: string;
 	tools: unknown[];
@@ -292,7 +309,8 @@ export function createContextCompactionPrepareTurn(
 		return undefined;
 	}
 
-	const estimateMessageTokens = createTokenEstimator();
+	const baseEstimateMessageTokens = createTokenEstimator();
+	const irreducibleRequests = new Set<string>();
 	const strategy = userCompaction?.strategy ?? "agentic";
 	const runBuiltinStrategy = BUILTIN_COMPACTION_STRATEGIES[strategy];
 	const mode = options.mode ?? "auto";
@@ -301,20 +319,67 @@ export function createContextCompactionPrepareTurn(
 		: strategy;
 
 	return async (context) => {
+		context.abortSignal.throwIfAborted();
 		const effectiveMode: CoreCompactionMode = context.overflowRecovery
 			? "overflow_recovery"
 			: mode;
-		const apiMessageTokens = context.apiMessages.reduce(
-			(total: number, message) => total + estimateMessageTokens(message),
-			0,
-		);
-		const requestInputTokens = estimateRequestInputTokens({
+		const countRequest =
+			context.countRequestInputTokens ??
+			(typeof context.model.info?.metadata?.inputTokenCountUrl !== "string"
+				? async () => undefined
+				: async (
+						messages: CoreCompactionContext["messages"],
+						systemPrompt = context.systemPrompt,
+					) => {
+						const model = createAgentModelFromConfig(
+							{
+								...config,
+								systemPrompt: context.systemPrompt,
+								tools: [],
+								providerConfig: resolveConnectionProviderConfig(config),
+							},
+							undefined,
+						);
+						return model.countInputTokens?.({
+							systemPrompt,
+							messages: messagesToAgentMessages(
+								new MessageBuilder(
+									getMessageBuilderOptionsFromEnv(),
+								).buildPreviewForApi(messages),
+							),
+							tools: context.tools as never,
+							signal: context.abortSignal,
+							options: {
+								maxTokens: config.providerConfig?.maxOutputTokens,
+								thinking: config.providerConfig?.thinking,
+								reasoningEffort: config.providerConfig?.reasoningEffort,
+								thinkingBudgetTokens:
+									config.providerConfig?.thinkingBudgetTokens,
+							},
+						});
+					});
+		const beforeMeasurement = await countRequest(context.messages);
+		context.abortSignal.throwIfAborted();
+		const estimatedRequestTokens = estimateRequestInputTokens({
 			systemPrompt: context.systemPrompt,
 			messages: context.apiMessages,
 			tools: context.tools,
 		});
+		const requestInputTokens =
+			beforeMeasurement?.inputTokens ?? estimatedRequestTokens;
+		const countScale = beforeMeasurement
+			? requestInputTokens / Math.max(1, estimatedRequestTokens)
+			: 1;
+		const estimateMessageTokens = (
+			message: CoreCompactionContext["messages"][number],
+		) =>
+			Math.max(1, Math.ceil(baseEstimateMessageTokens(message) * countScale));
+		const apiMessageTokens = context.apiMessages.reduce(
+			(total, message) => total + estimateMessageTokens(message),
+			0,
+		);
 		const messageInputTokens = context.messages.reduce(
-			(total: number, message) => total + estimateMessageTokens(message),
+			(total, message) => total + estimateMessageTokens(message),
 			0,
 		);
 		const requestOverheadTokens = Math.max(
@@ -322,10 +387,13 @@ export function createContextCompactionPrepareTurn(
 			requestInputTokens - apiMessageTokens,
 		);
 		const rawMaxInputTokens =
+			beforeMeasurement?.maxInputTokens ??
 			resolveEffectiveMaxInputTokens({
 				maxInputTokens: context.model.info?.maxInputTokens,
 				contextWindow: context.model.info?.contextWindow,
-			}) ?? DEFAULT_MAX_INPUT_TOKENS;
+				maxOutputTokens: config.providerConfig?.maxOutputTokens,
+			}) ??
+			DEFAULT_MAX_INPUT_TOKENS;
 		// The char-based estimate under-counts dense content (disassembly, image
 		// dumps, minified sources). When the provider's actual count for the
 		// PREVIOUS request already exceeds our estimate for the (larger) current
@@ -345,14 +413,39 @@ export function createContextCompactionPrepareTurn(
 				? context.previousRequestInputTokens
 				: 0;
 		const underestimateFactor =
-			actualPreviousInputTokens > 0 && requestInputTokens > 0
+			!beforeMeasurement &&
+			actualPreviousInputTokens > 0 &&
+			requestInputTokens > 0
 				? Math.min(
 						MAX_INPUT_UNDERESTIMATE_FACTOR,
 						Math.max(1, actualPreviousInputTokens / requestInputTokens),
 					)
 				: 1;
 		const maxInputTokens = rawMaxInputTokens / underestimateFactor;
-		const requestTriggerTokens = maxInputTokens * COMPACTION_TRIGGER_RATIO;
+		const buffer =
+			userCompaction.bufferTokens ??
+			beforeMeasurement?.compactionBufferTokens ??
+			2048;
+		if (!Number.isSafeInteger(buffer) || buffer < 0)
+			throw new Error("Compaction bufferTokens must be a nonnegative integer");
+		const requestTriggerTokens = beforeMeasurement
+			? Math.max(1, maxInputTokens - buffer)
+			: maxInputTokens * COMPACTION_TRIGGER_RATIO;
+		if (beforeMeasurement)
+			context.emitStatusNotice?.("input-token-count", {
+				kind: "input_token_count",
+				...beforeMeasurement,
+				triggerTokens: requestTriggerTokens,
+			});
+		if (
+			effectiveMode === "auto" &&
+			beforeMeasurement &&
+			requestInputTokens <= maxInputTokens &&
+			irreducibleRequests.has(
+				beforeMeasurement.fingerprint + beforeMeasurement.budgetRevision,
+			)
+		)
+			return undefined;
 		const messageTriggerTokens = translateRequestBudgetToMessages(
 			requestTriggerTokens,
 			requestOverheadTokens,
@@ -376,7 +469,7 @@ export function createContextCompactionPrepareTurn(
 			underestimateFactor,
 			requestTriggerTokens,
 			messageTriggerTokens,
-			thresholdRatio: COMPACTION_TRIGGER_RATIO,
+			thresholdRatio: requestTriggerTokens / maxInputTokens,
 			shouldCompact,
 			messageCount: context.messages.length,
 			apiMessageCount: context.apiMessages.length,
@@ -424,7 +517,7 @@ export function createContextCompactionPrepareTurn(
 					triggerTokens: requestTriggerTokens,
 					targetTokens: requestTargetTokens,
 					overheadTokens: requestOverheadTokens,
-					thresholdRatio: COMPACTION_TRIGGER_RATIO,
+					thresholdRatio: requestTriggerTokens / maxInputTokens,
 					utilizationRatio:
 						maxInputTokens > 0 ? requestInputTokens / maxInputTokens : 0,
 				},
@@ -469,6 +562,14 @@ export function createContextCompactionPrepareTurn(
 			// credentials the host has since refreshed or replaced.
 			providerConfig: {
 				...resolveConnectionProviderConfig(config),
+				knownModels: resolveKnownModelsFromConfig({
+					...config,
+					systemPrompt: context.systemPrompt,
+					tools: [],
+					knownModels: context.model.info
+						? { [config.modelId]: context.model.info }
+						: undefined,
+				}),
 				abortSignal: context.abortSignal,
 			},
 			compaction: userCompaction,
@@ -568,6 +669,7 @@ export function createContextCompactionPrepareTurn(
 		// A declined summary is not a reason to send the same oversized request.
 		// Retry with a deterministic fold, including previously preserved output.
 		if (
+			!beforeMeasurement &&
 			!userCompaction?.compact &&
 			(effectiveMode === "auto" ||
 				(effectiveMode === "manual" &&
@@ -640,6 +742,116 @@ export function createContextCompactionPrepareTurn(
 			}
 		}
 
+		let afterMeasurement: RequestInputTokenCount | undefined;
+		if (beforeMeasurement) {
+			const measure = async (candidate: CoreCompactionResult | undefined) =>
+				candidate?.messages?.length
+					? await countRequest(
+							candidate.messages,
+							candidate.systemPrompt ?? context.systemPrompt,
+						)
+					: undefined;
+			afterMeasurement = await measure(result);
+			const protectedPrompt = [...context.messages]
+				.reverse()
+				.find(isTurnStartMessage);
+			const protectsCurrentPrompt = (
+				candidate: CoreCompactionResult | undefined,
+			) =>
+				!protectedPrompt ||
+				candidate?.messages.some(
+					(message) =>
+						message.role === protectedPrompt.role &&
+						JSON.stringify(message.content) ===
+							JSON.stringify(protectedPrompt.content),
+				);
+			const acceptable = () =>
+				!!afterMeasurement &&
+				!!result?.messages?.length &&
+				protectsCurrentPrompt(result) &&
+				afterMeasurement.inputTokens <= afterMeasurement.maxInputTokens &&
+				afterMeasurement.inputTokens < requestInputTokens;
+			// Candidate selection is heuristic; its final admission is always measured.
+			for (
+				let attempt = 0;
+				attempt < 4 &&
+				(!acceptable() ||
+					(afterMeasurement?.inputTokens ?? Number.POSITIVE_INFINITY) >
+						requestTargetTokens);
+				attempt++
+			) {
+				context.abortSignal.throwIfAborted();
+				const current = afterMeasurement?.inputTokens ?? requestInputTokens;
+				const adjustedTarget = Math.max(
+					1,
+					Math.floor(
+						messageTargetTokens *
+							Math.min(0.8, requestTargetTokens / Math.max(1, current)) **
+								(attempt + 1),
+					),
+				);
+				const folded = runBasicCompaction({
+					context: {
+						...compactionContext,
+						messages: protectsCurrentPrompt(result)
+							? (result?.messages ?? context.messages)
+							: context.messages,
+						budget: {
+							...compactionContext.budget,
+							messages: {
+								...compactionContext.budget.messages,
+								targetTokens: adjustedTarget,
+							},
+						},
+					},
+					estimateMessageTokens,
+					logger: config.logger,
+					refoldPreserved: true,
+				});
+				if (!folded?.messages?.length) break;
+				const counted = await measure(folded);
+				if (!counted)
+					throw new Error(
+						"Input token counter became unavailable; original context was preserved",
+					);
+				if (
+					afterMeasurement &&
+					counted.inputTokens >= afterMeasurement.inputTokens
+				)
+					break;
+				result = folded;
+				afterMeasurement = counted;
+				executedStrategy = "basic";
+			}
+			if (!acceptable()) {
+				if (
+					requestInputTokens <= beforeMeasurement.maxInputTokens &&
+					effectiveMode !== "overflow_recovery"
+				) {
+					if (irreducibleRequests.size >= 32) irreducibleRequests.clear();
+					irreducibleRequests.add(
+						beforeMeasurement.fingerprint + beforeMeasurement.budgetRevision,
+					);
+					context.emitStatusNotice?.(`${noticePrefix}compaction-skipped`, {
+						kind: statusReason,
+						phase: "skipped",
+						reason: "no_reducible_context",
+						inputTokens: requestInputTokens,
+						maxInputTokens,
+					});
+					return undefined;
+				}
+				throw new Error(
+					`Compaction could not produce a smaller request within the hard input allowance (${beforeMeasurement.maxInputTokens} tokens; measured input ${afterMeasurement?.inputTokens ?? requestInputTokens}). Original context was preserved.`,
+				);
+			}
+			if (!afterMeasurement)
+				throw new Error(
+					"Input token counting failed; original context was preserved",
+				);
+		}
+
+		context.abortSignal.throwIfAborted();
 		const durationMs = Date.now() - startedAt;
 		// Telemetry identity: surface the agent/conversation passed into the
 		// prepareTurn so multi-agent runs can attribute compactions correctly.
@@ -657,7 +869,13 @@ export function createContextCompactionPrepareTurn(
 				(total: number, message) => total + estimateMessageTokens(message),
 				0,
 			);
-			const afterRequestTokens = requestOverheadTokens + afterMessageTokens;
+			const afterRequestTokens =
+				afterMeasurement?.inputTokens ??
+				estimateRequestInputTokens({
+					systemPrompt: result.systemPrompt ?? context.systemPrompt,
+					messages: result.messages,
+					tools: context.tools,
+				});
 			config.logger?.log("Context compaction completed", {
 				severity: "info",
 				strategy: executedStrategy,
@@ -671,11 +889,16 @@ export function createContextCompactionPrepareTurn(
 				tokensSaved: requestInputTokens - afterRequestTokens,
 				utilizationBefore: `${((requestInputTokens / maxInputTokens) * 100).toFixed(1)}%`,
 				utilizationAfter: `${((afterRequestTokens / maxInputTokens) * 100).toFixed(1)}%`,
-				thresholdTrigger: `${(COMPACTION_TRIGGER_RATIO * 100).toFixed(1)}%`,
+				thresholdTrigger: `${((requestTriggerTokens / maxInputTokens) * 100).toFixed(1)}%`,
 				messagesBefore: beforeMessageCount,
 				messagesAfter: result.messages.length,
 				messagesRemoved: beforeMessageCount - result.messages.length,
 			} as Record<string, unknown>);
+			if (afterMeasurement)
+				context.emitStatusNotice?.("input-token-count", {
+					kind: "input_token_count",
+					...afterMeasurement,
+				});
 			context.emitStatusNotice?.(`${noticePrefix}compacted`, {
 				kind: statusReason,
 				reason: statusReason,
@@ -683,6 +906,10 @@ export function createContextCompactionPrepareTurn(
 				iteration: context.iteration,
 				tokensBefore: requestInputTokens,
 				tokensAfter: afterRequestTokens,
+				countSource: beforeMeasurement?.source ?? "estimated",
+				requestFingerprintBefore: beforeMeasurement?.fingerprint,
+				requestFingerprintAfter: afterMeasurement?.fingerprint,
+				budgetRevision: afterMeasurement?.budgetRevision,
 				messagesBefore: beforeMessageCount,
 				messagesAfter: result.messages.length,
 				maxInputTokens,
@@ -699,7 +926,7 @@ export function createContextCompactionPrepareTurn(
 				tokensSaved: requestInputTokens - afterRequestTokens,
 				triggerTokens: requestTriggerTokens,
 				maxInputTokens,
-				thresholdRatio: COMPACTION_TRIGGER_RATIO,
+				thresholdRatio: requestTriggerTokens / maxInputTokens,
 				durationMs,
 				// Matches the field name used by other TASK telemetry helpers
 				// (e.g. captureTaskCompleted, captureToolUsage).
@@ -748,7 +975,7 @@ export function createContextCompactionPrepareTurn(
 				tokensBefore: requestInputTokens,
 				triggerTokens: requestTriggerTokens,
 				maxInputTokens,
-				thresholdRatio: COMPACTION_TRIGGER_RATIO,
+				thresholdRatio: requestTriggerTokens / maxInputTokens,
 				durationMs,
 				provider: config.providerId,
 				modelId: config.modelId,

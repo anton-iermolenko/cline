@@ -26,6 +26,31 @@ function result(messages: Message[]): ToolResultContent {
 }
 
 describe("synchronous model-only recovery", () => {
+	it("previews candidate history without committing rewrites or mutating canonical messages", () => {
+		const messages = history("x".repeat(12000));
+		const original = JSON.stringify(messages);
+		const builder = new MessageBuilder({
+			maxToolResultChars: 500,
+			getToolResultRecovery: () => ({
+				uri: "cline://cache/session/result.txt",
+			}),
+		});
+		const control = new MessageBuilder({
+			maxToolResultChars: 500,
+			getToolResultRecovery: () => ({
+				uri: "cline://cache/session/result.txt",
+			}),
+		});
+		const candidate = [
+			...messages,
+			{ role: "user" as const, content: "Candidate only" },
+		];
+		builder.buildPreviewForApi(candidate);
+		expect(builder.buildForApi(messages)).toEqual(
+			control.buildForApi(messages),
+		);
+		expect(JSON.stringify(messages)).toBe(original);
+	});
 	it("keeps buildForApi synchronous and preserves canonical history", () => {
 		const full = "original response\n".repeat(1000);
 		const messages = history(full);

@@ -851,6 +851,7 @@ function App(props: TuiProps) {
 	);
 
 	const agentHandlers = useAgentEventHandlers({
+		setPreparedInputTokens: session.setPreparedInputTokens,
 		appendEntry: session.appendEntry,
 		updateLastEntry: session.updateLastEntry,
 		updateEntry: session.updateEntry,

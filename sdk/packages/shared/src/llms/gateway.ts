@@ -238,6 +238,8 @@ export interface GatewayProviderContext {
 }
 
 export interface GatewayStreamRequest {
+	/** Internal serialization-only request: must never invoke generation. */
+	inputTokenCountOnly?: boolean;
 	providerId: string;
 	modelId: string;
 	systemPrompt?: string;

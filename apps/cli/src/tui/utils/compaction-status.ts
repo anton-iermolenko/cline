@@ -43,6 +43,12 @@ export function parseCompactionNoticeMetadata(
 	return {
 		compactionMode,
 		status: "completed",
+		countSource:
+			metadata.countSource === "tokenized" ||
+			metadata.countSource === "bounded" ||
+			metadata.countSource === "estimated"
+				? metadata.countSource
+				: undefined,
 		tokensBefore: asFiniteNumber(metadata.tokensBefore),
 		tokensAfter: asFiniteNumber(metadata.tokensAfter),
 		messagesBefore: asFiniteNumber(metadata.messagesBefore),
@@ -89,7 +95,7 @@ export function formatCompactionDividerLabel(
 		typeof entry.tokensAfter === "number"
 	) {
 		parts.push(
-			`${formatTokenCount(entry.tokensBefore)} → ${formatTokenCount(entry.tokensAfter)} tokens`,
+			`${formatTokenCount(entry.tokensBefore)} → ${formatTokenCount(entry.tokensAfter)} ${entry.countSource === "tokenized" ? "input tokens" : entry.countSource === "bounded" ? "input tokens (bounded)" : entry.countSource === "estimated" ? "tokens (estimated)" : "tokens"}`,
 		);
 	}
 	if (

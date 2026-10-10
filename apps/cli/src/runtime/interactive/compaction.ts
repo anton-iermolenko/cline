@@ -1,4 +1,5 @@
 import {
+	applyLocalModelLimits,
 	createContextCompactionPrepareTurn,
 	createSessionCompactionState,
 	type ProviderConfig,
@@ -55,11 +56,14 @@ export async function compactInteractiveMessages(input: {
 	sessionId: string;
 	messages: MessageWithMetadata[];
 	abortSignal?: AbortSignal;
+	/** Prepared host tool schemas, when available for manual compaction. */
+	tools?: unknown[];
 }): Promise<{
 	compacted: boolean;
 	canonicalMessages: MessageWithMetadata[];
 	compactionState?: SessionCompactionState;
 }> {
+	applyLocalModelLimits(input.config, input.providerSettingsManager);
 	const modelInfo = input.config.knownModels?.[input.config.modelId];
 	const compactionModelInfo = modelInfo
 		? {
@@ -108,8 +112,8 @@ export async function compactInteractiveMessages(input: {
 		messages: conversationMessages,
 		apiMessages: conversationMessages,
 		abortSignal: input.abortSignal ?? new AbortController().signal,
-		systemPrompt: "",
-		tools: [],
+		systemPrompt: input.config.systemPrompt ?? "",
+		tools: input.tools ?? [],
 		model: {
 			id: input.config.modelId,
 			provider: input.config.providerId,

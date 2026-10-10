@@ -1,4 +1,5 @@
 import {
+	applyLocalModelLimits,
 	getCurrentContextSize,
 	type ProviderSettings,
 	ProviderSettingsManager,
@@ -36,7 +37,6 @@ import {
 	zeroCliAgentEventCost,
 	zeroCliUsageCost,
 } from "../utils/free-model-cost";
-import { applyLocalModelLimits } from "../utils/local-model-limits";
 import {
 	prepareTerminalForPostTuiOutput,
 	writeErr,

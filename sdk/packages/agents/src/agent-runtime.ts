@@ -1963,6 +1963,15 @@ export class AgentRuntime {
 					});
 					break;
 				}
+				case "input-token-count": {
+					await this.emit({
+						type: "status-notice",
+						snapshot: this.snapshot(),
+						message: "input-token-count",
+						metadata: { kind: "input_token_count", ...event.measurement },
+					});
+					break;
+				}
 				case "usage": {
 					// Record the provider's own input-token count for this request so
 					// the prepare-turn pipeline can trigger compaction on real usage

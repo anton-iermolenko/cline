@@ -18,6 +18,7 @@ import { parseCompactionNoticeMetadata } from "../utils/compaction-status";
 import { ReasoningStreamBuffer } from "../utils/reasoning-preview";
 
 interface AgentEventDeps {
+	setPreparedInputTokens?: (tokens: number) => void;
 	appendEntry: (entry: ChatEntry) => void;
 	updateLastEntry: (updater: (prev: ChatEntry) => ChatEntry) => void;
 	updateEntry: (updater: (entry: ChatEntry) => ChatEntry) => void;
@@ -46,6 +47,7 @@ export function useAgentEventHandlers(deps: AgentEventDeps) {
 		setIsRunning,
 		setIsStreaming,
 		addUsageDelta,
+		setPreparedInputTokens,
 		onTurnErrorReported,
 		verbose,
 		modelId,
@@ -283,6 +285,11 @@ export function useAgentEventHandlers(deps: AgentEventDeps) {
 					});
 					break;
 				case "notice":
+					if (event.metadata?.kind === "input_token_count") {
+						if (typeof event.metadata.inputTokens === "number")
+							setPreparedInputTokens?.(event.metadata.inputTokens);
+						break;
+					}
 					if (event.displayRole === "status") {
 						const compaction = parseCompactionNoticeMetadata(event.metadata);
 						if (!compaction) {

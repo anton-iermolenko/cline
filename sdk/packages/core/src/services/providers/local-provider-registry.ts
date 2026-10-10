@@ -25,6 +25,7 @@ import {
 	type ProviderProtocol,
 	ProviderProtocolSchema,
 } from "@cline/shared";
+import { resolveProviderSettingsPath } from "@cline/shared/storage";
 import { z } from "zod";
 import { sdkDebug } from "../../logging/early-logger";
 import type {
@@ -123,7 +124,7 @@ function titleCaseFromId(id: string): string {
 }
 
 export function resolveModelsRegistryPath(
-	manager: ProviderSettingsManager,
+	manager: Pick<ProviderSettingsManager, "getFilePath">,
 ): string {
 	return join(dirname(manager.getFilePath()), "models.json");
 }
@@ -722,4 +723,103 @@ export async function ensureCustomProvidersLoaded(
 		registerCustomProvider(providerId, entry);
 	}
 	LOADED_MODELS_REGISTRY_PATHS.add(modelsPath);
+}
+
+/** Merge live local model limits and pricing for all SDK hosts. */
+export function applyLocalModelLimits(
+	config: {
+		providerId: string;
+		modelId: string;
+		knownModels?: Record<string, ModelInfo>;
+	},
+	manager: Pick<ProviderSettingsManager, "getFilePath"> = {
+		getFilePath: resolveProviderSettingsPath,
+	},
+): void {
+	const registryPath = resolveModelsRegistryPath(manager);
+	const local = readModelsFileSync(registryPath);
+	if (existsSync(registryPath)) {
+		const raw = JSON.parse(readFileSync(registryPath, "utf8")) as {
+			providers?: Record<
+				string,
+				{ models?: Record<string, Record<string, unknown>> }
+			>;
+		};
+		for (const [id, entry] of Object.entries(
+			raw.providers?.[config.providerId]?.models ?? {},
+		)) {
+			for (const key of [
+				"contextWindow",
+				"maxTokens",
+				"maxInputTokens",
+			] as const) {
+				const value = entry[key];
+				if (
+					value !== undefined &&
+					(typeof value !== "number" ||
+						!Number.isSafeInteger(value) ||
+						value <= 0)
+				)
+					throw new Error(
+						`Invalid local model ${id} ${key}: expected a positive integer`,
+					);
+			}
+		}
+	}
+	const entries = local.providers[config.providerId]?.models ?? {};
+	const knownModels = { ...config.knownModels };
+	for (const [key, entry] of Object.entries(entries)) {
+		const id = entry.id?.trim() || key.trim();
+		if (!id) continue;
+		const previous = knownModels[id];
+		const contextWindow = entry.contextWindow ?? previous?.contextWindow;
+		const maxTokens = entry.maxTokens ?? previous?.maxTokens;
+		const explicitInput =
+			entry.maxInputTokens ??
+			(previous?.metadata?.localInputLimitDerived === true
+				? undefined
+				: previous?.maxInputTokens);
+		const availableInput =
+			contextWindow !== undefined && maxTokens !== undefined
+				? contextWindow - maxTokens
+				: contextWindow;
+		if (availableInput !== undefined && availableInput <= 0)
+			throw new Error(
+				`Invalid limits for ${id}: output allowance leaves no input capacity`,
+			);
+		const maxInputTokens =
+			explicitInput !== undefined && availableInput !== undefined
+				? Math.min(explicitInput, availableInput)
+				: (explicitInput ?? availableInput);
+		const pricing = { ...previous?.pricing };
+		for (const [stored, runtime] of [
+			["inputPrice", "input"],
+			["outputPrice", "output"],
+			["cacheReadsPrice", "cacheRead"],
+			["cacheWritesPrice", "cacheWrite"],
+		] as const) {
+			const value = entry[stored];
+			if (value !== undefined) pricing[runtime] = value;
+		}
+		knownModels[id] = {
+			...previous,
+			metadata: {
+				...previous?.metadata,
+				localInputLimitDerived:
+					entry.maxInputTokens === undefined &&
+					(previous?.maxInputTokens === undefined ||
+						previous?.metadata?.localInputLimitDerived === true),
+				...(typeof entry.inputTokenCountUrl === "string"
+					? { inputTokenCountUrl: entry.inputTokenCountUrl }
+					: {}),
+			},
+			id,
+			name: entry.name ?? previous?.name ?? id,
+			...(Object.keys(pricing).length > 0 ? { pricing } : {}),
+			...(contextWindow !== undefined ? { contextWindow } : {}),
+			...(maxTokens !== undefined ? { maxTokens } : {}),
+			...(maxInputTokens !== undefined ? { maxInputTokens } : {}),
+		};
+	}
+	config.knownModels = knownModels;
 }
