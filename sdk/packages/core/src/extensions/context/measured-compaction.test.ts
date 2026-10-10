@@ -3,10 +3,12 @@ import type {
 	RequestInputTokenCount,
 } from "@cline/shared";
 import { describe, expect, it, vi } from "vitest";
+import { runBasicCompaction } from "./basic-compaction";
 import {
 	type ContextPipelinePrepareTurnInput,
 	createContextCompactionPrepareTurn,
 } from "./compaction";
+import { createTokenEstimator, isTurnStartMessage } from "./compaction-shared";
 
 const measured = (tokens: number): RequestInputTokenCount => ({
 	inputTokens: tokens,
@@ -163,4 +165,227 @@ describe("measured compaction", () => {
 			prepare(turn([prompt], async () => measured(75000))),
 		).rejects.toThrow("hard input allowance");
 	});
+});
+
+describe("measured target and protected prompt regressions", () => {
+	it.each([
+		72000, 80000,
+	])("keeps the latest request separate from older prompts at %i input tokens", async (inputTokens) => {
+		const current: MessageWithMetadata = {
+			id: "latest-request",
+			role: "user",
+			content: [
+				{ type: "text", text: "  Keep whitespace and attachments.\n" },
+				{
+					type: "image",
+					data: "aGVsbG8=",
+					mediaType: "image/png",
+				},
+			],
+		};
+		const original: MessageWithMetadata[] = [
+			{ id: "old-request", role: "user", content: "Previous instruction" },
+			{ id: "old-work", role: "assistant", content: "x".repeat(250000) },
+			current,
+			{
+				id: "new-work",
+				role: "assistant",
+				content: [
+					{
+						type: "tool_use",
+						id: "tool-1",
+						name: "read_files",
+						input: { file_paths: ["report.md"] },
+					},
+				],
+			},
+			{
+				id: "new-result",
+				role: "user",
+				content: [
+					{
+						type: "tool_result",
+						tool_use_id: "tool-1",
+						name: "read_files",
+						content: "y".repeat(1000000),
+					},
+				],
+			},
+		];
+		const before = JSON.stringify(original);
+		const notices = vi.fn();
+		const prepare = createContextCompactionPrepareTurn({
+			providerId: "openai",
+			modelId: "local",
+			compaction: { enabled: true, strategy: "basic" },
+		})!;
+		const result = await prepare(
+			turn(
+				original,
+				async (messages) =>
+					measured(messages === original ? inputTokens : 20000),
+				notices,
+			),
+		);
+		expect(
+			result?.messages.find((message) => message.id === current.id)?.content,
+		).toEqual(current.content);
+		expect(
+			result?.messages.slice().reverse().find(isTurnStartMessage)?.id,
+		).toBe(current.id);
+		expect(
+			result?.messages.some(
+				(message) => message.metadata?.kind === "compaction_work_summary",
+			),
+		).toBe(true);
+		expect(JSON.stringify(original)).toBe(before);
+		expect(
+			notices.mock.calls.find(([, meta]) => meta.phase === "completed")?.[1],
+		).toMatchObject({ tokensAfter: 20000 });
+	});
+	it("does not accept a candidate that shrinks below the hard limit but misses the target", async () => {
+		const original: MessageWithMetadata[] = [
+			{ role: "assistant", content: "x".repeat(250000) },
+			prompt,
+		];
+		const notices = vi.fn();
+		const prepare = createContextCompactionPrepareTurn({
+			providerId: "openai",
+			modelId: "local",
+			compaction: {
+				enabled: true,
+				compact: async () => ({ messages: [prompt] }),
+			},
+		})!;
+		await expect(
+			prepare(
+				turn(
+					original,
+					async (messages) => measured(messages === original ? 78000 : 60000),
+					notices,
+				),
+			),
+		).rejects.toThrow("target_not_reached");
+		expect(
+			notices.mock.calls.some(([, meta]) => meta.phase === "completed"),
+		).toBe(false);
+	});
+	it("keeps reducing after a plateau until the full request reaches the target", async () => {
+		const original: MessageWithMetadata[] = [
+			prompt,
+			{ id: "first", role: "assistant", content: "x".repeat(120000) },
+			{ id: "last", role: "assistant", content: "y".repeat(60000) },
+		];
+		const candidate = [prompt, ...original.slice(1)];
+		const counts: number[] = [];
+		const prepare = createContextCompactionPrepareTurn({
+			providerId: "openai",
+			modelId: "local",
+			compaction: {
+				enabled: true,
+				compact: async () => ({ messages: candidate }),
+			},
+		})!;
+		const result = await prepare(
+			turn(original, async (messages) => {
+				const value =
+					messages === original
+						? 80000
+						: messages.some((m) => m.id === "last")
+							? 65000
+							: 18000;
+				counts.push(value);
+				return measured(value);
+			}),
+		);
+		expect(
+			counts.filter((value) => value === 65000).length,
+		).toBeGreaterThanOrEqual(2);
+		expect(counts.at(-1)).toBe(18000);
+		expect(result?.messages.some((m) => m.id === "last")).toBe(false);
+	});
+	it("basic refolding preserves the protected prompt even when nothing else fits", () => {
+		const current: MessageWithMetadata = {
+			...prompt,
+			id: "keep",
+			content: [{ type: "text", text: " \n Exact prompt \n " }],
+		};
+		const context = turn(
+			[current, { role: "assistant", content: "Old output" }],
+			undefined,
+		);
+		const result = runBasicCompaction({
+			context: {
+				...context,
+				mode: "auto",
+				budget: {
+					request: {
+						inputTokens: 10000,
+						maxInputTokens: 73727,
+						triggerTokens: 71679,
+						targetTokens: 1,
+						overheadTokens: 0,
+						thresholdRatio: 1,
+						utilizationRatio: 1,
+					},
+					messages: {
+						inputTokens: 10000,
+						triggerTokens: 10000,
+						targetTokens: 1,
+					},
+				},
+			},
+			estimateMessageTokens: createTokenEstimator(),
+			refoldPreserved: true,
+		});
+		expect(result?.messages.find((m) => m.id === "keep")?.content).toEqual(
+			current.content,
+		);
+		expect(
+			result?.messages.slice().reverse().find(isTurnStartMessage)?.id,
+		).toBe("keep");
+	});
+});
+
+it("bounds dropped assistant output instead of reproducing it in fallback summaries", async () => {
+	const messages: MessageWithMetadata[] = [
+		{ ...prompt, id: "task" },
+		{
+			id: "huge-answer",
+			role: "assistant",
+			content: "Detailed output ".repeat(16000),
+		},
+	];
+	const prepare = createContextCompactionPrepareTurn({
+		providerId: "openai",
+		modelId: "local",
+		compaction: { enabled: true, strategy: "basic" },
+	})!;
+	const notices = vi.fn();
+	const result = await prepare(
+		turn(
+			messages,
+			async (candidate) =>
+				measured(
+					candidate.reduce(
+						(sum, m) => sum + Math.ceil(JSON.stringify(m.content).length / 3),
+						2000,
+					),
+				),
+			notices,
+		),
+	);
+	const started = notices.mock.calls.find(
+		([, meta]) => meta.phase === "started",
+	)?.[1];
+	const completed = notices.mock.calls.find(
+		([, meta]) => meta.phase === "completed",
+	)?.[1];
+	expect(completed.tokensAfter).toBeLessThanOrEqual(started.targetTokens);
+	expect(result?.messages.find((m) => m.id === "task")?.content).toEqual(
+		prompt.content,
+	);
+	expect(JSON.stringify(result?.messages)).toContain(
+		"Earlier assistant response shortened during compaction",
+	);
 });

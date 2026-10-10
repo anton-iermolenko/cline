@@ -126,6 +126,7 @@ function userContentBlocks(
 function mergeAdjacentUserTurns(
 	messages: MessageWithMetadata[],
 	originalMessages: MessageWithMetadata[],
+	responseCharLimit?: number,
 ): MessageWithMetadata[] {
 	const originalIndexById = new Map<string, number>();
 	originalMessages.forEach((message, index) => {
@@ -158,8 +159,12 @@ function mergeAdjacentUserTurns(
 				continue;
 			}
 			const text = assistantTextContent(originalMessages[position]);
-			if (text) {
-				responses.push(text);
+			if (text && responseCharLimit !== 0) {
+				responses.push(
+					responseCharLimit !== undefined && text.length > responseCharLimit
+						? `${text.slice(0, responseCharLimit)}\n[Earlier assistant response shortened during compaction.]`
+						: text,
+				);
 			}
 		}
 		return responses;
@@ -170,6 +175,8 @@ function mergeAdjacentUserTurns(
 		firstOriginalIndex: number | undefined;
 		lastOriginalIndex: number | undefined;
 		isTypedUser: boolean;
+		isLatestTyped: boolean;
+		followingSummary?: MessageWithMetadata;
 	}
 
 	let latestTypedIndex = -1;
@@ -190,6 +197,7 @@ function mergeAdjacentUserTurns(
 				firstOriginalIndex: originalIndex,
 				lastOriginalIndex: originalIndex,
 				isTypedUser: false,
+				isLatestTyped: false,
 			});
 			index += 1;
 			continue;
@@ -197,6 +205,7 @@ function mergeAdjacentUserTurns(
 		let runEnd = index;
 		while (
 			runEnd + 1 < messages.length &&
+			runEnd + 1 !== latestTypedIndex &&
 			isTurnStartMessage(messages[runEnd + 1])
 		) {
 			runEnd += 1;
@@ -253,6 +262,7 @@ function mergeAdjacentUserTurns(
 			firstOriginalIndex: resolveOriginalIndex(messages[index]),
 			lastOriginalIndex: resolveOriginalIndex(messages[runEnd]),
 			isTypedUser: true,
+			isLatestTyped: index === latestTypedIndex,
 		});
 		index = runEnd + 1;
 	}
@@ -280,15 +290,31 @@ function mergeAdjacentUserTurns(
 		if (!hasToolActivity(summary) && responses.length === 0) {
 			continue;
 		}
-		current.message = {
-			...current.message,
-			content: [
-				...userContentBlocks(current.message, true),
-				buildDroppedWorkSummaryBlock(summary, responses),
-			],
-		};
+		const block = buildDroppedWorkSummaryBlock(summary, responses);
+		if (current.isLatestTyped) {
+			// Keep the protected request byte-for-byte intact. Work after it
+			// belongs in a separate system-inserted continuation message.
+			current.followingSummary = {
+				role: "user",
+				content: [block],
+				metadata: {
+					kind: "compaction_work_summary",
+					displayRole: "system",
+					userRunSpan: 0,
+				},
+			};
+		} else {
+			current.message = {
+				...current.message,
+				content: [...userContentBlocks(current.message, true), block],
+			};
+		}
 	}
-	return entries.map((entry) => entry.message);
+	return entries.flatMap((entry) =>
+		entry.followingSummary
+			? [entry.message, entry.followingSummary]
+			: [entry.message],
+	);
 }
 
 /**
@@ -480,7 +506,10 @@ export function runBasicCompaction(options: {
 	}
 	const sanitizedTypedByIndex = new Map<number, MessageWithMetadata>();
 	for (const index of typedIndices) {
-		const sanitized = sanitizeTypedUserMessage(originalMessages[index]);
+		const sanitized =
+			index === typedIndices[typedIndices.length - 1]
+				? originalMessages[index]
+				: sanitizeTypedUserMessage(originalMessages[index]);
 		if (sanitized) {
 			sanitizedTypedByIndex.set(index, sanitized);
 		}
@@ -657,7 +686,9 @@ export function runBasicCompaction(options: {
 	// target each run). The trigger stays a hard ceiling — content that
 	// cannot fit the window at all is still trimmed best-effort.
 	const projectionTargetTokens = Math.min(
-		Math.max(totalTargetTokens, totalTokens),
+		options.refoldPreserved
+			? totalTargetTokens
+			: Math.max(totalTargetTokens, totalTokens),
 		Math.max(1, options.context.budget.messages.triggerTokens),
 	);
 	const budgeted = buildBudgetProjection({
@@ -677,6 +708,9 @@ export function runBasicCompaction(options: {
 	const mergedMessages = mergeAdjacentUserTurns(
 		budgeted.messages,
 		originalMessages,
+		// Embedded responses must shrink with the emergency budget too;
+		// otherwise summaries can reproduce the work we just dropped.
+		options.refoldPreserved ? Math.floor(totalTargetTokens / 4) : undefined,
 	);
 
 	if (!haveMessagesChanged(originalMessages, mergedMessages)) {

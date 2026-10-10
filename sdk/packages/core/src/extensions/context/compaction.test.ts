@@ -553,23 +553,20 @@ describe("createContextCompactionPrepareTurn", () => {
 
 		const compacted = runForcedBasicCompaction(messages, 1);
 
-		// Adjacent typed user messages left behind by the removals merge
-		// into a single user message carrying the compaction metadata.
+		// Keep the latest typed request separate and verbatim.
 		expect(compacted).toEqual([
 			{
 				role: "user",
-				content: [
-					{ type: "text", text: "Old request" },
-					{ type: "text", text: "Read the latest file" },
-				],
+				content: "Old request",
 				metadata: {
 					kind: "compaction",
 					reason: "manual_compaction",
 					displayRole: "system",
-					messagesRemoved: 4,
-					userRunSpan: 2,
+					messagesRemoved: 3,
+					userRunSpan: 1,
 				},
 			},
+			{ role: "user", content: "Read the latest file" },
 		]);
 		expectNoOrphanedToolPairs(compacted);
 	});
@@ -850,6 +847,7 @@ describe("createContextCompactionPrepareTurn", () => {
 
 		expect(compacted.map((message) => message.id)).toEqual([
 			"u1",
+			undefined,
 			"a2",
 			"t2",
 			"a3",
@@ -858,12 +856,13 @@ describe("createContextCompactionPrepareTurn", () => {
 		const pairs = collectToolPairPresence(compacted);
 		expect(pairs.get("pair-2")).toEqual({ hasResult: true, hasUse: true });
 		expect(pairs.get("pair-1")).toBeUndefined();
-		// The dropped oldest pair is summarized onto the typed prompt.
+		// The dropped pair is summarized separately from the latest request.
+		expect(compacted[0].content).toEqual(messages[0].content);
 		const firstTexts = (
-			Array.isArray(compacted[0].content) ? compacted[0].content : []
+			Array.isArray(compacted[1].content) ? compacted[1].content : []
 		).map((block) => (block.type === "text" ? block.text : ""));
-		expect(firstTexts[1]).toContain("Files read:\n/tmp/one.ts");
-		expect(firstTexts[1]).not.toContain("/tmp/two.ts");
+		expect(firstTexts[0]).toContain("Files read:\n/tmp/one.ts");
+		expect(firstTexts[0]).not.toContain("/tmp/two.ts");
 
 		// Tighter budget cutting inside the newest pair: the kept suffix
 		// snaps forward to the next assistant message so the pair is never
@@ -877,7 +876,11 @@ describe("createContextCompactionPrepareTurn", () => {
 			messages,
 			tightTarget,
 		) as MessageWithMetadata[];
-		expect(snapped.map((message) => message.id)).toEqual(["u1", "a3"]);
+		expect(snapped.map((message) => message.id)).toEqual([
+			"u1",
+			undefined,
+			"a3",
+		]);
 		expectNoOrphanedToolPairs(snapped);
 	});
 
@@ -999,6 +1002,7 @@ describe("createContextCompactionPrepareTurn", () => {
 			"u2",
 			"a3",
 			"u3",
+			undefined,
 			"b3",
 		]);
 		// The earlier compaction's output is untouched: same answers, no
@@ -1015,10 +1019,10 @@ describe("createContextCompactionPrepareTurn", () => {
 					block.type === "text" && block.text.includes("<SYSTEM_NOTICE>"),
 			),
 		).toHaveLength(1);
-		// Only the new turn was folded; its dropped pair is summarized onto
-		// the new prompt.
-		const newPromptBlocks = Array.isArray(secondPass[4].content)
-			? secondPass[4].content
+		// Only the new turn was folded; the latest request stays untouched.
+		expect(secondPass[4].content).toEqual(secondPassMessages[4].content);
+		const newPromptBlocks = Array.isArray(secondPass[5].content)
+			? secondPass[5].content
 			: [];
 		const newSummary = newPromptBlocks.find(
 			(block) =>
@@ -1027,11 +1031,11 @@ describe("createContextCompactionPrepareTurn", () => {
 		expect(
 			newSummary && newSummary.type === "text" ? newSummary.text : "",
 		).toContain("Files read:\n/tmp/b.ts");
-		expect(secondPass[5].metadata).toMatchObject({ compaction: "preserved" });
+		expect(secondPass[6].metadata).toMatchObject({ compaction: "preserved" });
 		// Stats accumulate across passes instead of being overwritten.
 		expect(secondPass[0].metadata).toMatchObject({
 			kind: "compaction",
-			messagesRemoved: 4,
+			messagesRemoved: 3,
 			usageBefore: {
 				inputTokens: 350,
 				outputTokens: 35,

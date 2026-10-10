@@ -765,21 +765,19 @@ export function createContextCompactionPrepareTurn(
 						JSON.stringify(message.content) ===
 							JSON.stringify(protectedPrompt.content),
 				);
-			const acceptable = () =>
+			const validCandidate = () =>
 				!!afterMeasurement &&
 				!!result?.messages?.length &&
 				protectsCurrentPrompt(result) &&
 				afterMeasurement.inputTokens <= afterMeasurement.maxInputTokens &&
 				afterMeasurement.inputTokens < requestInputTokens;
-			// Candidate selection is heuristic; its final admission is always measured.
-			for (
-				let attempt = 0;
-				attempt < 4 &&
-				(!acceptable() ||
-					(afterMeasurement?.inputTokens ?? Number.POSITIVE_INFINITY) >
-						requestTargetTokens);
-				attempt++
-			) {
+			const acceptable = () =>
+				validCandidate() &&
+				(afterMeasurement?.inputTokens ?? Number.POSITIVE_INFINITY) <=
+					requestTargetTokens;
+			// Reproject from the original transcript so repeated fallback attempts
+			// do not stack summaries or lose the protected prompt's identity.
+			for (let attempt = 0; attempt < 8 && !acceptable(); attempt++) {
 				context.abortSignal.throwIfAborted();
 				const current = afterMeasurement?.inputTokens ?? requestInputTokens;
 				const adjustedTarget = Math.max(
@@ -793,9 +791,6 @@ export function createContextCompactionPrepareTurn(
 				const folded = runBasicCompaction({
 					context: {
 						...compactionContext,
-						messages: protectsCurrentPrompt(result)
-							? (result?.messages ?? context.messages)
-							: context.messages,
 						budget: {
 							...compactionContext.budget,
 							messages: {
@@ -808,23 +803,40 @@ export function createContextCompactionPrepareTurn(
 					logger: config.logger,
 					refoldPreserved: true,
 				});
-				if (!folded?.messages?.length) break;
+				if (!folded?.messages?.length) continue;
 				const counted = await measure(folded);
 				if (!counted)
 					throw new Error(
 						"Input token counter became unavailable; original context was preserved",
 					);
 				if (
-					afterMeasurement &&
-					counted.inputTokens >= afterMeasurement.inputTokens
-				)
-					break;
-				result = folded;
-				afterMeasurement = counted;
-				executedStrategy = "basic";
+					protectsCurrentPrompt(folded) &&
+					(!validCandidate() ||
+						counted.inputTokens < (afterMeasurement?.inputTokens ?? Infinity))
+				) {
+					result = folded;
+					afterMeasurement = counted;
+					executedStrategy = "basic";
+				}
 			}
 			if (!acceptable()) {
+				const reason = !result?.messages?.length
+					? "no_usable_result"
+					: !protectsCurrentPrompt(result)
+						? "protected_prompt_changed"
+						: "target_not_reached";
+				config.logger?.log("Measured compaction candidate rejected", {
+					severity: "warn",
+					reason,
+					inputTokens: requestInputTokens,
+					candidateInputTokens: afterMeasurement?.inputTokens,
+					targetTokens: requestTargetTokens,
+					maxInputTokens,
+				});
+				// A single protected request has no history to reduce. Allow it
+				// under the hard limit without claiming successful compaction.
 				if (
+					context.messages.length <= 1 &&
 					requestInputTokens <= beforeMeasurement.maxInputTokens &&
 					effectiveMode !== "overflow_recovery"
 				) {
@@ -837,12 +849,13 @@ export function createContextCompactionPrepareTurn(
 						phase: "skipped",
 						reason: "no_reducible_context",
 						inputTokens: requestInputTokens,
+						targetTokens: requestTargetTokens,
 						maxInputTokens,
 					});
 					return undefined;
 				}
 				throw new Error(
-					`Compaction could not produce a smaller request within the hard input allowance (${beforeMeasurement.maxInputTokens} tokens; measured input ${afterMeasurement?.inputTokens ?? requestInputTokens}). Original context was preserved.`,
+					`Compaction could not reach the measured target (${Math.floor(requestTargetTokens)} tokens; candidate input ${afterMeasurement?.inputTokens ?? requestInputTokens}; hard input allowance ${beforeMeasurement.maxInputTokens}; reason: ${reason}). Original context was preserved.`,
 				);
 			}
 			if (!afterMeasurement)
