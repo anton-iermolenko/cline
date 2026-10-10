@@ -9,6 +9,7 @@ import {
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { $ } from "bun";
+import { resolveSdkRuntimeBuildId } from "../../sdk/packages/core/scripts/runtime-build-id";
 
 function defineProcessEnv(name: string): string {
 	return JSON.stringify(process.env[name] ?? "");
@@ -84,6 +85,10 @@ const result = await Bun.build({
 		"react-devtools-core",
 	],
 	define: {
+		__CLINE_CORE_RUNTIME_BUILD_ID__: JSON.stringify(
+			resolveSdkRuntimeBuildId(repoRoot),
+		),
+		__CLINE_CORE_RUNTIME_BUILD_EPOCH_MS__: JSON.stringify(Date.now()),
 		"process.env.NODE_ENV": '"production"',
 		...(process.env.TELEMETRY_SERVICE_API_KEY
 			? {

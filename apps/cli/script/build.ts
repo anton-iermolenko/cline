@@ -15,6 +15,7 @@ import { type AddressInfo, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { $ } from "bun";
+import { resolveSdkRuntimeBuildId } from "../../../sdk/packages/core/scripts/runtime-build-id";
 import {
 	parseBuildOptions,
 	shouldInstallNativeVariants,
@@ -220,6 +221,11 @@ async function buildCompiledBinary(input: {
 		external: ["@anthropic-ai/vertex-sdk"],
 		define: {
 			OTUI_TREE_SITTER_WORKER_PATH: bunfsRoot + parserWorkerPath,
+			// CLI source aliases bypass the SDK bundle, so embed its identity here too.
+			__CLINE_CORE_RUNTIME_BUILD_ID__: JSON.stringify(
+				resolveSdkRuntimeBuildId(rootDir),
+			),
+			__CLINE_CORE_RUNTIME_BUILD_EPOCH_MS__: JSON.stringify(Date.now()),
 			// Inline telemetry/OTEL env vars at build time so the compiled
 			// binary ships with production telemetry configuration baked in.
 			...buildInlinedEnvDefines(),

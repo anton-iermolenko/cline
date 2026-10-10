@@ -1,3 +1,5 @@
+vi.mock("@cline/core/hub", () => ({ resolveHubBuildId: () => "test-build" }));
+
 import {
 	appendFileSync,
 	existsSync,

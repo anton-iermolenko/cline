@@ -13,6 +13,7 @@ import {
 	resolveSharedHubOwnerContext,
 	stopLocalHubServerGracefully,
 } from "@cline/core";
+import { resolveHubBuildId } from "@cline/core/hub";
 import {
 	type ActiveConnectorRecord,
 	formatUptime,
@@ -56,6 +57,9 @@ type DoctorStatus = {
 	cwd: string;
 	cliVersion: string;
 	coreVersion?: string;
+	expectedBuildId: string;
+	hubBuildId?: string;
+	hubBuildMatches?: boolean;
 	hubUrl?: string;
 	hubHealthy: boolean;
 	hubPid?: number;
@@ -451,6 +455,11 @@ async function collectDoctorStatus(cwd: string): Promise<DoctorStatus> {
 		cwd,
 		cliVersion,
 		coreVersion: health?.coreVersion ?? discovery?.coreVersion,
+		expectedBuildId: resolveHubBuildId(),
+		hubBuildId: health?.buildId,
+		hubBuildMatches: health?.buildId
+			? health.buildId === resolveHubBuildId()
+			: undefined,
 		hubUrl: current?.url,
 		hubHealthy: !!health?.url,
 		hubPid: current?.pid,
@@ -650,6 +659,14 @@ export async function runDoctorCommand(
 		}
 		writeln(`cli version ${c.dim}${before.cliVersion}${c.reset}`);
 		writeln(`core version ${c.dim}${before.coreVersion ?? "n/a"}${c.reset}`);
+		writeln(`installed SDK build ${c.dim}${before.expectedBuildId}${c.reset}`);
+		writeln(
+			`running hub build ${c.dim}${before.hubBuildId ?? "n/a"}${c.reset}`,
+		);
+		if (before.hubBuildMatches === false)
+			writeln(
+				"Hub build differs from this client. Disconnect attached sessions and run cline hub upgrade before using the new behavior.",
+			);
 		writeln(`hub url ${c.dim}${before.hubUrl ?? "none"}${c.reset}`);
 		writeln(
 			`hub healthy ${c.dim}${before.hubHealthy ? "yes" : "no"}${before.hubPid ? ` (pid=${before.hubPid})` : ""}${c.reset}`,
