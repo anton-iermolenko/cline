@@ -152,6 +152,7 @@ describe("AgentRuntime", () => {
 				expect(request.messages.at(-1)).toMatchObject({
 					role: "user",
 					content: [{ type: "text", text: "Change direction" }],
+					metadata: { userRunSpan: 0, humanInput: true },
 				});
 				expect(
 					request.messages

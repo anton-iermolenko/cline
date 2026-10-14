@@ -449,7 +449,7 @@ describe("createContextCompactionPrepareTurn", () => {
 
 		expectNoOrphanedToolPairs(compacted);
 		expect(collectToolPairPresence(compacted).get("tool-a")).toBeUndefined();
-		expect(compacted).toEqual([
+		expect(compacted).toMatchObject([
 			{
 				role: "user",
 				content: "Read the file",
@@ -554,7 +554,7 @@ describe("createContextCompactionPrepareTurn", () => {
 		const compacted = runForcedBasicCompaction(messages, 1);
 
 		// Keep the latest typed request separate and verbatim.
-		expect(compacted).toEqual([
+		expect(compacted).toMatchObject([
 			{
 				role: "user",
 				content: "Old request",
@@ -761,7 +761,7 @@ describe("createContextCompactionPrepareTurn", () => {
 		// Token metrics no longer add up after compaction and are dropped;
 		// the aggregate survives on the compaction message's metadata.
 		expect(JSON.stringify(compacted)).not.toContain('"metrics"');
-		expect(first.metadata).toEqual({
+		expect(first.metadata).toMatchObject({
 			kind: "compaction",
 			reason: "manual_compaction",
 			displayRole: "system",
@@ -1423,6 +1423,13 @@ describe("createContextCompactionPrepareTurn", () => {
 				enabled: true,
 				strategy: "agentic",
 				preserveRecentTokens: 1,
+				// Isolate output-budget exhaustion from the primary model's tiny
+				// input window; the continuation instructions must fit first.
+				summarizer: {
+					providerId: "openai",
+					modelId: "summary-reasoner",
+					modelInfo: { id: "summary-reasoner", maxInputTokens: 2000 },
+				},
 			},
 			logger,
 		});
@@ -1606,7 +1613,7 @@ describe("createContextCompactionPrepareTurn", () => {
 				iteration: 1,
 			}),
 		);
-		expect(result?.messages).toHaveLength(5);
+		expect(result?.messages).toHaveLength(3);
 		expect(result?.messages[0]).toMatchObject({
 			role: "user",
 			metadata: expect.objectContaining({
@@ -1614,7 +1621,7 @@ describe("createContextCompactionPrepareTurn", () => {
 				displayRole: "system",
 				userRunSpan: 2,
 				details: {
-					readFiles: [],
+					readFiles: ["/tmp/example.ts"],
 					modifiedFiles: [],
 				},
 			}),
@@ -1633,7 +1640,7 @@ describe("createContextCompactionPrepareTurn", () => {
 			role: "user",
 			content: "Implement the change",
 		});
-		expect(result?.messages[4]).toEqual({
+		expect(result?.messages[2]).toEqual({
 			role: "assistant",
 			content: "Recent assistant state",
 		});

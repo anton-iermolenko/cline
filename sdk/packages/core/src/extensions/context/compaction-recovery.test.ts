@@ -115,13 +115,17 @@ describe("summary-only compaction recovery", () => {
 			estimateMessageTokens: estimate,
 		});
 		assert(first?.messages);
-		expect(first.messages.some(isTurnStartMessage)).toBe(false);
+		expect(first.messages.some(isTurnStartMessage)).toBe(true);
+		// Simulate legacy sidecars that contain only the summary and tool tail.
+		const summaryOnly = first.messages.filter(
+			(message) => !isTurnStartMessage(message),
+		);
 		const anchor = first.messages[0];
 		if (failure === "throw")
 			createHandlerMock.mockRejectedValue(new Error("summarizer unavailable"));
 		else mockSummary(failure === "oversized" ? "s".repeat(18000) : "");
 		const result = await prepare([
-			...first.messages,
+			...summaryOnly,
 			...toolPair("large", 18000),
 			...toolPair("latest", 30),
 		]);

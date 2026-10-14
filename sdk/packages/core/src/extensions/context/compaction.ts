@@ -428,6 +428,21 @@ export function createContextCompactionPrepareTurn(
 			2048;
 		if (!Number.isSafeInteger(buffer) || buffer < 0)
 			throw new Error("Compaction bufferTokens must be a nonnegative integer");
+		for (const [name, value] of Object.entries({
+			maxTargetTokens: userCompaction.maxTargetTokens,
+			targetTokens: userCompaction.targetTokens,
+		})) {
+			if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0))
+				throw new Error(`Compaction ${name} must be a positive integer`);
+		}
+		if (
+			userCompaction.maxTargetTokens !== undefined &&
+			userCompaction.targetTokens !== undefined &&
+			userCompaction.targetTokens > userCompaction.maxTargetTokens
+		)
+			throw new Error(
+				"Compaction targetTokens must not exceed maxTargetTokens",
+			);
 		const requestTriggerTokens = beforeMeasurement
 			? Math.max(1, maxInputTokens - buffer)
 			: maxInputTokens * COMPACTION_TRIGGER_RATIO;
@@ -488,6 +503,14 @@ export function createContextCompactionPrepareTurn(
 				triggerTokens: requestTriggerTokens,
 				messagePairCount: countUserAssistantPairs(context.messages),
 			});
+			if (userCompaction.targetTokens !== undefined)
+				requestTargetTokens = Math.max(
+					1,
+					Math.min(
+						Math.floor(userCompaction.targetTokens / underestimateFactor),
+						requestTriggerTokens - 1,
+					),
+				);
 			messageTargetTokens = translateRequestBudgetToMessages(
 				requestTargetTokens,
 				requestOverheadTokens,
@@ -499,6 +522,22 @@ export function createContextCompactionPrepareTurn(
 				manualTargetRatio: options.manualTargetRatio,
 			});
 			requestTargetTokens = requestOverheadTokens + messageTargetTokens;
+			if (
+				effectiveMode === "overflow_recovery" &&
+				userCompaction.targetTokens !== undefined
+			) {
+				requestTargetTokens = Math.max(
+					1,
+					Math.min(
+						Math.floor(userCompaction.targetTokens / underestimateFactor),
+						requestTriggerTokens - 1,
+					),
+				);
+				messageTargetTokens = translateRequestBudgetToMessages(
+					requestTargetTokens,
+					requestOverheadTokens,
+				);
+			}
 		}
 
 		const compactionContext = {
@@ -769,12 +808,38 @@ export function createContextCompactionPrepareTurn(
 				!!afterMeasurement &&
 				!!result?.messages?.length &&
 				protectsCurrentPrompt(result) &&
+				(executedStrategy !== "basic" ||
+					context.messages
+						.filter(
+							(message) => message.metadata?.kind === "compaction_summary",
+						)
+						.every((checkpoint) =>
+							result?.messages.some(
+								(message) =>
+									JSON.stringify(message.content) ===
+									JSON.stringify(checkpoint.content),
+							),
+						)) &&
 				afterMeasurement.inputTokens <= afterMeasurement.maxInputTokens &&
 				afterMeasurement.inputTokens < requestInputTokens;
+			const continuityCeiling = Math.min(
+				userCompaction.maxTargetTokens ?? Number.POSITIVE_INFINITY,
+				requestTriggerTokens -
+					Math.max(2 * beforeMeasurement.maxOutputTokens, buffer),
+				beforeMeasurement.maxInputTokens -
+					Math.max(2 * beforeMeasurement.maxOutputTokens, buffer),
+			);
 			const acceptable = () =>
 				validCandidate() &&
-				(afterMeasurement?.inputTokens ?? Number.POSITIVE_INFINITY) <=
-					requestTargetTokens;
+				((afterMeasurement?.inputTokens ?? Number.POSITIVE_INFINITY) <=
+					requestTargetTokens ||
+					// The preferred shrink target must not replace a useful semantic
+					// checkpoint with a lossy fold when there is measured growth room.
+					(effectiveMode === "auto" &&
+						(executedStrategy === "agentic" ||
+							userCompaction.maxTargetTokens !== undefined) &&
+						(afterMeasurement?.inputTokens ?? Number.POSITIVE_INFINITY) <=
+							continuityCeiling));
 			// Reproject from the original transcript so repeated fallback attempts
 			// do not stack summaries or lose the protected prompt's identity.
 			for (let attempt = 0; attempt < 8 && !acceptable(); attempt++) {
@@ -903,6 +968,12 @@ export function createContextCompactionPrepareTurn(
 				utilizationBefore: `${((requestInputTokens / maxInputTokens) * 100).toFixed(1)}%`,
 				utilizationAfter: `${((afterRequestTokens / maxInputTokens) * 100).toFixed(1)}%`,
 				thresholdTrigger: `${((requestTriggerTokens / maxInputTokens) * 100).toFixed(1)}%`,
+				preferredTargetTokens: requestTargetTokens,
+				effectiveTargetTokens: Math.max(
+					requestTargetTokens,
+					afterRequestTokens,
+				),
+				maxTargetTokens: userCompaction.maxTargetTokens,
 				messagesBefore: beforeMessageCount,
 				messagesAfter: result.messages.length,
 				messagesRemoved: beforeMessageCount - result.messages.length,
@@ -916,6 +987,12 @@ export function createContextCompactionPrepareTurn(
 				kind: statusReason,
 				reason: statusReason,
 				phase: "completed",
+				preferredTargetTokens: requestTargetTokens,
+				effectiveTargetTokens: Math.max(
+					requestTargetTokens,
+					afterRequestTokens,
+				),
+				maxTargetTokens: userCompaction.maxTargetTokens,
 				iteration: context.iteration,
 				tokensBefore: requestInputTokens,
 				tokensAfter: afterRequestTokens,

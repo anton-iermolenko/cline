@@ -15,6 +15,19 @@ function createConfig(compaction?: Config["compaction"]): Config {
 }
 
 describe("CLI compaction mode helpers", () => {
+	it("loads moving-target bounds from persisted configuration without changing the trigger", () => {
+		const budget = { targetTokens: 35000, maxTargetTokens: 62000 };
+		const config = createConfig(buildCliCompactionConfig("agentic", budget));
+		expect(config.compaction).toEqual({
+			enabled: true,
+			strategy: "agentic",
+			...budget,
+		});
+		applyCliCompactionMode(config, "basic");
+		expect(config.compaction).toMatchObject(budget);
+		expect(config.compaction).not.toHaveProperty("triggerTokens");
+		expect(buildCliCompactionConfig("off", budget)).toEqual({ enabled: false });
+	});
 	it("defaults enabled compaction to agentic summarization", () => {
 		expect(DEFAULT_CLI_COMPACTION_MODE).toBe("agentic");
 		expect(getCliCompactionMode(createConfig())).toBe(

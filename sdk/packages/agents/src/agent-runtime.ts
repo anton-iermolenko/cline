@@ -599,6 +599,7 @@ export class AgentRuntime {
 	private initialization?: Promise<void>;
 	private abortController?: AbortController;
 	private modelSteerController?: AbortController;
+	private lastPreparedModelRequest?: AgentModelRequest;
 	private readonly telemetryProviderId?: string;
 	private readonly telemetryModelId?: string;
 
@@ -1364,7 +1365,10 @@ export class AgentRuntime {
 		interrupted?: boolean;
 	}> {
 		const first = await this.generateAssistantMessage();
-		if (this.isRecoverableMaxTokensTurn(first)) {
+		if (
+			this.isRecoverableMaxTokensTurn(first) &&
+			(await this.shouldCompactTruncatedTurn())
+		) {
 			return await this.retryTruncatedTurnWithCompaction(first);
 		}
 		if (!this.isRecoverableOverflowTurn(first)) {
@@ -1442,6 +1446,46 @@ export class AgentRuntime {
 		// Provider-executed tool activity lives in metadata, not content, and has
 		// already happened — replaying the turn would repeat its side effects.
 		return !this.hasModelToolActivity(turn.message);
+	}
+
+	private async shouldCompactTruncatedTurn(): Promise<boolean> {
+		const counter = this.config.model.countInputTokens;
+		if (!counter) return true; // Preserve recovery for counterless providers.
+		try {
+			// Count the request after compaction and host hooks, not canonical
+			// state or a reconstruction missing dynamic instructions/tools.
+			if (!this.lastPreparedModelRequest) return false;
+			const count = await counter.call(this.config.model, {
+				...this.lastPreparedModelRequest,
+				signal: this.abortController?.signal,
+			});
+			this.throwIfAborted();
+			if (!count) return false;
+			const nearLimit =
+				count.inputTokens >=
+				count.maxInputTokens - count.compactionBufferTokens;
+			if (!nearLimit) {
+				await this.emit({
+					type: "status-notice",
+					snapshot: this.snapshot(),
+					message:
+						"output token limit reached with input headroom — continuing without compaction",
+					metadata: {
+						kind: "max_tokens_continuation",
+						inputTokens: count.inputTokens,
+						maxInputTokens: count.maxInputTokens,
+					},
+				});
+			}
+			return nearLimit;
+		} catch (error) {
+			this.throwIfAborted();
+			this.config.logger?.debug(
+				"Output-limit recovery kept history because input pressure could not be measured",
+				{ error: error instanceof Error ? error.message : String(error) },
+			);
+			return false;
+		}
 	}
 
 	/** Tool activity executed outside AgentRuntime is recorded in metadata. */
@@ -1730,6 +1774,7 @@ export class AgentRuntime {
 			...summarizeModelRequest(request),
 		});
 
+		this.lastPreparedModelRequest = request;
 		return { request, startedAt };
 	}
 
@@ -2309,6 +2354,7 @@ export class AgentRuntime {
 		}
 		const message = createMessage("user", [{ type: "text", text: pending }], {
 			userRunSpan: 0,
+			humanInput: true,
 		});
 		this.state.messages.push(message);
 		await this.emit({

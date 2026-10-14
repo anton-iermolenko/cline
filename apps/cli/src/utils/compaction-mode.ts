@@ -32,14 +32,18 @@ export function parseCliCompactionMode(
 
 export function buildCliCompactionConfig(
 	mode?: CliCompactionMode,
+	budget?: Pick<
+		NonNullable<Config["compaction"]>,
+		"maxTargetTokens" | "targetTokens"
+	>,
 ): NonNullable<Config["compaction"]> {
 	if (mode === undefined) {
-		return { enabled: true };
+		return { enabled: true, ...budget };
 	}
 	if (mode === "off") {
 		return { enabled: false };
 	}
-	return { enabled: true, strategy: mode };
+	return { enabled: true, strategy: mode, ...budget };
 }
 
 export function getCliCompactionMode(config: Config): CliCompactionMode {

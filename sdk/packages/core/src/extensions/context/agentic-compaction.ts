@@ -221,6 +221,11 @@ export async function runAgenticCompaction(options: {
 	}
 
 	const messagesToSummarize = messages.slice(0, cutIndex);
+	const latestTypedIndex = messages.map(isTurnStartMessage).lastIndexOf(true);
+	const protectedPrompt =
+		latestTypedIndex >= 0 && latestTypedIndex < cutIndex
+			? messages[latestTypedIndex]
+			: undefined;
 	const latestSummaryIndex = findLatestSummaryIndex(messagesToSummarize);
 	const previousSummary =
 		latestSummaryIndex >= 0
@@ -244,11 +249,6 @@ export async function runAgenticCompaction(options: {
 		summarizerProviderConfig.modelInfo ??
 		summarizerProviderConfig.knownModels?.[summarizerProviderConfig.modelId];
 	if (typeof summaryInfo?.metadata?.inputTokenCountUrl === "string") {
-		const latestTypedIndex = messages.map(isTurnStartMessage).lastIndexOf(true);
-		const protectedPrompt =
-			latestTypedIndex >= 0 && latestTypedIndex < cutIndex
-				? messages[latestTypedIndex]
-				: undefined;
 		const folded = messagesToSummarize.filter(
 			(message) => message !== protectedPrompt,
 		);
@@ -404,8 +404,11 @@ export async function runAgenticCompaction(options: {
 			summary,
 			fileOps,
 			tokensBefore,
-			userRunSpan: countUserRunMessages(messagesToSummarize),
+			userRunSpan: countUserRunMessages(
+				messagesToSummarize.filter((message) => message !== protectedPrompt),
+			),
 		}),
+		...(protectedPrompt ? [protectedPrompt] : []),
 		...messages.slice(cutIndex),
 	];
 	const tokensAfter = resultMessages.reduce(

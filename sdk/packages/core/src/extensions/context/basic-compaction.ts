@@ -82,6 +82,7 @@ function assistantTextContent(
 function buildDroppedWorkSummaryBlock(
 	summary: ToolActivitySummary,
 	preservedResponses: string[],
+	evidenceCharLimit?: number,
 ): ContentBlock {
 	const responsesSection =
 		preservedResponses.length > 0
@@ -89,7 +90,7 @@ function buildDroppedWorkSummaryBlock(
 			: "";
 	return {
 		type: "text",
-		text: `<SYSTEM_NOTICE>\nEarlier context was compacted. Summary of your actions after the request above:\n${formatToolActivitySummary(summary)}${responsesSection}</SYSTEM_NOTICE>`,
+		text: `<SYSTEM_NOTICE>\nEarlier context was compacted. Summary of your actions after the request above:\n${formatToolActivitySummary(summary, evidenceCharLimit)}${responsesSection}</SYSTEM_NOTICE>`,
 	};
 }
 
@@ -232,7 +233,13 @@ function mergeAdjacentUserTurns(
 							currentIndex,
 						);
 						if (hasToolActivity(summary) || responses.length > 0) {
-							blocks.push(buildDroppedWorkSummaryBlock(summary, responses));
+							blocks.push(
+								buildDroppedWorkSummaryBlock(
+									summary,
+									responses,
+									responseCharLimit,
+								),
+							);
 						}
 					}
 				}
@@ -290,7 +297,11 @@ function mergeAdjacentUserTurns(
 		if (!hasToolActivity(summary) && responses.length === 0) {
 			continue;
 		}
-		const block = buildDroppedWorkSummaryBlock(summary, responses);
+		const block = buildDroppedWorkSummaryBlock(
+			summary,
+			responses,
+			responseCharLimit,
+		);
 		if (current.isLatestTyped) {
 			// Keep the protected request byte-for-byte intact. Work after it
 			// belongs in a separate system-inserted continuation message.
@@ -299,6 +310,7 @@ function mergeAdjacentUserTurns(
 				content: [block],
 				metadata: {
 					kind: "compaction_work_summary",
+					executionState: summary,
 					displayRole: "system",
 					userRunSpan: 0,
 				},
@@ -578,13 +590,17 @@ export function runBasicCompaction(options: {
 			continue;
 		}
 		if (
-			!options.refoldPreserved &&
-			isPreservedByCompaction(originalMessages[index])
+			isCompactionSummaryMessage(originalMessages[index]) ||
+			(!options.refoldPreserved &&
+				isPreservedByCompaction(originalMessages[index]))
 		) {
 			frozenIndices.add(index);
 			totalTokens += estimate(originalMessages[index]);
 		}
 	}
+
+	// Instructions and semantic checkpoints are mandatory before recent work.
+	const mandatoryTokens = totalTokens;
 
 	// Latest typed turn: preserve the newest messages that fit, dropping
 	// only the oldest. Snapping the kept suffix forward to an assistant
@@ -687,7 +703,7 @@ export function runBasicCompaction(options: {
 	// cannot fit the window at all is still trimmed best-effort.
 	const projectionTargetTokens = Math.min(
 		options.refoldPreserved
-			? totalTargetTokens
+			? Math.max(totalTargetTokens, mandatoryTokens)
 			: Math.max(totalTargetTokens, totalTokens),
 		Math.max(1, options.context.budget.messages.triggerTokens),
 	);
@@ -728,6 +744,7 @@ export function runBasicCompaction(options: {
 	);
 	const compactionMetadata = {
 		kind: "compaction",
+		executionState: summarizeToolActivity(originalMessages),
 		reason:
 			options.context.mode === "manual"
 				? "manual_compaction"
@@ -746,6 +763,7 @@ export function runBasicCompaction(options: {
 				metadata: {
 					...message.metadata,
 					...compactionMetadata,
+					...(message.metadata?.userRunSpan === 0 ? { humanInput: true } : {}),
 					userRunSpan: getUserRunSpan(message),
 				},
 			});

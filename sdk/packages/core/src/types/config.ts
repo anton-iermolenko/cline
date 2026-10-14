@@ -157,6 +157,10 @@ export interface CoreCompactionSummarizerConfig {
 export type CoreCompactionStrategy = "basic" | "agentic";
 
 export interface CoreCompactionConfig {
+	/** Preferred full-request size after automatic or overflow compaction. */
+	targetTokens?: number;
+	/** Allow an automatic target to grow up to this size to preserve execution context. */
+	maxTargetTokens?: number;
 	/** Proactive input headroom for providers with token counting. Defaults to 2048. */
 	bufferTokens?: number;
 	enabled?: boolean;
