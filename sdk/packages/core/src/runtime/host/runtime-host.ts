@@ -230,6 +230,8 @@ export function splitCoreSessionConfig(config: ClineCoreStartConfig): {
 							enabled: compaction.enabled,
 							strategy: compaction.strategy,
 							preserveRecentTokens: compaction.preserveRecentTokens,
+							targetTokens: compaction.targetTokens,
+							maxTargetTokens: compaction.maxTargetTokens,
 							summarizer: compaction.summarizer,
 						},
 					}

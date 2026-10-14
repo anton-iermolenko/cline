@@ -4,6 +4,7 @@ import {
 	isSessionNotFoundError,
 	isUnusableSessionError,
 	SessionNotFoundError,
+	splitCoreSessionConfig,
 } from "./runtime-host";
 
 describe("isUnusableSessionError", () => {
@@ -78,5 +79,56 @@ describe("SessionRunInProgressError", () => {
 		expect(new SessionRunInProgressError().message).toBe(
 			"SessionRuntime.shutdown called while a run is in progress",
 		);
+	});
+});
+
+describe("splitCoreSessionConfig compaction budgets", () => {
+	const base = {
+		providerId: "openai-compatible",
+		modelId: "test",
+		systemPrompt: "transport budget regression",
+		cwd: "/tmp",
+		enableTools: false,
+		enableSpawnAgent: false,
+		enableAgentTeams: false,
+	};
+
+	it.each([
+		"basic",
+		"agentic",
+	] as const)("preserves configured targets across JSON transport for %s compaction", (strategy) => {
+		const compaction = {
+			enabled: true,
+			strategy,
+			preserveRecentTokens: 20_000,
+			targetTokens: 35_000,
+			maxTargetTokens: 62_000,
+		};
+		const split = splitCoreSessionConfig({ ...base, compaction });
+		const transported = JSON.parse(JSON.stringify(split.config));
+
+		expect(transported.compaction).toEqual(compaction);
+		expect(split.localRuntime?.compaction).toBeUndefined();
+	});
+
+	it("keeps a custom compactor local while forwarding its serializable budget", () => {
+		const compact = async () => ({ messages: [] });
+		const compaction = {
+			enabled: true,
+			targetTokens: 35_000,
+			maxTargetTokens: 62_000,
+			compact,
+		};
+		const split = splitCoreSessionConfig({ ...base, compaction });
+		const transported = JSON.parse(JSON.stringify(split.config));
+
+		expect(transported.compaction).toEqual({
+			enabled: true,
+			targetTokens: 35_000,
+			maxTargetTokens: 62_000,
+		});
+		expect(split.config.compaction).not.toHaveProperty("compact");
+		expect(split.localRuntime?.compaction?.compact).toBe(compact);
+		expect(split.localRuntime?.compaction).toBe(compaction);
 	});
 });
