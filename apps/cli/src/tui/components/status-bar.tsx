@@ -18,18 +18,23 @@ export function createContextBar(
 ): { filled: string; empty: string } {
 	const normalizedWidth = Math.max(0, Math.floor(width));
 	const ratio = total && total > 0 ? Math.min(used / total, 1) : 0;
-	const filledCount =
+	// Partial blocks keep the compact meter proportional instead of rounding
+	// every request up to the next full character (69% used looked 83% full).
+	const eighths =
 		total && total > 0 && used > 0
 			? used >= total
-				? normalizedWidth
+				? normalizedWidth * 8
 				: Math.min(
-						Math.max(1, Math.ceil(ratio * normalizedWidth)),
-						Math.max(0, normalizedWidth - 1),
+						Math.max(1, Math.round(ratio * normalizedWidth * 8)),
+						Math.max(0, normalizedWidth * 8 - 1),
 					)
 			: 0;
-	const emptyCount = Math.max(0, normalizedWidth - filledCount);
+	const fullBlocks = Math.floor(eighths / 8);
+	const partialBlock = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"][eighths % 8];
+	const filled = "\u2588".repeat(fullBlocks) + partialBlock;
+	const emptyCount = Math.max(0, normalizedWidth - filled.length);
 	return {
-		filled: "\u2588".repeat(filledCount),
+		filled,
 		empty: "\u2588".repeat(emptyCount),
 	};
 }

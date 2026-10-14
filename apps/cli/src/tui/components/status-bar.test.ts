@@ -28,20 +28,40 @@ describe("createContextBar", () => {
 
 	it("shows a non-empty fill when usage is above zero", () => {
 		expect(createContextBar(7_000, 1_000_000)).toEqual({
-			filled: "\u2588",
+			filled: "▏",
 			empty: "\u2588\u2588\u2588\u2588\u2588",
 		});
 	});
 
-	it("reserves the final segment for usage at or above the limit", () => {
+	it("keeps the final block partial until usage reaches the limit", () => {
 		expect(createContextBar(999_999, 1_000_000)).toEqual({
-			filled: "\u2588\u2588\u2588\u2588\u2588",
-			empty: "\u2588",
+			filled: "█████▉",
+			empty: "",
 		});
 		expect(createContextBar(1_000_000, 1_000_000)).toEqual({
 			filled: "\u2588\u2588\u2588\u2588\u2588\u2588",
 			empty: "",
 		});
+	});
+
+	it("shows the reported 63K input proportionally within the 92K allowance", () => {
+		expect(createContextBar(63_284, 92_160)).toEqual({
+			filled: "████▏",
+			empty: "█",
+		});
+		expect(createContextBar(80_000, 92_160)).toEqual({
+			filled: "█████▎",
+			empty: "",
+		});
+	});
+
+	it("keeps the total width stable with partial blocks", () => {
+		for (const width of [0, 1, 6, 12]) {
+			for (const used of [0, 1, 63_284, 90_000, 92_160, 100_000]) {
+				const bar = createContextBar(used, 92_160, width);
+				expect(bar.filled.length + bar.empty.length).toBe(width);
+			}
+		}
 	});
 
 	it("uses explicit white when terminal foreground would inherit gray", () => {
