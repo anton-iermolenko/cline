@@ -4,6 +4,7 @@ import {
 	type MessageWithMetadata,
 } from "@cline/shared";
 import { z } from "zod";
+import { attachContextMemory } from "../services/context-recovery";
 
 function isMessageWithMetadata(value: unknown): value is MessageWithMetadata {
 	if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -158,7 +159,10 @@ export function createSessionCompactionState(input: {
 		...(sourceLastMessageKey
 			? { source_last_message_key: sourceLastMessageKey }
 			: {}),
-		messages: cloneMessages(input.compactedMessages),
+		messages: attachContextMemory(
+			cloneMessages(input.compactedMessages),
+			sourceMessages,
+		),
 		...(input.systemPrompt !== undefined
 			? { system_prompt: input.systemPrompt }
 			: {}),

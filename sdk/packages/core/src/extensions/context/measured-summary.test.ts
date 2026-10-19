@@ -38,16 +38,35 @@ function input(signal = new AbortController().signal) {
 	];
 	return {
 		context: {
+			agentId: "test",
+			conversationId: "test",
+			parentAgentId: null,
+			iteration: 1,
+			mode: "auto",
+			model: {
+				id: "local",
+				provider: "openai-compatible",
+				info: providerConfig.knownModels.local,
+			},
 			messages,
 			budget: {
 				request: {
 					inputTokens: 110000,
 					maxInputTokens: 73727,
 					triggerTokens: 71679,
+					targetTokens: 35000,
+					overheadTokens: 1000,
+					thresholdRatio: 71679 / 73727,
+					utilizationRatio: 110000 / 73727,
+				},
+				messages: {
+					inputTokens: 109000,
+					triggerTokens: 70679,
+					targetTokens: 34000,
 				},
 			},
 			abortSignal: signal,
-		} as CoreCompactionContext,
+		} satisfies CoreCompactionContext,
 		providerConfig,
 		preserveRecentTokens: 1,
 		estimateMessageTokens: createTokenEstimator(),

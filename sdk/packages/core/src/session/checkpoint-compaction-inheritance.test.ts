@@ -161,7 +161,19 @@ describe.each([
 		expect(carried).toBeDefined();
 		expect(
 			projectSessionCompactionState(carried!, messages.slice(0, 2)),
-		).toEqual([summary]);
+		).toMatchObject([
+			{
+				...summary,
+				metadata: {
+					...summary.metadata,
+					contextMemory: {
+						version: 1,
+						totalInputs: 1,
+						inputs: [{ text: "first", kind: "request" }],
+					},
+				},
+			},
+		]);
 		expect(carried?.conversation_id).toBeUndefined();
 	});
 
@@ -174,7 +186,19 @@ describe.each([
 		expect(carried?.source_message_count).toBe(2);
 		expect(
 			projectSessionCompactionState(carried!, messages.slice(0, 2)),
-		).toEqual([summary]);
+		).toMatchObject([
+			{
+				...summary,
+				metadata: {
+					...summary.metadata,
+					contextMemory: {
+						version: 1,
+						totalInputs: 1,
+						inputs: [{ text: "first", kind: "request" }],
+					},
+				},
+			},
+		]);
 	});
 	it("keeps an explicit initial state authoritative", async () => {
 		const sourceState = createSessionCompactionState({

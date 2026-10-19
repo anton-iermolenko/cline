@@ -546,6 +546,65 @@ describe("SessionRuntime.getExtensionRegistry", () => {
 });
 
 describe("SessionRuntime message preparation", () => {
+	it("keeps recovery provenance in the final model hook and exposes only this session's history", async () => {
+		const { deps, configs } = makeRecordingRuntimeFactory();
+		const session = new SessionRuntime(makeAgentConfig(), deps);
+		await session.run("go");
+		session.restore([
+			{
+				id: "original",
+				role: "user",
+				content: "Append events and preserve notifications.",
+			},
+			{
+				id: "correction",
+				role: "user",
+				content: "Use kv_store for the retained record.",
+			},
+		]);
+		const hook = configs[0]?.hooks?.beforeModel;
+		expect(hook).toBeDefined();
+		const result = await hook!({
+			snapshot: makeSnapshot(),
+			request: {
+				systemPrompt: "system",
+				tools: [],
+				messages: [
+					{
+						id: "summary",
+						role: "user",
+						createdAt: 1,
+						content: [
+							{ type: "text", text: "Context summary: continue the work." },
+						],
+						metadata: {
+							kind: "compaction_summary",
+							displayRole: "system",
+							userRunSpan: 0,
+						},
+					},
+				],
+			},
+		});
+		const text = JSON.stringify(result?.messages);
+		expect(text).toContain("SAME conversation");
+		expect(text).toContain("Append events and preserve notifications.");
+		expect(text).toContain("Use kv_store for the retained record.");
+		expect(text).toContain("cline://history/user-inputs.txt");
+		const history = configs[0]?.toolContextMetadata?.readCanonicalHistory;
+		expect(typeof history).toBe("function");
+		expect((history as () => unknown)()).toEqual(session.getMessages());
+		session.restore([
+			{ role: "user", content: "Restored branch request only." },
+		]);
+		expect(JSON.stringify((history as () => unknown)())).not.toContain(
+			"Append events",
+		);
+		expect(JSON.stringify((history as () => unknown)())).toContain(
+			"Restored branch request only.",
+		);
+	});
+
 	it("runs registered message builders and API-safe normalization before model calls", async () => {
 		const build = vi.fn(async (messages) => [
 			...messages,
@@ -601,7 +660,7 @@ describe("SessionRuntime message preparation", () => {
 		});
 
 		expect(build).toHaveBeenCalledTimes(1);
-		expect(build.mock.calls[0]?.[0]).toEqual([
+		expect(build.mock.calls[0]?.[0]).toMatchObject([
 			{
 				role: "user",
 				content: [
@@ -1630,7 +1689,7 @@ describe("SessionRuntime.addTools / updateConnection / clearHistory / restore", 
 		}
 
 		const staleRead = "export const x = 1;\n".repeat(7_000);
-		const latestRead = "export const x = 2;\n".repeat(7_000);
+		const latestRead = "export const x = 2;\n".repeat(360);
 		const beforeRestore = await beforeModel({
 			snapshot: makeSnapshot(),
 			request: {
@@ -3047,4 +3106,32 @@ describe("SessionRuntime auth retry", () => {
 		expect(createdCount()).toBe(1);
 		expect(result.finishReason).toBe("error");
 	});
+});
+
+describe("unchanged observation runtime hook",()=>{
+ it.each([false,true])("keeps warnings in tool output and honors disabled=%s",async disabled=>{
+  const {deps,configs}=withCapturingFakeRuntime();
+  const session=new SessionRuntime(makeAgentConfig({execution:{loopDetection:disabled?false:{softThreshold:2,hardThreshold:3}}}),deps);
+  await session.run("Inspect");
+  const hook=configs[0]?.hooks?.afterTool;
+  expect(hook).toBeTypeOf("function");
+  const context={
+   snapshot:makeSnapshot(),tool:{name:"read_files",description:"Read",inputSchema:{type:"object"},execute:async()=>""},
+   toolCall:{type:"tool-call" as const,toolCallId:"r",toolName:"read_files",input:{files:[{path:"API.md"}]}},
+   input:{files:[{path:"API.md"}]},result:{output:[{query:"API.md",result:"verified evidence",success:true}]},
+   startedAt:new Date(1),endedAt:new Date(2),durationMs:1
+  };
+  await hook?.(context);
+  const soft=await hook?.(context);
+  if(disabled){
+   expect(soft).toBeUndefined();
+   expect(await hook?.(context)).toBeUndefined();
+  }else{
+   expect(JSON.stringify(soft?.result?.output)).toContain("same read-only observation");
+   expect(soft?.appendContext).toBeUndefined();
+   const hard=await hook?.(context);
+   expect(hard?.stop).toBe(true);
+   expect(hard?.result?.output).toEqual(context.result.output);
+  }
+ });
 });

@@ -1,3 +1,9 @@
+import {
+	EVIDENCE_HISTORY_URI,
+	formatEvidenceHistory,
+	formatUserHistory,
+	USER_HISTORY_URI,
+} from "../../../session/services/context-recovery";
 /**
  * File Read Executor
  *
@@ -11,6 +17,10 @@ import { createInterface } from "node:readline";
 import { Readable } from "node:stream";
 import type { AgentToolContext } from "@cline/shared";
 import { resolveExistingFilePath } from "@cline/shared/storage";
+import {
+	DEFAULT_MAX_TOOL_RESULT_CHARS,
+	getMessageBuilderOptionsFromEnv,
+} from "../../../session/services/message-builder";
 import {
 	TOOL_RESULT_CACHE_MISS,
 	ToolResultCache,
@@ -52,12 +62,15 @@ export interface FileReadExecutorOptions {
 	 * @default false
 	 */
 	includeLineNumbers?: boolean;
+	/** Serialized tool preview cap; pages leave space for the result envelope. */
+	maxOutputChars?: number;
 }
 
 const DEFAULT_FILE_READ_OPTIONS: Required<FileReadExecutorOptions> = {
 	maxFileSizeBytes: 10_000_000, // 10MB default limit
 	encoding: "utf-8", // Default to UTF-8 encoding
-	includeLineNumbers: true, // Include line numbers by default
+	includeLineNumbers: true,
+	maxOutputChars: DEFAULT_MAX_TOOL_RESULT_CHARS, // Include line numbers by default
 };
 
 const MAX_TEXT_STREAM_BYTES = 100_000_000;
@@ -85,6 +98,7 @@ async function readTextWindow(
 	startLine: number | null | undefined,
 	endLine: number | null | undefined,
 	signal?: AbortSignal,
+	maxOutputChars = DEFAULT_MAX_TOOL_RESULT_CHARS - 1024,
 ): Promise<string> {
 	if (signal?.aborted) {
 		stream.destroy();
@@ -145,12 +159,25 @@ async function readTextWindow(
 				line = `${line.slice(0, MAX_LINE_CHARS)} [line truncated]`;
 			}
 
-			const nextChars = chars + line.length + lineNumberPrefixChars + 1;
-			if (nextChars > MAX_READ_OUTPUT_CHARS && captured.length > 0) {
+			// JSON escaping matters: the model receives a serialized result envelope.
+			const nextChars =
+				chars + JSON.stringify(line).length - 2 + lineNumberPrefixChars + 2;
+			if (nextChars > maxOutputChars && captured.length > 0) {
 				capped = true;
 				continue;
 			}
 
+			if (nextChars > maxOutputChars) {
+				while (
+					line.length > 0 &&
+					JSON.stringify(line + " [line truncated]").length +
+						lineNumberPrefixChars +
+						2 >
+						maxOutputChars
+				)
+					line = line.slice(0, -1);
+				line += " [line truncated]";
+			}
 			captured.push({ lineNumber: totalLines, text: line });
 			chars = nextChars;
 		}
@@ -188,7 +215,7 @@ async function readTextWindow(
 	return (
 		`${body}\n\n` +
 		`[Showing lines ${requestedStartLine}-${lastCapturedLine} of ${totalLineText}. ` +
-		"Use start_line/end_line to read other sections.]"
+		`Use start_line/end_line to read other sections. Next: start_line=${lastCapturedLine + 1}${hasFiniteEndLine ? `, end_line=${requestedEndLine}` : ""}.]`
 	);
 }
 
@@ -208,13 +235,41 @@ async function readTextWindow(
 export function createFileReadExecutor(
 	options: FileReadExecutorOptions = {},
 ): FileReadExecutor {
-	const { maxFileSizeBytes, encoding, includeLineNumbers } = {
+	const { maxFileSizeBytes, encoding, includeLineNumbers, maxOutputChars } = {
 		...DEFAULT_FILE_READ_OPTIONS,
 		...options,
 	};
 
 	return async (request: ReadFileRequest, context: AgentToolContext) => {
 		const { path: filePath, start_line, end_line } = request;
+		const previewCap = Math.min(
+			maxOutputChars,
+			getMessageBuilderOptionsFromEnv().maxToolResultChars ??
+				DEFAULT_MAX_TOOL_RESULT_CHARS,
+			MAX_READ_OUTPUT_CHARS,
+		);
+		const pageBudget = Math.max(
+			128,
+			previewCap - 1024 - JSON.stringify(filePath).length,
+		);
+		if (filePath === USER_HISTORY_URI || filePath === EVIDENCE_HISTORY_URI) {
+			context.signal?.throwIfAborted();
+			const getter = context.metadata?.readCanonicalHistory;
+			if (typeof getter !== "function")
+				throw new Error("Canonical history is unavailable in this session.");
+			return readTextWindow(
+				Readable.from([
+					filePath === USER_HISTORY_URI
+						? formatUserHistory(getter())
+						: formatEvidenceHistory(getter()),
+				]),
+				includeLineNumbers,
+				start_line,
+				end_line,
+				context.signal,
+				pageBudget,
+			);
+		}
 		if (filePath.startsWith("cline://")) {
 			context.signal?.throwIfAborted();
 			const cache = context.metadata?.toolResultCache;
@@ -226,6 +281,7 @@ export function createFileReadExecutor(
 				start_line,
 				end_line,
 				context.signal,
+				pageBudget,
 			);
 		}
 		const initialPath = path.isAbsolute(filePath)
@@ -280,6 +336,7 @@ export function createFileReadExecutor(
 			start_line,
 			end_line,
 			context.signal,
+			pageBudget,
 		);
 	};
 }

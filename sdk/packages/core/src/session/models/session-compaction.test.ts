@@ -333,6 +333,15 @@ describe("compaction state copy boundaries", () => {
 		content: "first task summary",
 		metadata: { kind: "compaction_summary" },
 	};
+	const recoveredSummary = {
+		...summary,
+		metadata: {
+			...summary.metadata,
+			contextMemory: expect.objectContaining({
+				inputs: [expect.objectContaining({ text: "first task" })],
+			}),
+		},
+	};
 	const oldCopy = createSessionCompactionState({
 		sourceMessages: source,
 		compactedMessages: [summary, ...source.slice(2)],
@@ -347,10 +356,12 @@ describe("compaction state copy boundaries", () => {
 		});
 		expect(carried?.source_message_count).toBe(2);
 		expect(carried?.conversation_id).toBeUndefined();
-		expect(projectSessionCompactionState(carried!, undo)).toEqual([summary]);
+		expect(projectSessionCompactionState(carried!, undo)).toEqual([
+			recoveredSummary,
+		]);
 		const repost = [...undo, { ...source[2]!, content: "reposted task" }];
 		expect(projectSessionCompactionState(carried!, repost)).toEqual([
-			summary,
+			recoveredSummary,
 			repost[2],
 		]);
 		const copied = deriveSessionCompactionState({
@@ -358,7 +369,9 @@ describe("compaction state copy boundaries", () => {
 			sourceMessages: repost,
 		});
 		expect(copied?.source_message_count).toBe(2);
-		expect(projectSessionCompactionState(copied!, undo)).toEqual([summary]);
+		expect(projectSessionCompactionState(copied!, undo)).toEqual([
+			recoveredSummary,
+		]);
 	});
 	it("keeps copy boundaries independent of later canonical messages", () => {
 		const state = createSessionCompactionState({
@@ -371,7 +384,7 @@ describe("compaction state copy boundaries", () => {
 		});
 		expect(copied?.source_message_count).toBe(2);
 		expect(projectSessionCompactionState(copied!, source)).toEqual([
-			summary,
+			recoveredSummary,
 			...source.slice(2),
 		]);
 	});
@@ -447,6 +460,6 @@ describe("compaction state copy boundaries", () => {
 		});
 		expect(
 			projectSessionCompactionState(carried!, history.slice(0, 3)),
-		).toEqual([summary]);
+		).toEqual([recoveredSummary]);
 	});
 });

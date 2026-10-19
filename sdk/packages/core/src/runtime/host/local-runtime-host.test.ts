@@ -6588,11 +6588,18 @@ describe("LocalRuntimeHost", () => {
 				}),
 			},
 		);
-		expect((await summarized.runPrepareTurn())?.messages).toEqual([
+		expect((await summarized.runPrepareTurn())?.messages).toMatchObject([
 			{
 				role: "user",
 				content: "earlier summary",
-				metadata: { kind: "compaction_summary" },
+				metadata: {
+					kind: "compaction_summary",
+					contextMemory: {
+						version: 1,
+						totalInputs: 1,
+						inputs: [{ text: "fix the parser", kind: "request" }],
+					},
+				},
 			},
 			{ role: "user", content: "keep going" },
 		]);

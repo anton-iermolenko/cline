@@ -1087,3 +1087,37 @@ Human input delivered during an active run carries explicit `humanInput` provena
 Tool-result serialization accepts built-in structured results and MCP payloads and retains bounded head/tail evidence. Basic fallback persists a bounded execution-state record of confirmed edits, validation outcomes, pending edits, and failures across repeated folds. Namespaced MCP editors are recognized and failed writes are not recorded as saved changes. A measured semantic checkpoint may miss the preferred shrink target if it retains enough growth headroom; hard admission and manual targets remain binding. Output-limit recovery measures the previously prepared request after host hooks and preserves history when input headroom is available.
 
 Automatic compaction budgets are configuration, not trigger changes. SDK `CoreCompactionConfig.targetTokens` specifies the preferred complete-request size after compaction; `maxTargetTokens` sets its moving upper bound. The CLI reads both from the optional `compaction` object in `data/settings/global-settings.json`. Omitted fields retain the existing model-derived defaults. Positive integers are required and the preferred target must not exceed the maximum. The measured automatic path may accept a larger continuity-preserving candidate up to the configured ceiling, additionally bounded below the existing trigger and hard input allowance by two output budgets (or the compaction buffer, whichever is larger). The next compaction again starts with the preferred target; effective retained size can move within those bounds. Manual targets and overflow recovery remain strict. Changes apply when a CLI session starts or resumes.
+
+
+## Compaction provenance and source recovery
+
+Canonical messages remain the full-fidelity record. A compaction sidecar stores a bounded
+human-input ledger and source index as metadata on its first summary message. Original
+requests, later steering, and answers to the built-in clarification tool have explicit
+provenance; internal summaries are never counted as human requests. Checkpoint inheritance
+rebuilds this metadata from the validated canonical prefix so Undo cannot retain future
+instructions.
+
+The final MessageBuilder projection embeds a continuity brief of at most 2,400 UTF-8
+bytes in the existing compaction summary. It identifies condensed context as the same
+conversation and reminds the model to continue remaining work. It never appends a
+synthetic user turn after tool results. The full human-input ledger and source index
+remain in metadata, with only two recent human excerpts in the brief. Native input-token
+counting uses the same projection. The brief reserves text budget before evidence
+trimming; rebuilding a request does not accumulate notices or mutate canonical history.
+
+The existing read_files tool accepts cline://history/user-inputs.txt and
+cline://history/evidence.txt with ordinary line ranges. Their callback is bound to the
+current runtime conversation, including after restore. Human inputs use reversible JSON
+string chunks; source references include prior read ranges and result hashes without
+claiming those details are currently visible or requesting a reread. No cross-session
+history lookup or new tool schema is introduced.
+
+Stale-read pruning requires a later complete replacement, never an older whole-file read
+that happens to share the same path. A truncated replacement or aggregate text pressure
+cannot invalidate an earlier retained section. Rewrites still batch to preserve provider
+prefix caches and clear when a conversation is restored.
+
+### Continuation efficiency
+
+Provider preparation embeds a bounded continuity brief in the existing compaction summary, without adding a user turn after tool results. Canonical human inputs and source references remain session-scoped, paged on demand. Compaction serialization omits old scratch reasoning; summary instructions reconcile completed edits and verification against the latest observed results. Text reads budget their JSON-escaped page before execution returns, leaving room for the tool envelope and an explicit next-line cursor. The per-session safety tracker also observes a bounded window of read-only outcomes, warning and stopping repeated unchanged inspections across alternating calls; possible mutations, errors and unknown commands reset that window.

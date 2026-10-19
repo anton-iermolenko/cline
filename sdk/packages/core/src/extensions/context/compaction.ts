@@ -39,7 +39,6 @@ import {
 	COMPACTION_TRIGGER_RATIO,
 	createTokenEstimator,
 	DEFAULT_MAX_INPUT_TOKENS,
-	DEFAULT_PRESERVE_RECENT_TOKENS,
 	DEFAULT_TARGET_RATIO,
 	findLatestSummaryIndex,
 	isTurnStartMessage,
@@ -194,10 +193,7 @@ const BUILTIN_COMPACTION_STRATEGIES = {
 			context,
 			providerConfig,
 			summarizer: compaction?.summarizer,
-			preserveRecentTokens: Math.min(
-				compaction?.preserveRecentTokens ?? DEFAULT_PRESERVE_RECENT_TOKENS,
-				context.budget.messages.targetTokens,
-			),
+			preserveRecentTokens: compaction?.preserveRecentTokens,
 			estimateMessageTokens,
 			logger,
 		}),
@@ -560,6 +556,23 @@ export function createContextCompactionPrepareTurn(
 					requestOverheadTokens,
 				);
 			}
+		}
+
+		// The maximum bounds every compacted request, including default/manual
+		// targets. The message budget already excludes system/tool overhead.
+		const maxResultTokens =
+			userCompaction.maxTargetTokens === undefined
+				? undefined
+				: Math.max(
+						1,
+						Math.floor(userCompaction.maxTargetTokens / underestimateFactor),
+					);
+		if (maxResultTokens !== undefined) {
+			requestTargetTokens = Math.min(requestTargetTokens, maxResultTokens);
+			messageTargetTokens = translateRequestBudgetToMessages(
+				requestTargetTokens,
+				requestOverheadTokens,
+			);
 		}
 
 		const compactionContext = {
@@ -949,6 +962,23 @@ export function createContextCompactionPrepareTurn(
 				throw new Error(
 					"Input token counting failed; original context was preserved",
 				);
+		}
+
+		if (
+			!beforeMeasurement &&
+			maxResultTokens !== undefined &&
+			result?.messages
+		) {
+			const candidateTokens = estimateRequestInputTokens({
+				systemPrompt: result.systemPrompt ?? context.systemPrompt,
+				messages: result.messages,
+				tools: context.tools,
+			});
+			if (candidateTokens > maxResultTokens) {
+				throw new Error(
+					`Compaction exceeds the configured maximum (${maxResultTokens} tokens; candidate estimate ${candidateTokens}). Original context was preserved.`,
+				);
+			}
 		}
 
 		context.abortSignal.throwIfAborted();

@@ -15,6 +15,7 @@ import {
 import {
 	buildSummaryMessage,
 	buildSummaryRequest,
+	DEFAULT_SUMMARY_MAX_OUTPUT_TOKENS,
 	type EstimateMessageTokens,
 	ensureFilesSection,
 	estimateTokens,
@@ -222,7 +223,7 @@ export async function runAgenticCompaction(options: {
 	context: CoreCompactionContext;
 	providerConfig: ProviderConfig;
 	summarizer?: CoreCompactionSummarizerConfig;
-	preserveRecentTokens: number;
+	preserveRecentTokens?: number;
 	estimateMessageTokens: EstimateMessageTokens;
 	logger?: BasicLogger;
 }): Promise<CoreCompactionResult | undefined> {
@@ -231,17 +232,60 @@ export async function runAgenticCompaction(options: {
 		return undefined;
 	}
 
-	const cutIndex = findCutIndex(
+	const summarizerProviderConfig = resolveSummarizerConfig({
+		activeProviderConfig: options.providerConfig,
+		summarizer: options.summarizer,
+	});
+	// Retain history toward the preferred full-request size, rather than a
+	// fixed 20K suffix. The caller has removed request overhead and clamped
+	// this message budget to the configured maximum and live input allowance.
+	const summaryReserveTokens =
+		summarizerProviderConfig.maxOutputTokens ??
+		DEFAULT_SUMMARY_MAX_OUTPUT_TOKENS;
+	let preserveRecentTokens = Math.max(
+		0,
+		Math.min(
+			options.preserveRecentTokens ?? Number.POSITIVE_INFINITY,
+			options.context.budget.messages.targetTokens - summaryReserveTokens,
+		),
+	);
+	let cutIndex = findCutIndex(
 		messages,
-		options.preserveRecentTokens,
+		preserveRecentTokens,
 		options.estimateMessageTokens,
 	);
+	const latestTypedIndex = messages.map(isTurnStartMessage).lastIndexOf(true);
+	// A user instruction outside the retained tail is reinserted verbatim;
+	// reserve its space separately so it does not silently consume headroom.
+	const protectedPromptTokens =
+		latestTypedIndex >= 0 && latestTypedIndex < cutIndex
+			? options.estimateMessageTokens(messages[latestTypedIndex])
+			: 0;
+	if (protectedPromptTokens > 0) {
+		preserveRecentTokens = Math.max(
+			0,
+			preserveRecentTokens - protectedPromptTokens,
+		);
+		cutIndex = findCutIndex(
+			messages,
+			preserveRecentTokens,
+			options.estimateMessageTokens,
+		);
+	}
 	if (cutIndex <= 0 || cutIndex >= messages.length) {
 		return undefined;
 	}
+	options.logger?.debug("Agentic compaction retention budget", {
+		preferredTargetTokens: options.context.budget.request.targetTokens,
+		requestOverheadTokens: options.context.budget.request.overheadTokens,
+		messageTargetTokens: options.context.budget.messages.targetTokens,
+		summaryReserveTokens,
+		protectedPromptTokens,
+		preserveRecentTokens,
+		messagesPreserved: messages.length - cutIndex,
+	});
 
 	const messagesToSummarize = messages.slice(0, cutIndex);
-	const latestTypedIndex = messages.map(isTurnStartMessage).lastIndexOf(true);
 	const protectedPrompt =
 		latestTypedIndex >= 0 && latestTypedIndex < cutIndex
 			? messages[latestTypedIndex]
@@ -261,10 +305,6 @@ export async function runAgenticCompaction(options: {
 	}
 
 	const preProjectionFileOps = extractFileOps(messagesToSummarize);
-	const summarizerProviderConfig = resolveSummarizerConfig({
-		activeProviderConfig: options.providerConfig,
-		summarizer: options.summarizer,
-	});
 	const summaryInfo =
 		summarizerProviderConfig.modelInfo ??
 		summarizerProviderConfig.knownModels?.[summarizerProviderConfig.modelId];

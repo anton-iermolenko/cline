@@ -21,6 +21,19 @@ const summary = {
 	content: "summary",
 	metadata: { kind: "compaction_summary" },
 };
+const recoveredSummary = {
+	...summary,
+	metadata: {
+		...summary.metadata,
+		contextMemory: {
+			version: 1,
+			totalInputs: 1,
+			inputs: [expect.objectContaining({ text: "first", kind: "request" })],
+			omittedInputs: false,
+			sources: [],
+		},
+	},
+};
 const dirs: string[] = [];
 afterEach(() => {
 	for (const dir of dirs.splice(0))
@@ -77,7 +90,7 @@ describe("missing compaction sidecar lineage recovery", () => {
 		expect(recovered?.conversation_id).toBe("child");
 		expect(
 			projectSessionCompactionState(recovered!, messages.slice(0, 2)),
-		).toEqual([summary]);
+		).toEqual([recoveredSummary]);
 		expect(readFileSync(child.messagesPath)).toEqual(before);
 		expect(existsSync(child.compactionPath!)).toBe(false);
 	});
@@ -133,7 +146,7 @@ describe("missing compaction sidecar lineage recovery", () => {
 				apiMessages: messages,
 				conversationId: "child",
 			});
-			expect(prepared.messages).toEqual([summary, messages[2]]);
+			expect(prepared.messages).toEqual([recoveredSummary, messages[2]]);
 		} finally {
 			await host.dispose();
 		}
@@ -146,7 +159,7 @@ describe("missing compaction sidecar lineage recovery", () => {
 		});
 		const state = await host.readSessionCompactionState("child");
 		expect(projectSessionCompactionState(state!, messages)).toEqual([
-			summary,
+			recoveredSummary,
 			messages[2],
 		]);
 	});

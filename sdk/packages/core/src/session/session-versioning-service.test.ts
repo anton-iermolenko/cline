@@ -483,6 +483,19 @@ describe("checkpoint restore compaction inheritance", () => {
 		content: "Summary of the first run",
 		metadata: { kind: "compaction_summary" },
 	};
+	const recoveredSummary = {
+		...summary,
+		metadata: {
+			...summary.metadata,
+			contextMemory: {
+				version: 1,
+				totalInputs: 1,
+				inputs: [expect.objectContaining({ text: "first", kind: "request" })],
+				omittedInputs: false,
+				sources: [],
+			},
+		},
+	};
 	const sourceState = createSessionCompactionState({
 		sourceMessages: messages.slice(0, 2),
 		compactedMessages: [summary],
@@ -531,7 +544,7 @@ describe("checkpoint restore compaction inheritance", () => {
 		expect(result.state?.system_prompt).toBe("saved instructions");
 		expect(
 			projectSessionCompactionState(result.state!, result.messages),
-		).toEqual(omit ? [summary] : [summary, messages[2]]);
+		).toEqual(omit ? [recoveredSummary] : [recoveredSummary, messages[2]]);
 		expect(result.messages).toEqual(messages.slice(0, omit ? 2 : 3));
 		expect(JSON.stringify(sourceState)).toBe(before);
 	});
@@ -546,7 +559,7 @@ describe("checkpoint restore compaction inheritance", () => {
 		const undone = await restore(first.state, 2, true);
 		expect(
 			projectSessionCompactionState(undone.state!, undone.messages),
-		).toEqual([summary]);
+		).toEqual([recoveredSummary]);
 	});
 	it("keeps full canonical history when no summary exists", async () => {
 		const result = await restore(undefined);

@@ -342,7 +342,7 @@ describe("MessageBuilder", () => {
 			readToolUse("t1"),
 			readToolResult("t1", LARGE_CONTENT(1)),
 			readToolUse("t2"),
-			readToolResult("t2", LARGE_CONTENT(2)),
+			readToolResult("t2", COMPLETE_CONTENT(2)),
 		]);
 
 		expect(JSON.stringify(result[2])).not.toContain("outdated");
@@ -1783,6 +1783,8 @@ function codecRoundTrip(messages: Message[]): Message[] {
 }
 
 const SMALL_CONTENT = (v: number) => `export const x = ${v};\n`.repeat(40); // ~1KB
+// Complete replacement fits the per-result cap; older copies may be much larger.
+const COMPLETE_CONTENT = (v: number) => `export const x = ${v};\n`.repeat(360);
 const LARGE_CONTENT = (v: number) => `export const x = ${v};\n`.repeat(7_000); // ~140KB (> 64KB threshold)
 
 function readToolUse(id: string, path = "src/a.ts"): Message {
@@ -1882,7 +1884,7 @@ describe("MessageBuilder outdated-read rewrite batching (prefix-cache stability)
 			readToolUse("t1"),
 			readToolResult("t1", LARGE_CONTENT(1)),
 			readToolUse("t2"),
-			readToolResult("t2", LARGE_CONTENT(2)),
+			readToolResult("t2", COMPLETE_CONTENT(2)),
 		];
 		// First build: t1 is outdated (~8KB provider-bound reclaimable),
 		// so the rewrite commits immediately.
@@ -1902,7 +1904,7 @@ describe("MessageBuilder outdated-read rewrite batching (prefix-cache stability)
 			readToolUse("t1"),
 			readToolResult("t1", LARGE_CONTENT(1)),
 			readToolUse("t2"),
-			readToolResult("t2", LARGE_CONTENT(2)),
+			readToolResult("t2", COMPLETE_CONTENT(2)),
 		];
 		const reqA = builder.buildForApi(base);
 		const rewrittenA = serializedBlockAt(reqA, 2);
@@ -2025,7 +2027,7 @@ describe("MessageBuilder outdated-read rewrite batching (prefix-cache stability)
 			readToolUse("t1"),
 			readToolResult("t1", LARGE_CONTENT(1)),
 			readToolUse("t2"),
-			readToolResult("t2", LARGE_CONTENT(2)),
+			readToolResult("t2", COMPLETE_CONTENT(2)),
 		];
 
 		const result = builder.buildForApi(messages);
@@ -2068,7 +2070,7 @@ describe("MessageBuilder outdated-read rewrite batching (prefix-cache stability)
 			readToolUse("t1", "src/big.ts"),
 			readToolResult("t1", LARGE_CONTENT(1), "src/big.ts"),
 			readToolUse("t2", "src/big.ts"),
-			readToolResult("t2", LARGE_CONTENT(2), "src/big.ts"),
+			readToolResult("t2", COMPLETE_CONTENT(2), "src/big.ts"),
 		];
 		// Request A: t1 (~8KB provider-bound stale) crosses the test threshold and commits.
 		const reqA = builder.buildForApi(codecRoundTrip(history));
@@ -2098,7 +2100,7 @@ describe("MessageBuilder outdated-read rewrite batching (prefix-cache stability)
 		const withReread: Message[] = [
 			...t1Only,
 			readToolUse("t2"),
-			readToolResult("t2", LARGE_CONTENT(2)),
+			readToolResult("t2", COMPLETE_CONTENT(2)),
 		];
 		const reqA = builder.buildForApi(codecRoundTrip(withReread));
 		expect(JSON.stringify(reqA[2])).toContain("outdated");
@@ -2115,7 +2117,7 @@ describe("MessageBuilder outdated-read rewrite batching (prefix-cache stability)
 			readToolUse("t1"),
 			readToolResult("t1", LARGE_CONTENT(1)),
 			readToolUse("t2"),
-			readToolResult("t2", LARGE_CONTENT(2)),
+			readToolResult("t2", COMPLETE_CONTENT(2)),
 		];
 		const reqA = builder.buildForApi(codecRoundTrip(withReread));
 		const rewrittenA = JSON.stringify(reqA[2]);
@@ -2181,7 +2183,7 @@ describe("MessageBuilder outdated-read rewrite batching (prefix-cache stability)
 			readToolUse("t1"),
 			structuredReadToolResult("t1", LARGE_CONTENT(1)),
 			readToolUse("t2"),
-			structuredReadToolResult("t2", LARGE_CONTENT(2)),
+			structuredReadToolResult("t2", COMPLETE_CONTENT(2)),
 		];
 
 		const result = builder.buildForApi(messages);
@@ -2202,7 +2204,7 @@ describe("MessageBuilder outdated-read rewrite batching (prefix-cache stability)
 			readToolUse("t1", "src/big.ts"),
 			structuredReadToolResult("t1", LARGE_CONTENT(1), "src/big.ts"),
 			readToolUse("t2", "src/big.ts"),
-			structuredReadToolResult("t2", LARGE_CONTENT(2), "src/big.ts"),
+			structuredReadToolResult("t2", COMPLETE_CONTENT(2), "src/big.ts"),
 		];
 
 		const reqA = builder.buildForApi(codecRoundTrip(history));
@@ -2243,7 +2245,7 @@ describe("MessageBuilder outdated-read rewrite batching (prefix-cache stability)
 			readToolUse("t1"),
 			readToolResult("t1", LARGE_CONTENT(1)),
 			readToolUse("t2"),
-			readToolResult("t2", LARGE_CONTENT(2)),
+			readToolResult("t2", COMPLETE_CONTENT(2)),
 		];
 
 		const result = builder.buildForApi(messages);

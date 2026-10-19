@@ -22,6 +22,8 @@ import {
 	validateBuildOptions,
 } from "./build-options";
 
+import { packagePluginSandbox } from "./package-plugin-sandbox";
+
 const cliDir = resolve(import.meta.dir, "..");
 const rootDir = resolve(cliDir, "../..");
 process.chdir(cliDir);
@@ -315,17 +317,14 @@ for (const item of targets) {
 		}
 	}
 
-	// Copy plugin sandbox bootstrap if it exists
-	const bootstrapSrc = join(
-		rootDir,
-		"sdk/packages/core/dist/extensions/plugin-sandbox-bootstrap.js",
-	);
-	if (existsSync(bootstrapSrc)) {
-		const bootstrapDir = join(cliDir, `dist/${dirName}/extensions`);
-		mkdirSync(bootstrapDir, { recursive: true });
-		const content = readFileSync(bootstrapSrc);
-		await Bun.write(join(bootstrapDir, "plugin-sandbox-bootstrap.js"), content);
-	}
+	// Platform packages have no node_modules. Bundle and smoke-test the sandbox.
+	await packagePluginSandbox({
+		bootstrapSource: join(
+			rootDir,
+			"sdk/packages/core/dist/extensions/plugin-sandbox-bootstrap.js",
+		),
+		outputDirectory: join(cliDir, `dist/${dirName}/extensions`),
+	});
 
 	if (existsSync(hubWebviewDist)) {
 		const hubWebviewDest = join(cliDir, `dist/${dirName}/cline-hub/webview`);

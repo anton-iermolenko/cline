@@ -2078,7 +2078,7 @@ export class AgentRuntime {
 				});
 				continue;
 			}
-			const parsed = parseToolInput(assembly);
+			const parsed = parseToolInput(assembly, finishReason);
 			if (parsed.reason) {
 				invalidToolCalls.push({
 					toolCallId: assembly.toolCallId,
@@ -2855,7 +2855,10 @@ function mergeToolMetadata(current: unknown, patch: unknown): unknown {
 	};
 }
 
-function parseToolInput(assembly: PendingToolAssembly): {
+function parseToolInput(
+	assembly: PendingToolAssembly,
+	finishReason: AgentModelFinishReason,
+): {
 	input: unknown;
 	parseError?: string;
 	invalidInput: Record<string, unknown>;
@@ -2873,7 +2876,7 @@ function parseToolInput(assembly: PendingToolAssembly): {
 			invalidInput: {},
 		};
 	}
-	const parsed = parseToolArguments(assembly.inputText);
+	const parsed = parseToolArguments(assembly.inputText, finishReason);
 	if (parsed.ok) {
 		return {
 			input: parsed.value,
@@ -2882,7 +2885,10 @@ function parseToolInput(assembly: PendingToolAssembly): {
 	}
 	return {
 		input: {},
-		invalidInput: buildInvalidToolInput(assembly.inputText, parsed.error),
+		invalidInput: {
+			...buildInvalidToolInput(assembly.inputText, parsed.error),
+			modelFinishReason: finishReason,
+		},
 		parseError: `Tool call ${assembly.toolName ?? assembly.toolCallId} emitted invalid JSON arguments: ${parsed.error}`,
 		reason: "invalid_arguments",
 	};
@@ -2903,6 +2909,7 @@ function buildInvalidToolInput(
 
 function parseToolArguments(
 	value: string,
+	finishReason: AgentModelFinishReason,
 ): { ok: true; value: unknown } | { ok: false; error: string } {
 	const trimmed = value.trim();
 	if (!trimmed) {
@@ -2912,10 +2919,11 @@ function parseToolArguments(
 		};
 	}
 
+	let syntaxError = "Invalid JSON syntax";
 	try {
 		return { ok: true, value: JSON.parse(trimmed) };
-	} catch {
-		// Fall through to a normalized error below.
+	} catch (error) {
+		if (error instanceof Error) syntaxError = error.message.slice(0, 240);
 	}
 
 	if (!(trimmed.startsWith("{") || trimmed.startsWith("["))) {
@@ -2925,10 +2933,21 @@ function parseToolArguments(
 		};
 	}
 
+	const position = syntaxError.match(/position (\d+)/i)?.[1];
+	const incomplete =
+		/unterminated|unexpected end|end of (?:json|data|input)/i.test(
+			syntaxError,
+		) ||
+		(position !== undefined && Number(position) === trimmed.length);
+	const guidance =
+		finishReason === "max-tokens"
+			? "The response reached its output-token limit. Send smaller complete tool calls or stage content in small acknowledged chunks. Do not repair and execute a partial payload."
+			: incomplete
+				? "The arguments ended before the JSON value was complete. Retry with a smaller complete call; never apply partial content."
+				: "Ensure the outer tool payload is valid JSON and escape embedded quotes/newlines inside string fields.";
 	return {
 		ok: false,
-		error:
-			"Tool call arguments could not be parsed as JSON. Ensure the outer tool payload is valid JSON and escape embedded quotes/newlines inside string fields.",
+		error: `${incomplete ? "Incomplete JSON arguments" : "Invalid JSON syntax"}. Model finish reason: ${finishReason}. ${syntaxError}. ${guidance}`,
 	};
 }
 

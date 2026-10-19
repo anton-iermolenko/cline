@@ -4050,6 +4050,73 @@ describe("AgentRuntime", () => {
 		expect(result.status).toBe("completed");
 	});
 
+	it.each([
+		{
+			inputText: '{"text":"valid escaped \\"quoted\\" prefix',
+			reason: "max-tokens" as const,
+			expected: "output-token limit",
+		},
+		{
+			inputText: '{"text":"unfinished',
+			reason: "tool-calls" as const,
+			expected: "Incomplete JSON arguments",
+		},
+		{
+			inputText: '{"text":"bad\\x"}',
+			reason: "tool-calls" as const,
+			expected: "Invalid JSON syntax",
+		},
+	])("reports $expected without executing or repairing malformed arguments", async ({
+		inputText,
+		reason,
+		expected,
+	}) => {
+		const execute = vi.fn(async (input: { text: string }) => ({
+			echoed: input.text,
+		}));
+		const model = new ScriptedModel([
+			() => [
+				{
+					type: "tool-call-delta",
+					toolCallId: "invalid_payload",
+					toolName: "echo",
+					inputText,
+				},
+				{ type: "finish", reason },
+			],
+			(request) => {
+				const result = request.messages.at(-1)?.content[0];
+				expect(result).toMatchObject({
+					type: "tool-result",
+					isError: true,
+					output: { error: expect.stringContaining(expected) },
+				});
+				expect(result).toMatchObject({
+					output: {
+						error: expect.stringContaining(`Model finish reason: ${reason}`),
+					},
+				});
+				return [
+					{ type: "text-delta", text: "retry with smaller complete calls" },
+					{ type: "finish", reason: "stop" },
+				];
+			},
+		]);
+		const runtime = new AgentRuntime({
+			model,
+			tools: [{ ...createEchoTool(), execute }],
+		});
+		const result = await runtime.run("Start");
+		expect(result.status).toBe("completed");
+		expect(execute).not.toHaveBeenCalled();
+		const assistant = result.messages.find(
+			(message) => message.metadata?.invalidToolCalls,
+		);
+		expect(assistant?.metadata?.invalidToolCalls).toMatchObject([
+			{ input: { rawInputText: inputText, modelFinishReason: reason } },
+		]);
+	});
+
 	it("treats invalid tool-call JSON as a tool error instead of failing the run", async () => {
 		const model = new ScriptedModel([
 			() => [

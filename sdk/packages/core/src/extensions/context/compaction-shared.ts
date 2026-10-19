@@ -75,7 +75,7 @@ export function flattenToolResultContent(
 /** Tool results may be MCP blocks, JSON strings, or built-in result records. */
 export function normalizeToolResultText(value: unknown, depth = 0): string {
 	if (typeof value === "string") {
-		if (depth < 6 && /^[\s]*[\[{]/.test(value)) {
+		if (depth < 6 && /^[\s]*[[{]/.test(value)) {
 			try {
 				return normalizeToolResultText(JSON.parse(value), depth + 1);
 			} catch {
@@ -203,10 +203,9 @@ export function serializeMessage(message: MessageWithMetadata): string {
 				);
 				break;
 			case "thinking":
-				lines.push(`[Bot thinking]: ${truncateText(block.thinking, 2_000)}`);
-				break;
 			case "redacted_thinking":
-				lines.push("[Bot thinking]: [redacted]");
+				// Old scratch reasoning is not execution evidence. Preserve visible
+				// conclusions and tool outcomes instead of reviving superseded plans.
 				break;
 			case "tool_use":
 				lines.push(
@@ -528,7 +527,6 @@ export function extractFileOps(
 			const paths = collectPaths(block.input);
 			if ((block.name.split("__").at(-1) ?? block.name) === "read_files") {
 				readFiles = mergeUnique(readFiles, paths);
-				continue;
 			}
 		}
 	}
@@ -827,25 +825,22 @@ export function buildSummaryRequest(options: {
 	fileOps: FileOperationSummary;
 }): string {
 	const parts: string[] = [
-		`Summarize this session for continuation. Be concise and factual.
+		`Summarize this SAME session for continuation. Be concise and factual. Latest observed tool outcomes and human corrections override earlier plans, claims and summaries.
 
 ## Goal
-One sentence: what is being built or fixed.
+Current objective and scope.
 
 ## State
-- Done: completed steps
-- In Progress: current work
-- Blocked: blockers or open questions
-Preserve confirmed saved edits and exact verification outcomes (including exit codes). Distinguish intentional uncommitted work from unknown changes. Do not undo a verified fix or repeat completed work without later evidence that invalidates it.
+Done / In Progress / Blocked. Preserve saved edits, intentional uncommitted changes, exact check results and exit codes. Completed work stays completed unless later evidence invalidates it. Reconcile the old summary with the newest results.
 
 ## Constraints and corrections
-Latest human requests take precedence. Preserve scope, exact paths, pending approvals/questions, and corrections to earlier instructions. Keep active job IDs/revisions and failed approaches with their outcomes.
+Preserve applicable human requirements, exact paths, pending approvals/questions, active job IDs/revisions, and failed approaches with outcomes. Distinguish observations, verified facts and hypotheses. Keep verified API contracts with source sections/ranges; prior reads may be missing or truncated. This internal summary request is not a human request or a new conversation.
 
 ## Highlights
-Key technical choices or notable findings (omit if none).
+Key choices and confirmed findings; omit if none.
 
 ## Next
-Immediate unfinished steps; identify running work that needs checking before retrying it.
+Only actual unfinished work. If edits and relevant checks succeeded, delivery is next. Do not add rediscovery, context recovery or repeat checks of unchanged state. Check running work before retrying it.
 
 ## Files
 Read: ${options.fileOps.readFiles.join(", ") || "none"}
