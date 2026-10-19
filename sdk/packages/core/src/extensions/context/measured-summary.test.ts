@@ -128,6 +128,58 @@ describe("measured summary checkpoints", () => {
 		);
 		expect(JSON.stringify(options.context.messages)).toBe(original);
 	});
+
+	it("retries a complete empty checkpoint once using the identical chunk", async () => {
+		let attempt = 0;
+		mocks.generate.mockImplementation(async function* () {
+			yield {
+				type: "text",
+				text: ++attempt === 1 ? "   " : "Recovered checkpoint.",
+			};
+			yield { type: "done", success: true };
+		});
+		const options = input();
+		const result = await runAgenticCompaction(options);
+		expect(result?.messages.length).toBeGreaterThan(0);
+		expect(mocks.generate.mock.calls[0]).toEqual(mocks.generate.mock.calls[1]);
+	});
+	it("makes exactly two generation attempts when the first chunk stays empty", async () => {
+		mocks.generate.mockImplementation(async function* () {
+			yield { type: "reasoning", reasoning: "A thought without a summary." };
+			yield { type: "done", success: true };
+		});
+		await expect(runAgenticCompaction(input())).rejects.toThrow(
+			"empty or incomplete",
+		);
+		expect(mocks.generate).toHaveBeenCalledTimes(2);
+	});
+	it("does not retry an incomplete checkpoint", async () => {
+		mocks.generate.mockImplementation(async function* () {
+			yield { type: "text", text: "Partial checkpoint" };
+			yield {
+				type: "done",
+				success: true,
+				incompleteReason: "max_output_tokens",
+			};
+		});
+		await expect(runAgenticCompaction(input())).rejects.toThrow(
+			"empty or incomplete",
+		);
+		expect(mocks.generate).toHaveBeenCalledTimes(1);
+	});
+	it("does not retry after cancellation following an empty response", async () => {
+		const abort = new AbortController();
+		mocks.generate.mockImplementation(async function* () {
+			yield { type: "text", text: "" };
+			yield { type: "done", success: true };
+			abort.abort();
+		});
+		await expect(
+			runAgenticCompaction(input(abort.signal)),
+		).rejects.toMatchObject({ name: "AbortError" });
+		expect(mocks.generate).toHaveBeenCalledTimes(1);
+	});
+
 	it("does not generate or commit after cancellation during counting", async () => {
 		const abort = new AbortController();
 		mocks.count.mockImplementation(async (request) => {

@@ -69,7 +69,7 @@ interface SummaryGenerationResult {
 	incompleteReason?: string;
 }
 
-async function generateSummary(options: {
+async function generateSummaryOnce(options: {
 	providerConfig: ProviderConfig;
 	request: string;
 	logger?: BasicLogger;
@@ -105,6 +105,26 @@ async function generateSummary(options: {
 		providerId: options.providerConfig.providerId,
 	});
 	return { text: text.trim(), reasoningChars, incompleteReason };
+}
+
+async function generateSummary(
+	options: Parameters<typeof generateSummaryOnce>[0],
+): Promise<SummaryGenerationResult> {
+	const result = await generateSummaryOnce(options);
+	if (result.text || result.incompleteReason) return result;
+	options.providerConfig.abortSignal?.throwIfAborted();
+	options.logger?.log("Retrying empty compaction summary", {
+		severity: "warn",
+		attempt: 2,
+		maxAttempts: 2,
+		reason: "empty_summary",
+		reasoningChars: result.reasoningChars,
+		modelId: options.providerConfig.modelId,
+	});
+	// Reuse the exact chunk and prior checkpoint. Only a complete empty response
+	// gets one retry; transport errors, truncation and cancellation keep their
+	// existing recovery behavior.
+	return generateSummaryOnce(options);
 }
 
 async function summarizeMeasuredChunks(options: {

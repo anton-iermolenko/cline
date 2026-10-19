@@ -355,6 +355,10 @@ Without tool activity, an unknown response is preserved in history and continued
 
 ## Bounded compaction recovery
 
+Complete but empty semantic-summary responses receive one retry of the same chunk and prior checkpoint. A second empty response follows the normal fallback path. Truncation, transport failures and cancellation are not retried by this rule.
+
+When compaction starts with a native input counter and image blocks, retention selection calibrates text and vision separately. Counter-only copies omit images to measure the vision contribution; actual context and image bytes remain intact. Repeated images share per-occurrence costs, and distinct images are measured separately. Ordinary turns and image-free histories add no calibration requests. The final native recount still enforces the configured maximum. Missing or changed counter budgets preserve the original context rather than committing an unvalidated projection.
+
 Built-in automatic compaction, and manual compaction of an already oversized request, retry a deterministic basic fold when the selected strategy cannot return usable bounded context. Success requires estimated messages plus request overhead to fit below the compaction trigger. The input allowance and early-compaction trigger are separate values; diagnostics report both, together with remaining message tokens and request overhead when available. A missing fallback result is reported separately from an oversized result.
 
 When prior agentic compaction has replaced all typed user turns, the basic fold preserves the most recent compaction summary with its existing system provenance and keeps a recent suffix within the remaining budget. It never relabels generated summary text as user instructions. Retained tool results start with their assistant tool calls. An oversized continuation summary remains intact and causes a bounded-result failure rather than silent truncation. Custom compaction callbacks retain their existing contract.

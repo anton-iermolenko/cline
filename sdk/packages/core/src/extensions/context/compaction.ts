@@ -34,6 +34,7 @@ import type {
 import type { ProviderConfig } from "../../types/provider-settings";
 import { runAgenticCompaction } from "./agentic-compaction";
 import { runBasicCompaction } from "./basic-compaction";
+import { createMeasuredImageTokenEstimator } from "./image-token-accounting";
 import {
 	COMPACTION_TRIGGER_RATIO,
 	createTokenEstimator,
@@ -367,13 +368,40 @@ export function createContextCompactionPrepareTurn(
 		});
 		const requestInputTokens =
 			beforeMeasurement?.inputTokens ?? estimatedRequestTokens;
+		const buffer =
+			userCompaction.bufferTokens ??
+			beforeMeasurement?.compactionBufferTokens ??
+			2048;
+		if (!Number.isSafeInteger(buffer) || buffer < 0)
+			throw new Error("Compaction bufferTokens must be a nonnegative integer");
 		const countScale = beforeMeasurement
 			? requestInputTokens / Math.max(1, estimatedRequestTokens)
 			: 1;
-		const estimateMessageTokens = (
-			message: CoreCompactionContext["messages"][number],
-		) =>
-			Math.max(1, Math.ceil(baseEstimateMessageTokens(message) * countScale));
+		// Native vision costs replace serialized base64 estimates only when a
+		// compaction will actually run. Normal turns do not add calibration calls.
+		const imageEstimator =
+			beforeMeasurement &&
+			(effectiveMode !== "auto" ||
+				requestInputTokens >= beforeMeasurement.maxInputTokens - buffer)
+				? await createMeasuredImageTokenEstimator({
+						messages: context.messages,
+						apiMessages: context.apiMessages,
+						systemPrompt: context.systemPrompt,
+						tools: context.tools,
+						measurement: beforeMeasurement,
+						countRequest,
+						baseEstimateMessageTokens,
+						signal: context.abortSignal,
+						logger: config.logger,
+					})
+				: undefined;
+		const estimateMessageTokens =
+			imageEstimator ??
+			((message: CoreCompactionContext["messages"][number]) =>
+				Math.max(
+					1,
+					Math.ceil(baseEstimateMessageTokens(message) * countScale),
+				));
 		const apiMessageTokens = context.apiMessages.reduce(
 			(total, message) => total + estimateMessageTokens(message),
 			0,
@@ -422,12 +450,6 @@ export function createContextCompactionPrepareTurn(
 					)
 				: 1;
 		const maxInputTokens = rawMaxInputTokens / underestimateFactor;
-		const buffer =
-			userCompaction.bufferTokens ??
-			beforeMeasurement?.compactionBufferTokens ??
-			2048;
-		if (!Number.isSafeInteger(buffer) || buffer < 0)
-			throw new Error("Compaction bufferTokens must be a nonnegative integer");
 		for (const [name, value] of Object.entries({
 			maxTargetTokens: userCompaction.maxTargetTokens,
 			targetTokens: userCompaction.targetTokens,
