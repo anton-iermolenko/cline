@@ -1,4 +1,5 @@
 import { type AgentTool, createTool } from "@cline/shared";
+import { withExpertJobWait } from "./expert-wait";
 import { defaultMcpToolNameTransform } from "./name-transform";
 import type { CreateMcpToolsOptions, McpToolDescriptor } from "./types";
 
@@ -25,7 +26,7 @@ export async function createMcpTools(
 			toolName: descriptor.name,
 		});
 
-		return createTool({
+		const tool = createTool({
 			name: agentToolName,
 			resultPolicy: "cache-oversized",
 			description: defaultMcpDescription(options.serverName, descriptor),
@@ -44,5 +45,9 @@ export async function createMcpTools(
 					context,
 				}),
 		});
+		return options.serverName === "consult-expert" &&
+			descriptor.name === "expert_status"
+			? withExpertJobWait(tool)
+			: tool;
 	});
 }

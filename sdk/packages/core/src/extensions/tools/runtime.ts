@@ -66,6 +66,16 @@ const BASE_TOOL_CATALOG: readonly RuntimeToolCatalogEntry[] = [
 		headlessToolNames: ["run_commands"],
 	},
 	{
+		id: "background_commands",
+		description:
+			"Start, wait for, and cancel managed background shell commands.",
+		headlessToolNames: [
+			"start_background_command",
+			"wait_for_job",
+			"cancel_background_command",
+		],
+	},
+	{
 		id: "editor",
 		description:
 			"Make controlled filesystem edits on text files with create, replace, and insert operations.",
@@ -118,6 +128,7 @@ const TOOL_NAME_TO_FLAG: Partial<
 			| "enableReadFiles"
 			| "enableSearch"
 			| "enableBash"
+			| "enableBackgroundCommands"
 			| "enableWebFetch"
 			| "enableApplyPatch"
 			| "enableEditor"
@@ -130,6 +141,7 @@ const TOOL_NAME_TO_FLAG: Partial<
 	read_files: "enableReadFiles",
 	search_codebase: "enableSearch",
 	run_commands: "enableBash",
+	background_commands: "enableBackgroundCommands",
 	fetch_web_content: "enableWebFetch",
 	apply_patch: "enableApplyPatch",
 	editor: "enableEditor",
@@ -148,6 +160,7 @@ type ResolvedToolFlags = Pick<
 	| "enableReadFiles"
 	| "enableSearch"
 	| "enableBash"
+	| "enableBackgroundCommands"
 	| "enableWebFetch"
 	| "enableApplyPatch"
 	| "enableEditor"

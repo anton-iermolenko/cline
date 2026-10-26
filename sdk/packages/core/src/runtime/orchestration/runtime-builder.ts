@@ -37,6 +37,7 @@ import {
 	ToolPresets,
 	type ToolRoutingRule,
 } from "../../extensions/tools";
+import { inheritBackgroundCommandPolicy } from "../../extensions/tools/background-command-policy";
 import { createPlanModeCommandGuardExtension } from "../../extensions/tools/command-guard-extension";
 import {
 	AgentTeamsRuntime,
@@ -73,7 +74,8 @@ function isToolEnabledByPolicies(
 	toolPolicies: CoreSessionConfig["toolPolicies"],
 ): boolean {
 	const globalPolicy = toolPolicies?.["*"] ?? {};
-	const toolPolicy = toolPolicies?.[toolName] ?? {};
+	const toolPolicy =
+		inheritBackgroundCommandPolicy(toolPolicies)?.[toolName] ?? {};
 	return (
 		{
 			...globalPolicy,

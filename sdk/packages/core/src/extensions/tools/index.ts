@@ -6,6 +6,8 @@
 
 // Zod Utilities
 export { validateWithZod, zodToJsonSchema } from "@cline/shared";
+export { createBackgroundCommandTools } from "./background-job-tools";
+export { BackgroundCommandJobs } from "./background-jobs";
 export {
 	createPlanModeCommandGuardExtension,
 	PLAN_MODE_COMMAND_GUARD_EXTENSION_NAME,
@@ -208,17 +210,22 @@ export function createBuiltinTools(
 		getDefaultShell(process.platform);
 	const resolvedExecutorOptions: DefaultExecutorsOptions = {
 		...executorOptions,
+		backgroundCommandTimeoutMs:
+			toolsConfig.backgroundCommandTimeoutMs ??
+			executorOptions.backgroundCommandTimeoutMs,
 		bash: {
 			...executorOptions.bash,
 			shell,
 		},
 	};
 
-	const executors = {
+	const executors: ToolExecutors = {
 		...createDefaultExecutors(resolvedExecutorOptions),
 		...(executorOverrides ?? {}),
 	};
 
+	if (executorOverrides?.bash && !executorOverrides.backgroundBash)
+		delete executors.backgroundBash;
 	return createDefaultTools({
 		...toolsConfig,
 		shell,

@@ -974,6 +974,7 @@ export {
 	type ApplyPatchExecutor,
 	type ApplyPatchInput,
 	type AskQuestionExecutor,
+	BackgroundCommandJobs,
 	type BuiltinToolAvailabilityContext,
 	CommandExitError,
 	CommandSpawnError,
@@ -982,6 +983,7 @@ export {
 	type CreateDefaultToolsOptions,
 	computePatchChanges,
 	createApplyPatchExecutor,
+	createBackgroundCommandTools,
 	createBuiltinTools,
 	createDefaultExecutors,
 	createDefaultShellExecutor,
@@ -1025,6 +1027,14 @@ export {
 } from "./extensions/tools";
 export * from "./remote/remote-environments";
 export { ensureLoginShellPath } from "./remote/shell-path";
+export type {
+	JobWaitObservation,
+	JobWaitRequest,
+} from "./runtime/safety/job-wait";
+export {
+	createJobWaitCapability,
+	waitForJobStatus,
+} from "./runtime/safety/job-wait";
 export { isClineAccountFeatureEnabled } from "./services/feature-flags/cline-account-feature-flags";
 export {
 	applyClineFeaturedModels,

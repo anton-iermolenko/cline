@@ -1311,3 +1311,25 @@ Provider preparation embeds a bounded continuity brief in the existing compactio
 Compaction captures continuity memory once and reuses it for the first prepared request and later sidecar projections. Follow-up user messages append to the transcript without rewriting the compacted prefix. Legacy sidecars reconstruct memory only from their validated covered source prefix; bare summaries keep static source-retrieval guidance.
 
 When an interactive client loses its hub session but still has saved messages, it resumes the saved session identity. Core then restores its validated compaction state, checkpoints and complete transcript rather than creating a fresh session that replays pre-compaction images as current context. Empty missing sessions may still start fresh.
+
+
+## Managed background commands and validated waiting
+
+Core owns session-scoped command jobs and waiting budgets. The default shell
+toolset exposes start/wait/cancel tools; custom shell hosts opt in explicitly
+with a background executor. The existing cross-platform shell executor owns
+subprocess execution and process-tree cleanup. Job records survive client and
+toolset reconstruction in the same hub process; they are not restored after a
+hub restart.
+
+`AgentTool.waiting` is a runtime-only capability supplied by a registered tool.
+The shared bounded-wait primitive supports local command snapshots and remote
+expert status. The MCP adapter attaches this capability to the registered expert
+status tool, preserving that server's interface and batching of routine progress.
+Core defers repetitive-call inspection until it can validate job identity,
+revision, state, and elapsed waiting time. Failed and invalid observations retain
+ordinary loop protection. Valid waits have their own wall-clock deadline; Core
+persists the last running result before stopping at the next model boundary.
+
+See [the API reference](DOC.md#managed-background-commands-and-validated-waiting)
+for tool usage, policies, limits, cancellation, and job lifetime.

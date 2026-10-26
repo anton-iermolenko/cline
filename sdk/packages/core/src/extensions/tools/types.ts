@@ -204,6 +204,8 @@ export interface ToolExecutors {
 	search?: SearchExecutor;
 	/** Shell command execution implementation */
 	bash?: ShellExecutor;
+	/** Optional executor for managed background commands. */
+	backgroundBash?: ShellExecutor;
 	/** Web content fetching implementation */
 	webFetch?: WebFetchExecutor;
 	/** Filesystem editor implementation */
@@ -229,6 +231,9 @@ export type DefaultToolName =
 	| "read_files"
 	| "search_codebase"
 	| "run_commands"
+	| "start_background_command"
+	| "wait_for_job"
+	| "cancel_background_command"
 	| "fetch_web_content"
 	| "apply_patch"
 	| "editor"
@@ -265,6 +270,8 @@ export interface DefaultToolsConfig {
 	 * @default true
 	 */
 	enableBash?: boolean;
+	/** Managed shell jobs; requires an explicit background executor for custom shells. */
+	enableBackgroundCommands?: boolean;
 
 	/**
 	 * Enable the fetch_web_content tool
@@ -326,6 +333,8 @@ export interface DefaultToolsConfig {
 	 * @default 30000
 	 */
 	bashTimeoutMs?: number;
+	/** Managed command execution budget; defaults to one hour. */
+	backgroundCommandTimeoutMs?: number;
 
 	/**
 	 * Timeout for web fetch operations in milliseconds

@@ -38,6 +38,7 @@ const TOOL_NAME_TO_FLAG: Record<
 		| "enableReadFiles"
 		| "enableSearch"
 		| "enableBash"
+		| "enableBackgroundCommands"
 		| "enableWebFetch"
 		| "enableApplyPatch"
 		| "enableEditor"
@@ -49,6 +50,9 @@ const TOOL_NAME_TO_FLAG: Record<
 	read_files: "enableReadFiles",
 	search_codebase: "enableSearch",
 	run_commands: "enableBash",
+	start_background_command: "enableBackgroundCommands",
+	wait_for_job: "enableBackgroundCommands",
+	cancel_background_command: "enableBackgroundCommands",
 	fetch_web_content: "enableWebFetch",
 	apply_patch: "enableApplyPatch",
 	editor: "enableEditor",

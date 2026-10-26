@@ -1,3 +1,8 @@
+export type {
+	AgentToolWaiting,
+	AgentToolWaitObservation,
+	AgentToolWaitRequest,
+} from "./agent";
 export * from "./agent";
 export * from "./agents";
 export type {

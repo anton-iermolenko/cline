@@ -16,6 +16,7 @@ import {
 	zodToJsonSchema,
 } from "@cline/shared";
 import { captureRunCommandsTimeout } from "../../services/telemetry/core-events";
+import { createBackgroundCommandTools } from "./background-job-tools";
 import { CommandExitError, CommandTerminationError } from "./executors/bash";
 import {
 	MAX_COMMAND_OUTPUT_CHARS,
@@ -476,7 +477,7 @@ export function buildRunCommandsDescription(
 		environmentNote +
 		"Commands should be properly shell-escaped and targeted to avoid error or timeout. Include multiple commands in the same call when they are independent complete shell commands and safe to run concurrently; multiline scripts and heredocs must be a single command string. When independent reads, searches, or edits are also needed, call those tools in the same response. " +
 		`Output beyond ~${Math.round(MAX_COMMAND_OUTPUT_CHARS / 1000)}k characters is middle-truncated (start and end preserved); pipe through grep/head/tail when you need specific sections of large output. ` +
-		"For long-running commands, run them in background and redirect output to a tmp file that you can read from later."
+		"When available, use start_background_command and wait_for_job for long-running work instead of repeated sleep/tail commands. Otherwise use a bounded shell wait with an explicit completion condition."
 	);
 }
 
@@ -922,6 +923,7 @@ export function createDefaultTools(
 		enableReadFiles = true,
 		enableSearch = true,
 		enableBash = true,
+		enableBackgroundCommands = true,
 		enableWebFetch = true,
 		enableApplyPatch = false,
 		enableEditor = true,
@@ -946,6 +948,14 @@ export function createDefaultTools(
 	// Add run_commands tool if enabled and executor provided
 	if (enableBash && executors.bash) {
 		tools.push(createShellTool(executors.bash, config));
+		if (enableBackgroundCommands && executors.backgroundBash)
+			tools.push(
+				...createBackgroundCommandTools(executors.backgroundBash, {
+					cwd: config.cwd,
+					shell: config.shell,
+					timeoutMs: config.backgroundCommandTimeoutMs,
+				}),
+			);
 	}
 
 	// Add fetch_web_content tool if enabled and executor provided

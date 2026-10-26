@@ -111,41 +111,6 @@ export interface LoopDetectionCall {
 	input: unknown;
 }
 
-/** Blocking expert waits intentionally repeat while a background job runs. */
-function isBlockingExpertWait(call: LoopDetectionCall): boolean {
-	if (call.name !== "consult-expert__expert_status") return false;
-	if (
-		!call.input ||
-		typeof call.input !== "object" ||
-		Array.isArray(call.input)
-	) {
-		return false;
-	}
-	const input = call.input as Record<string, unknown>;
-	if (
-		Object.keys(input).some(
-			(key) => !["job_id", "wait_seconds", "after_revision"].includes(key),
-		)
-	) {
-		return false;
-	}
-	if (typeof input.job_id !== "string" || !input.job_id.trim()) return false;
-	const waitSeconds =
-		input.wait_seconds === undefined ? 60 : input.wait_seconds;
-	if (
-		!Number.isInteger(waitSeconds) ||
-		Number(waitSeconds) < 30 ||
-		Number(waitSeconds) > 60
-	) {
-		return false;
-	}
-	return (
-		input.after_revision === undefined ||
-		(Number.isInteger(input.after_revision) &&
-			Number(input.after_revision) >= 0)
-	);
-}
-
 const DEFAULT_CONFIG: LoopDetectionConfig = {
 	softThreshold: 3,
 	hardThreshold: 5,
@@ -171,11 +136,6 @@ export class LoopDetectionTracker {
 	}
 
 	inspect(call: LoopDetectionCall): LoopDetectionVerdict {
-		if (isBlockingExpertWait(call)) {
-			// A real wait breaks consecutive calls without inventing job progress.
-			this.reset();
-			return { kind: "ok" };
-		}
 		const signature = toolCallSignature(call.input);
 		const result = checkRepeatedToolCall(
 			this.state,
@@ -249,7 +209,7 @@ function observationTarget(call: LoopDetectionCall): string | undefined {
 				: undefined,
 		);
 		if (paths.length && paths.every((v) => typeof v === "string"))
-			return "files:" + JSON.stringify(paths);
+			return `files:${JSON.stringify(paths)}`;
 	}
 	if (call.name === "run_commands") {
 		const commands = Array.isArray(input.commands) ? input.commands : [];
@@ -270,7 +230,7 @@ function observationTarget(call: LoopDetectionCall): string | undefined {
 						),
 				),
 		);
-		if (safe) return "commands:" + toolCallSignature(commands);
+		if (safe) return `commands:${toolCallSignature(commands)}`;
 	}
 	return undefined;
 }

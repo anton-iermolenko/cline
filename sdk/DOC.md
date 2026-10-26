@@ -405,3 +405,61 @@ Compaction state copies validate the original canonical anchor, move an identica
 When a restored or forked session has no compaction sidecar, core state reads and resume follow recorded ancestors (bounded to 32 with cycle protection). A recovered state must validate against the ancestor transcript and the target summarized prefix, and is rebound to the target owner. Own sidecars remain authoritative; recovery reads do not rewrite canonical history. Checkpoint restoration persists inherited state in the new session.
 
 Measured compaction recounts the complete prepared request, requires it to shrink the original input and fit the live hard allowance, and preserves the latest typed user request verbatim. Manual and overflow compaction must meet the requested target; automatic compaction may preserve a useful checkpoint above the preference only within the maximum and growth headroom. Basic compaction emits dropped-work notes separately from that protected request and does not merge it into older user turns. Bounded fallback retries reproject the original transcript, enforce the smaller projection budget for old prompts, and shorten embedded earlier assistant responses with that budget; rejected candidates report the measured target, candidate count, and rejection reason without changing saved history. A lone protected request below the hard allowance may skip without claiming compaction succeeded.
+
+
+## Managed background commands and validated waiting
+
+The default subprocess toolset offers `start_background_command`, `wait_for_job`,
+and `cancel_background_command`. Start one complete command, keep its returned
+`job_id`, then wait sequentially with `wait_seconds: 60` and `after_revision`
+from the previous response. Waits return `state`, `revision`, `changed`, and
+bounded output when changed. `wait_seconds: 0` requests an immediate snapshot.
+Command completion, nonzero exit, cancellation, and inspection errors are
+distinct outcomes. Quiet running timeouts are successful observations.
+
+`enableBackgroundCommands` controls the group (enabled in act/yolo, disabled
+in plan). `enableBash: false` also removes it. Starting a job inherits shell
+disablement and approval requirements and passes through the plan command guard.
+Hosts overriding `executors.bash` must explicitly supply `backgroundBash` to
+enable these tools; the built-in subprocess executor never silently replaces a
+host's command sandbox or terminal. Custom executors must honor `context.signal`
+and emit output through `context.emitUpdate` to support incremental revisions.
+The built-in executor uses the configured shell, environment, bounded output,
+and process-tree cancellation. `backgroundCommandTimeoutMs` defaults to one hour.
+
+`BackgroundCommandJobs` is hub-process scoped, with session-owned job IDs and a
+32-job per-session cap. Terminal records are retained for one hour and evicted
+before rejecting new starts. Client disconnects, stopping a wait, and toolset
+rebuilds do not terminate jobs; use the cancellation tool explicitly. Jobs and
+logs are held in bounded memory, not restored after a hub restart. Unknown or
+cross-session IDs fail explicitly; a lost process is never assumed to be running.
+Already-detached `nohup`/shell jobs are not adopted by these tools.
+
+`waitForJobStatus` and `createJobWaitCapability` from `@cline/core` provide the
+shared adapter interface. A registered tool's runtime-only `waiting` capability
+parses requests and validates job identity, revision, and state. Tool names,
+model-supplied polling flags, arbitrary `sleep` commands, and MCP descriptions
+cannot grant an exemption. Before execution, Core defers identical-call checks
+only for valid positive wait requests. After execution, a matching observation
+must either advance the verified revision, introduce a terminal/actionable state,
+or have actually spent the requested interval waiting while running. Invalid,
+failed, and premature responses retain loop detection by stable job identity.
+Repeated terminal snapshots also retain detection. Actual tool failures keep
+their ordinary mistake accounting.
+
+Core enforces a separate default 30-minute wall-clock budget per tool/job. Configure
+`createJobWaitCapability({ maxWaitMs })` for another budget. Routine progress and
+changing wait durations do not reset it. Budget checks occur after each bounded
+wait (at most 60 seconds), so the deadline can be exceeded by one wait interval.
+Exhaustion stores `wait_budget_exhausted` with the latest running status before
+stopping at the next model boundary; it does not manufacture consecutive mistakes
+or cancel the job. A new human follow-up renews the waiting budget; automatic
+continuation preserves it. History reset/restore clears all waiting trackers.
+
+The MCP adapter for the registered `consult-expert` server's `expert_status`
+uses the same primitive and runtime capability. Its public name, input schema,
+readiness checks, explicit snapshots, and response envelope are preserved,
+including custom tool-name transforms. Routine expert progress is collected for
+the requested interval; human questions and terminal states return immediately.
+The adapter forwards cancellation to MCP calls and normalizes expert state names
+only for internal validation. It replaces the former name-based loop exemption.

@@ -69,6 +69,23 @@ async function runBeforeTool(
 }
 
 describe("plan-mode command-guard extension", () => {
+	it("applies the same plan-mode policy to managed background starts", async () => {
+		const extension = createPlanModeCommandGuardExtension();
+		expect(
+			(
+				await runBeforeTool(
+					extension,
+					makeContext("start_background_command", { command: "rm -rf build" }),
+				)
+			)?.skip,
+		).toBe(true);
+		expect(
+			await runBeforeTool(
+				extension,
+				makeContext("start_background_command", { command: "git status" }),
+			),
+		).toBeUndefined();
+	});
 	it("declares the hooks capability under a stable name", () => {
 		const extension = createPlanModeCommandGuardExtension();
 		expect(extension.name).toBe(PLAN_MODE_COMMAND_GUARD_EXTENSION_NAME);

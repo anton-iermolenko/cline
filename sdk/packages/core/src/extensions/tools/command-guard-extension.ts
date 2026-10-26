@@ -42,13 +42,20 @@ export function createPlanModeCommandGuardExtension(
 	const beforeTool = (
 		context: AgentBeforeToolContext,
 	): AgentBeforeToolResult | undefined => {
-		if (context.tool.name !== DefaultToolNames.RUN_COMMANDS) {
+		if (
+			context.tool.name !== DefaultToolNames.RUN_COMMANDS &&
+			context.tool.name !== "start_background_command"
+		) {
 			return undefined;
 		}
 
 		let commands: ReturnType<typeof normalizeRunCommandsInput>;
 		try {
-			commands = normalizeRunCommandsInput(context.input);
+			commands = normalizeRunCommandsInput(
+				context.tool.name === "start_background_command"
+					? { commands: [(context.input as { command?: unknown })?.command] }
+					: context.input,
+			);
 		} catch {
 			// Unparseable input: let the tool produce its own validation error.
 			return undefined;
