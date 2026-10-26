@@ -108,7 +108,16 @@ describe("summary-only compaction recovery", () => {
 		const first = await runAgenticCompaction({
 			context: {
 				messages: initial,
-				budget: { request: { maxInputTokens: 2000, triggerTokens: 1800 } },
+				budget: {
+					request: {
+						maxInputTokens: 2000,
+						triggerTokens: 1800,
+						targetTokens: 1400,
+						overheadTokens: 0,
+						inputTokens: total(initial),
+					},
+					messages: { targetTokens: 1400 },
+				},
 			} as CoreCompactionContext,
 			providerConfig: { providerId: "openai", modelId: "local" },
 			preserveRecentTokens: 200,

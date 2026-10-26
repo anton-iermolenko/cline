@@ -385,7 +385,15 @@ export function createInteractiveSessionRuntime(input: {
 			startupPromise = undefined;
 			startupError = undefined;
 			clearActiveSession();
-			await startFreshSession(messages);
+			if (messages.length > 0) {
+				// A restarted hub lost only its in-memory session. Reuse the saved
+				// identity so Core reloads its validated compaction sidecar, title,
+				// checkpoints and full transcript. A fresh ID revives the entire
+				// pre-compaction archive, including old images, as current context.
+				await startResumedSession(missingSessionId, messages);
+			} else {
+				await startFreshSession(messages);
+			}
 			return { messages };
 		})().finally(() => {
 			missingSessionRecoveryPromise = undefined;

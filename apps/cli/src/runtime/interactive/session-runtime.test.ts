@@ -802,6 +802,7 @@ describe("createInteractiveSessionRuntime", () => {
 			2,
 			expect.objectContaining({
 				initialMessages: messages,
+				config: expect.objectContaining({ sessionId: "session-1" }),
 			}),
 		);
 		expect(manager.send).toHaveBeenNthCalledWith(
@@ -813,6 +814,55 @@ describe("createInteractiveSessionRuntime", () => {
 			expect.objectContaining({ sessionId: "session-2" }),
 		);
 		expect(runtime.getActiveSessionId()).toBe("session-2");
+	});
+
+	it("reloads the saved identity and image transcript after a hub restart without requiring the missing owner's compaction API", async () => {
+		const manager = makeManager();
+		const image = {
+			type: "image" as const,
+			mediaType: "image/png",
+			data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1cAAAAASUVORK5CYII=",
+		};
+		const messages: Message[] = [
+			{
+				role: "user",
+				content: [
+					{ type: "text", text: "Keep working from this image" },
+					image,
+				],
+			},
+		];
+		const before = JSON.stringify(messages);
+		manager.start.mockImplementation(async (value: unknown) => {
+			const input = value as { config?: { sessionId?: string } };
+			const sessionId = input.config?.sessionId ?? "session-1";
+			return {
+				sessionId,
+				manifest: createManifest(sessionId),
+				manifestPath: "/tmp/" + sessionId + ".json",
+				messagesPath: "/tmp/" + sessionId + ".messages.json",
+			};
+		});
+		manager.readMessages.mockResolvedValue(messages);
+		manager.readSessionCompactionState.mockRejectedValue(
+			new Error("Missing session has no capability owner"),
+		);
+		manager.send
+			.mockRejectedValueOnce(new SessionNotFoundError("session-1"))
+			.mockResolvedValueOnce(makeTurnResult());
+		const runtime = await makeRuntime(manager);
+		await runtime.ensureReady();
+		await runtime.sendCurrentTurn({ prompt: "continue", mode: "act" });
+		expect(manager.start).toHaveBeenNthCalledWith(
+			2,
+			expect.objectContaining({
+				config: expect.objectContaining({ sessionId: "session-1" }),
+				initialMessages: messages,
+			}),
+		);
+		expect(runtime.getActiveSessionId()).toBe("session-1");
+		expect(manager.readSessionCompactionState).not.toHaveBeenCalled();
+		expect(JSON.stringify(messages)).toBe(before);
 	});
 
 	it("preserves the session id and applies changed provider config when restarting with the current messages", async () => {

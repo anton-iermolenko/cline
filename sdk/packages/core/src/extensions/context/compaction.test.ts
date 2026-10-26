@@ -8,6 +8,7 @@ import {
 	createSessionCompactionState,
 	projectSessionCompactionState,
 } from "../../session/models/session-compaction";
+import { MessageBuilder } from "../../session/services/message-builder";
 import type { CoreCompactionContext } from "../../types/config";
 import { buildAgenticSummaryInputBudget } from "./agentic-compaction";
 import { runBasicCompaction } from "./basic-compaction";
@@ -4642,6 +4643,81 @@ describe("createContextCompactionPrepareTurn", () => {
 		expect(saveState).not.toHaveBeenCalled();
 	});
 
+	it.each([
+		false,
+		true,
+	])("keeps the first post-compaction request identical to its sidecar projection (existing=%s)", async (existing) => {
+		const canonical: MessageWithMetadata[] = [
+			{
+				id: "original",
+				role: "user",
+				content: "Preserve this original requirement",
+			},
+		];
+		const summary: MessageWithMetadata = {
+			id: "summary",
+			role: "user",
+			content: "Context summary: continue",
+			metadata: { kind: "compaction_summary" },
+		};
+		let state = existing
+			? createSessionCompactionState({
+					sourceMessages: canonical,
+					compactedMessages: [summary],
+				})
+			: undefined;
+		const compact = vi
+			.fn()
+			.mockResolvedValueOnce({ messages: [summary] })
+			.mockResolvedValue(undefined);
+		const prepareTurn = createCompactionStateAwarePrepareTurn({
+			compact,
+			getState: () => state,
+			saveState: (value) => {
+				state = value;
+			},
+		});
+		const context: Parameters<typeof prepareTurn>[0] = {
+			agentId: "a",
+			conversationId: "c",
+			parentAgentId: null,
+			iteration: 1,
+			abortSignal: new AbortController().signal,
+			systemPrompt: "system",
+			tools: [],
+			messages: canonical,
+			apiMessages: canonical,
+			model: {
+				id: "mock",
+				provider: "anthropic",
+				info: { id: "mock", maxInputTokens: 100000 },
+			},
+		};
+		const first = await prepareTurn(context);
+		const builder = new MessageBuilder({
+			getCanonicalMessages: () => canonical,
+		});
+		const before = builder.buildForApi(first!.messages!);
+		expect(JSON.stringify(before)).toContain(
+			"Preserve this original requirement",
+		);
+		const next = [
+			...canonical,
+			{
+				id: "followup",
+				role: "user" as const,
+				content: "New user instruction",
+			},
+		];
+		const result = await prepareTurn({
+			...context,
+			iteration: 2,
+			messages: next,
+			apiMessages: next,
+		});
+		const after = builder.buildForApi(result!.messages!);
+		expect(after.slice(0, before.length)).toEqual(before);
+	});
 	it("passes the exact source messages to saveState so hosts can validate against them", async () => {
 		// Regression: local-runtime-host validated the persist by projecting the
 		// state against agent.getMessages(), which mid-turn can legally differ

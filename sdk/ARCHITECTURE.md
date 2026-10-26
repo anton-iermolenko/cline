@@ -1121,3 +1121,10 @@ prefix caches and clear when a conversation is restored.
 ### Continuation efficiency
 
 Provider preparation embeds a bounded continuity brief in the existing compaction summary, without adding a user turn after tool results. Canonical human inputs and source references remain session-scoped, paged on demand. Compaction serialization omits old scratch reasoning; summary instructions reconcile completed edits and verification against the latest observed results. Text reads budget their JSON-escaped page before execution returns, leaving room for the tool envelope and an explicit next-line cursor. The per-session safety tracker also observes a bounded window of read-only outcomes, warning and stopping repeated unchanged inspections across alternating calls; possible mutations, errors and unknown commands reset that window.
+
+
+## Stable continuity and missing-hub session recovery
+
+Compaction captures continuity memory once and reuses it for the first prepared request and later sidecar projections. Follow-up user messages append to the transcript without rewriting the compacted prefix. Legacy sidecars reconstruct memory only from their validated covered source prefix; bare summaries keep static source-retrieval guidance.
+
+When an interactive client loses its hub session but still has saved messages, it resumes the saved session identity. Core then restores its validated compaction state, checkpoints and complete transcript rather than creating a fresh session that replays pre-compaction images as current context. Empty missing sessions may still start fresh.

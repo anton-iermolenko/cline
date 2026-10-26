@@ -357,15 +357,18 @@ export function formatEvidenceHistory(messages: readonly Message[]): string {
 /** Enrich the existing summary; never append a synthetic user turn after tools. */
 export function withContextRecovery(
 	messages: Message[],
-	canonical?: readonly Message[],
+	_canonical?: readonly Message[],
 	maxNoticeBytes = MAX_NOTICE_CHARS,
 ): Message[] {
 	const clean = clearContextRecovery(messages);
 	const index = clean.findIndex((m) => hasCompactedContext([m]));
 	if (index < 0 || maxNoticeBytes <= 0) return clean;
-	const memory = canonical
-		? collectContextMemory(canonical)
-		: storedMemory(clean);
+	// The note lives at the beginning of the prompt. Reading live canonical
+	// inputs here rewrites that prefix on every user turn and invalidates KV
+	// reuse for the entire retained transcript. Only use the immutable memory
+	// captured by compaction; newer instructions already follow in the tail.
+	// Legacy summaries without memory keep the static retrieval guidance.
+	const memory = storedMemory(clean);
 	const recent = (memory?.inputs ?? []).slice(-2);
 	const text = [
 		"<CONTEXT_CONTINUITY>",
@@ -377,7 +380,7 @@ export function withContextRecovery(
 			". Prior source references are available on demand at " +
 			EVIDENCE_HISTORY_URI +
 			".",
-		"Recent human input (later corrections take precedence; the summary records earlier applicable requirements):",
+		"Human input captured at compaction (later messages take precedence):",
 		...recent.map(
 			(v) =>
 				"[" +

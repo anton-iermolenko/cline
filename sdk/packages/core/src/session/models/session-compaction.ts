@@ -195,8 +195,19 @@ export function projectSessionCompactionState(
 		return undefined;
 	}
 
+	const compactedMessages = cloneMessages(state.messages);
+	// Older sidecars predate context memory. Reconstruct their immutable
+	// snapshot from the validated covered prefix, never from the live tail.
+	const snapshotMessages = compactedMessages.some(
+		(message) => message.metadata?.contextMemory !== undefined,
+	)
+		? compactedMessages
+		: attachContextMemory(
+				compactedMessages,
+				sourceMessages.slice(0, state.source_message_count),
+			);
 	return [
-		...cloneMessages(state.messages),
+		...snapshotMessages,
 		...cloneMessages(sourceMessages.slice(state.source_message_count)),
 	];
 }

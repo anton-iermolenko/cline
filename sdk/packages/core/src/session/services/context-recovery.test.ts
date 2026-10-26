@@ -221,7 +221,10 @@ describe("compaction awareness and provenance", () => {
 		expect(memory.inputs.map((v) => v.id)).toEqual(["first", "correction"]);
 		const result = new MessageBuilder({
 			getCanonicalMessages: () => canonical,
-		}).buildForApi([summary(), canonical[2]]);
+		}).buildForApi([
+			...attachContextMemory([summary()], canonical),
+			canonical[2],
+		]);
 		const text = noteText(result);
 		expect(text).toContain("SAME conversation");
 		expect(text).toContain("not a new human request");
@@ -234,6 +237,77 @@ describe("compaction awareness and provenance", () => {
 					(m as MessageWithMetadata).metadata?.kind === "context_recovery_note",
 			),
 		).toHaveLength(0);
+	});
+
+	it.each([
+		true,
+		false,
+	])("preserves the compacted request prefix across new user messages (snapshot=%s)", (withSnapshot) => {
+		let canonical = [human("original", "Keep the original requirement")];
+		const stored = withSnapshot
+			? attachContextMemory([summary()], canonical)
+			: [summary()];
+		const original = JSON.stringify(stored);
+		const builder = new MessageBuilder({
+			getCanonicalMessages: () => canonical,
+		});
+		const before = builder.buildForApi(stored);
+		canonical = [...canonical, human("followup", "LATEST FOLLOW-UP")];
+		const after = builder.buildForApi([...stored, canonical.at(-1)!]);
+		expect(after.slice(0, before.length)).toEqual(before);
+		expect(after.at(-1)).toMatchObject({
+			id: "followup",
+			role: "user",
+			content: [{ type: "text", text: "LATEST FOLLOW-UP" }],
+		});
+		expect(noteText(after)).not.toContain("LATEST FOLLOW-UP");
+		canonical = [...canonical, human("second", "SECOND FOLLOW-UP")];
+		const working = [...stored, ...canonical.slice(1)];
+		const next = builder.buildForApi(working);
+		expect(next.slice(0, after.length)).toEqual(after);
+		expect(builder.buildPreviewForApi(working)).toEqual(next);
+		const restarted = new MessageBuilder({
+			getCanonicalMessages: () => canonical,
+		});
+		expect(restarted.buildForApi(JSON.parse(JSON.stringify(working)))).toEqual(
+			next,
+		);
+		expect(JSON.stringify(stored)).toEqual(original);
+		if (withSnapshot)
+			expect(noteText(next)).toContain("Keep the original requirement");
+	});
+	it("changes the continuity snapshot only when a new compaction captures later corrections", () => {
+		const original = [human("original", "Initial requirement")];
+		const first = attachContextMemory([summary()], original);
+		const canonical = [...original, human("correction", "NEW CORRECTION")];
+		const builder = new MessageBuilder({
+			getCanonicalMessages: () => canonical,
+		});
+		expect(noteText(builder.buildForApi(first))).not.toContain(
+			"NEW CORRECTION",
+		);
+		const second = attachContextMemory([summary()], canonical);
+		expect(noteText(builder.buildForApi(second))).toContain("NEW CORRECTION");
+	});
+	it("reconstructs legacy memory from only the compacted source boundary", () => {
+		const canonical = [human("original", "Original preserved instruction")];
+		const state = createSessionCompactionState({
+			sourceMessages: canonical,
+			compactedMessages: [summary()],
+		});
+		delete state.messages[0].metadata!.contextMemory;
+		const original = JSON.stringify(state);
+		const before = new MessageBuilder().buildForApi(
+			projectSessionCompactionState(state, canonical)!,
+		);
+		const next = [...canonical, human("later", "LATER INSTRUCTION")];
+		const after = new MessageBuilder().buildForApi(
+			projectSessionCompactionState(state, next)!,
+		);
+		expect(after.slice(0, before.length)).toEqual(before);
+		expect(noteText(after)).toContain("Original preserved instruction");
+		expect(noteText(after)).not.toContain("LATER INSTRUCTION");
+		expect(JSON.stringify(state)).toBe(original);
 	});
 	it("captures queued human steering even when its run span is zero", () => {
 		const m = {

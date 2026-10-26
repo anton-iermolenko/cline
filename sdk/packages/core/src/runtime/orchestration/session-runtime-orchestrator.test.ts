@@ -33,6 +33,7 @@ import {
 	EMPTY_CONTENT_TEXT,
 } from "@cline/shared";
 import { describe, expect, it, vi } from "vitest";
+import { collectContextMemory } from "../../session/services/context-recovery";
 import { MESSAGE_BUILDER_LIMIT_ENV } from "../../session/services/message-builder";
 import {
 	SessionRuntime,
@@ -578,6 +579,7 @@ describe("SessionRuntime message preparation", () => {
 							{ type: "text", text: "Context summary: continue the work." },
 						],
 						metadata: {
+							contextMemory: collectContextMemory(session.getMessages()),
 							kind: "compaction_summary",
 							displayRole: "system",
 							userRunSpan: 0,

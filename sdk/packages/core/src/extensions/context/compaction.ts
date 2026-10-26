@@ -1229,6 +1229,7 @@ export function createCompactionStateAwarePrepareTurn(input: {
 				await input.saveState?.(nextState, context.messages);
 				return {
 					...result,
+					messages: nextState.messages,
 					...(systemPrompt !== undefined ? { systemPrompt } : {}),
 				};
 			}
@@ -1250,6 +1251,9 @@ export function createCompactionStateAwarePrepareTurn(input: {
 				systemPrompt: result.systemPrompt,
 			});
 			await input.saveState?.(nextState, context.messages);
+			// Use the same captured memory on the first request and subsequent
+			// sidecar projections, so the first tool continuation reuses KV too.
+			return { ...result, messages: nextState.messages };
 		}
 		return result;
 	};
