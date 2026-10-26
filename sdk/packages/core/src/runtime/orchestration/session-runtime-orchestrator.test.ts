@@ -33,8 +33,10 @@ import {
 	EMPTY_CONTENT_TEXT,
 } from "@cline/shared";
 import { describe, expect, it, vi } from "vitest";
+import { createContextCompactionPrepareTurn } from "../../extensions/context/compaction";
 import { collectContextMemory } from "../../session/services/context-recovery";
 import { MESSAGE_BUILDER_LIMIT_ENV } from "../../session/services/message-builder";
+import type { CoreCompactionContext } from "../../types/config";
 import {
 	SessionRuntime,
 	type SessionRuntimeOrchestratorDeps,
@@ -948,6 +950,52 @@ describe("SessionRuntime message preparation", () => {
 		expect(prepareTurn).toHaveBeenCalledWith(
 			expect.objectContaining({ previousRequestInputTokens: 123_456 }),
 		);
+	});
+
+	it("passes the resolved model context limit to auto compaction", async () => {
+		const modelId = "local-model";
+		const contextWindow = 65_536;
+		const compact = vi.fn((_context: CoreCompactionContext) => undefined);
+		const prepareTurn = createContextCompactionPrepareTurn({
+			providerId: "anthropic",
+			modelId,
+			compaction: { enabled: true, compact },
+		});
+		const { deps, configs } = makeRecordingRuntimeFactory();
+		const session = new SessionRuntime(
+			makeAgentConfig({
+				modelId,
+				// The discovered catalog entry has no limit; a selected-model
+				// override supplies the limit used by the gateway request.
+				knownModels: { [modelId]: { id: modelId, name: modelId } },
+				providerConfig: {
+					providerId: "anthropic",
+					modelId,
+					maxInputTokens: 128_000,
+					modelInfo: { id: modelId, contextWindow },
+				},
+				prepareTurn,
+			}),
+			deps,
+		);
+
+		await session.run("go");
+		await configs[0]?.prepareTurn?.({
+			agentId: "agent-1",
+			conversationId: "conv-1",
+			parentAgentId: null,
+			iteration: 1,
+			messages: [makeAgentMessage("m1", "user", "x".repeat(300_000))],
+			systemPrompt: "system",
+			tools: [],
+			model: {},
+		});
+
+		expect(compact).toHaveBeenCalledTimes(1);
+		const context = compact.mock.calls[0]?.[0];
+		expect(context?.model.info).toMatchObject({ contextWindow });
+		expect(context?.budget.request.maxInputTokens).toBe(contextWindow);
+		expect(context?.budget.request.triggerTokens).toBe(contextWindow * 0.9);
 	});
 
 	it("allows prepareTurn to return only a system prompt", async () => {
@@ -3110,30 +3158,62 @@ describe("SessionRuntime auth retry", () => {
 	});
 });
 
-describe("unchanged observation runtime hook",()=>{
- it.each([false,true])("keeps warnings in tool output and honors disabled=%s",async disabled=>{
-  const {deps,configs}=withCapturingFakeRuntime();
-  const session=new SessionRuntime(makeAgentConfig({execution:{loopDetection:disabled?false:{softThreshold:2,hardThreshold:3}}}),deps);
-  await session.run("Inspect");
-  const hook=configs[0]?.hooks?.afterTool;
-  expect(hook).toBeTypeOf("function");
-  const context={
-   snapshot:makeSnapshot(),tool:{name:"read_files",description:"Read",inputSchema:{type:"object"},execute:async()=>""},
-   toolCall:{type:"tool-call" as const,toolCallId:"r",toolName:"read_files",input:{files:[{path:"API.md"}]}},
-   input:{files:[{path:"API.md"}]},result:{output:[{query:"API.md",result:"verified evidence",success:true}]},
-   startedAt:new Date(1),endedAt:new Date(2),durationMs:1
-  };
-  await hook?.(context);
-  const soft=await hook?.(context);
-  if(disabled){
-   expect(soft).toBeUndefined();
-   expect(await hook?.(context)).toBeUndefined();
-  }else{
-   expect(JSON.stringify(soft?.result?.output)).toContain("same read-only observation");
-   expect(soft?.appendContext).toBeUndefined();
-   const hard=await hook?.(context);
-   expect(hard?.stop).toBe(true);
-   expect(hard?.result?.output).toEqual(context.result.output);
-  }
- });
+describe("unchanged observation runtime hook", () => {
+	it.each([
+		false,
+		true,
+	])("keeps warnings in tool output and honors disabled=%s", async (disabled) => {
+		const { deps, configs } = withCapturingFakeRuntime();
+		const session = new SessionRuntime(
+			makeAgentConfig({
+				execution: {
+					loopDetection: disabled
+						? false
+						: { softThreshold: 2, hardThreshold: 3 },
+				},
+			}),
+			deps,
+		);
+		await session.run("Inspect");
+		const hook = configs[0]?.hooks?.afterTool;
+		expect(hook).toBeTypeOf("function");
+		const context = {
+			snapshot: makeSnapshot(),
+			tool: {
+				name: "read_files",
+				description: "Read",
+				inputSchema: { type: "object" },
+				execute: async () => "",
+			},
+			toolCall: {
+				type: "tool-call" as const,
+				toolCallId: "r",
+				toolName: "read_files",
+				input: { files: [{ path: "API.md" }] },
+			},
+			input: { files: [{ path: "API.md" }] },
+			result: {
+				output: [
+					{ query: "API.md", result: "verified evidence", success: true },
+				],
+			},
+			startedAt: new Date(1),
+			endedAt: new Date(2),
+			durationMs: 1,
+		};
+		await hook?.(context);
+		const soft = await hook?.(context);
+		if (disabled) {
+			expect(soft).toBeUndefined();
+			expect(await hook?.(context)).toBeUndefined();
+		} else {
+			expect(JSON.stringify(soft?.result?.output)).toContain(
+				"same read-only observation",
+			);
+			expect(soft?.appendContext).toBeUndefined();
+			const hard = await hook?.(context);
+			expect(hard?.stop).toBe(true);
+			expect(hard?.result?.output).toEqual(context.result.output);
+		}
+	});
 });

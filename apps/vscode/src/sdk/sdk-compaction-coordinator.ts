@@ -235,6 +235,7 @@ export class SdkCompactionCoordinator {
 					compaction: config.compaction,
 					logger: config.logger,
 					telemetry: config.telemetry,
+					systemPrompt: config.systemPrompt,
 				},
 				sessionId,
 				messages,

@@ -22,6 +22,14 @@ import { getAllHooksDirs, getWindowWorkspaceRoots } from "../storage/disk"
 import { HookExecutionError } from "./HookError"
 import { HookProcess } from "./HookProcess"
 
+// The host reads its setting for every hook invocation, so toggling it does
+// not require restarting a task. CLI hooks use the same external sender policy.
+let responseCompletedPushPreferenceReader: (() => boolean) | undefined
+
+export function setResponseCompletedPushPreferenceReader(reader?: () => boolean): void {
+	responseCompletedPushPreferenceReader = reader
+}
+
 // Hook execution timeout (30 seconds)
 const HOOK_EXECUTION_TIMEOUT_MS = 30000
 
@@ -329,6 +337,10 @@ class StdioHookRunner<Name extends HookName> extends HookRunner<Name> {
 		// To ensure hooks receive consistent data (e.g., {"prompt": ""} instead of {}),
 		// we manually construct the JSON object and explicitly include empty string fields
 		const jsonObj = HookInput.toJSON(input) as Record<string, any>
+		if (responseCompletedPushPreferenceReader) {
+			jsonObj.client = "vscode"
+			jsonObj.notificationPreferences = { responseCompleted: responseCompletedPushPreferenceReader() }
+		}
 
 		// Ensure empty prompt strings are preserved in UserPromptSubmit data
 		if (jsonObj.userPromptSubmit && jsonObj.userPromptSubmit.prompt === undefined) {

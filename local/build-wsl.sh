@@ -1,23 +1,32 @@
 #!/bin/bash
 set -euo pipefail
-source_dir=${1:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}
-build_root="${XDG_CACHE_HOME:-$HOME/.cache}/cline-fork-build"
-export PATH="$build_root/toolchain:/usr/local/bin:/usr/bin:/bin"
-export HUSKY=0
-export NODE_OPTIONS=--max-old-space-size=2048
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+source_dir=$(git -C "$script_dir/.." rev-parse --show-toplevel)
+export PATH="$HOME/.bun/bin:$HOME/.local/bin:$PATH"
+[[ $(git -C "$source_dir" branch --show-current) == local-main ]] || { echo 'Build releases from local-main after integrating tested fixes.' >&2; exit 1; }
+[[ -z $(git -C "$source_dir" status --porcelain) ]] || { echo 'Commit or preserve source changes before building a release.' >&2; exit 1; }
 [[ $(bun --version) == 1.4.2 ]] || { echo 'Bun 1.4.2 required' >&2; exit 1; }
-mkdir -p "$build_root/source"
-rsync -a --exclude=.git --exclude=node_modules --exclude=dist "$source_dir/" "$build_root/source/"
-cd "$build_root/source"
+source_commit=$(git -C "$source_dir" rev-parse HEAD)
+cd "$source_dir/sdk"
 bun install --frozen-lockfile
-cd sdk
-for package in shared llms agents core sdk ui; do
-    bun --filter "@cline/$package" build
-done
-bun --filter @cline/core test:unit src/extensions/context/compaction.test.ts src/extensions/context/budget-projection/project.test.ts
-cd ../apps/cli
-bun run typecheck
-bun x biome check --skip=lint/a11y/noStaticElementInteractions src/tui/utils/reasoning-preview.ts src/tui/utils/reasoning-preview.test.ts src/tui/hooks/use-agent-events.ts src/tui/components/chat-entry.tsx src/utils/local-model-limits.ts src/utils/local-model-limits.test.ts src/main.ts src/runtime/run-interactive.ts
-bun x vitest run --config vitest.config.ts src/utils/local-model-limits.test.ts src/runtime/run-interactive.test.ts src/runtime/interactive/compaction.test.ts src/tui/utils/reasoning-preview.test.ts
-bun script/build.ts --single --skip-install --skip-sdk-build
-printf 'Built package: %s\n' "$PWD/dist/cli-linux-x64"
+bun run build:sdk
+cd "$source_dir"
+bun -F @cline/cli typecheck
+bun -F @cline/cli build
+bun apps/cli/script/build.ts --single --skip-install --skip-sdk-build
+cd apps/vscode
+bun run check-types
+bun run build:production
+node "$source_dir/local/package-extension.cjs"
+cd "$source_dir"
+python3 - "$source_commit" <<'PY'
+import json, pathlib, platform, sys
+root = pathlib.Path.cwd()
+arch = {"x86_64": "x64", "aarch64": "arm64"}.get(platform.machine(), platform.machine())
+package = root / "apps/cli/dist" / ("cli-linux-" + arch)
+record = {"sourceCommit": sys.argv[1], "sourceBranch": "local-main", "cliVersion": json.loads((root / "apps/cli/package.json").read_text())["version"], "extensionVersion": json.loads((root / "apps/vscode/package.json").read_text())["version"]}
+for target in [package / "source-provenance.json", root / "apps/vscode/dist/source-provenance.json"]:
+    target.write_text(json.dumps(record, indent=2) + "\n")
+print("Built both clients from " + sys.argv[1])
+print("CLI package: " + str(package))
+PY

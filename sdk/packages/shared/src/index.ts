@@ -263,6 +263,8 @@ export {
 export { serializeAbortReason } from "./llms/requests";
 export {
 	CHARS_PER_TOKEN,
+	createImageAwareReplacer,
+	ESTIMATED_TOKENS_PER_IMAGE,
 	estimateRequestInputTokens,
 	estimateTokens,
 	resolveEffectiveMaxInputTokens,
@@ -580,6 +582,11 @@ export {
 	createClineTelemetryServiceConfig,
 	createClineTelemetryServiceMetadata,
 } from "./services/telemetry-config";
+export type {
+	TelemetrySelfcheckConfig,
+	TelemetrySelfcheckReport,
+} from "./services/telemetry-selfcheck";
+export { buildTelemetrySelfcheckReport } from "./services/telemetry-selfcheck";
 export type {
 	HookSessionContext,
 	HookSessionContextLookup,

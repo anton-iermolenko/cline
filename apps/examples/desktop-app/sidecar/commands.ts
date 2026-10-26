@@ -126,14 +126,9 @@ import {
 	resolveSidecarAskQuestion,
 	sendEventToClient,
 } from "./context";
-import {
-	readDesktopSettings,
-	setCloudSessionsEnabled,
-} from "./desktop-settings";
 import { writeDiagnosticsReport } from "./diagnostics";
 import {
 	identifyDesktopFeatureFlagsAccount,
-	isCloudAgentsAvailable,
 	isCloudAgentsEnabled,
 	refreshDesktopFeatureFlags,
 } from "./feature-flags";
@@ -849,58 +844,61 @@ function metadataSessionSearchHits(
 // Git helpers
 // ---------------------------------------------------------------------------
 
+// Resolves to git's stdout, or undefined when the command fails (e.g. the
+// workspace is not a repository). Over SSH each call is its own ssh session.
+async function runGit(
+	ctx: SidecarContext,
+	binding: ReturnType<typeof getRuntimeBinding>,
+	cwd: string,
+	args: string[],
+): Promise<string | undefined> {
+	if (binding.kind === "ssh") {
+		const remote = ctx.remoteEnvironments;
+		if (!remote) throw new Error("Remote environment service is unavailable");
+		const result = await remote
+			.run(binding.environmentId, { command: "git", args, cwd })
+			.catch(() => undefined);
+		return result?.stdout;
+	}
+	const result = await execFileAsync("git", args, {
+		cwd,
+		encoding: "utf8",
+	}).catch(() => undefined);
+	return result?.stdout;
+}
+
+async function currentGitBranch(
+	ctx: SidecarContext,
+	binding: ReturnType<typeof getRuntimeBinding>,
+	cwd?: string,
+): Promise<string | undefined> {
+	const targetCwd = cwd?.trim() || binding.workspaceRoot;
+	const current = await runGit(ctx, binding, targetCwd, [
+		"branch",
+		"--show-current",
+	]);
+	return current?.trim() || undefined;
+}
+
 async function listGitBranches(
 	ctx: SidecarContext,
 	binding: ReturnType<typeof getRuntimeBinding>,
 	cwd?: string,
 ): Promise<{ current?: string; branches?: string[] }> {
 	const targetCwd = cwd?.trim() || binding.workspaceRoot;
-	if (binding.kind === "ssh") {
-		const remote = ctx.remoteEnvironments;
-		if (!remote) throw new Error("Remote environment service is unavailable");
-		const [currentResult, branchesResult] = await Promise.all([
-			remote
-				.run(binding.environmentId, {
-					command: "git",
-					args: ["branch", "--show-current"],
-					cwd: targetCwd,
-				})
-				.catch(() => undefined),
-			remote
-				.run(binding.environmentId, {
-					command: "git",
-					args: ["for-each-ref", "--format=%(refname:short)", "refs/heads"],
-					cwd: targetCwd,
-				})
-				.catch(() => undefined),
-		]);
-		const current = currentResult?.stdout.trim() ?? "";
-		const branches = (branchesResult?.stdout ?? "")
-			.split("\n")
-			.map((value) => value.trim())
-			.filter(Boolean);
-		return { current: current || undefined, branches };
-	}
-	const [currentResult, branchesResult] = await Promise.all([
-		execFileAsync("git", ["branch", "--show-current"], {
-			cwd: targetCwd,
-			encoding: "utf8",
-		}).catch(() => undefined),
-		execFileAsync(
-			"git",
-			["for-each-ref", "--format=%(refname:short)", "refs/heads"],
-			{
-				cwd: targetCwd,
-				encoding: "utf8",
-			},
-		).catch(() => undefined),
+	const [current, branchesOutput] = await Promise.all([
+		currentGitBranch(ctx, binding, targetCwd),
+		runGit(ctx, binding, targetCwd, [
+			"for-each-ref",
+			"--format=%(refname:short)",
+			"refs/heads",
+		]),
 	]);
-	const current = currentResult?.stdout.trim() ?? "";
-	const branches = (branchesResult?.stdout ?? "")
+	const branches = (branchesOutput ?? "")
 		.split("\n")
-		.map((v) => v.trim())
+		.map((value) => value.trim())
 		.filter(Boolean);
-	return { current: current || undefined, branches };
+	return { current, branches };
 }
 
 /** Where task worktrees live; honors `CLINE_DIR` like the rest of the Cline dir. */
@@ -2204,8 +2202,6 @@ export async function handleCommand(
 		};
 	}
 	if (command === "get_feature_flags") {
-		// Resolve flags in the sidecar: available shows the opt-in;
-		// enabled requires both the rollout flag and the user's opt-in.
 		const snapshot = await refreshDesktopFeatureFlags({
 			logger: ctx.logger,
 			telemetry: ctx.telemetry,
@@ -2213,10 +2209,6 @@ export async function handleCommand(
 		return {
 			...snapshot,
 			cloudAgents: isCloudAgentsEnabled({
-				logger: ctx.logger,
-				telemetry: ctx.telemetry,
-			}),
-			cloudAgentsAvailable: isCloudAgentsAvailable({
 				logger: ctx.logger,
 				telemetry: ctx.telemetry,
 			}),
@@ -3218,9 +3210,6 @@ export async function handleCommand(
 		setAutoUpdateEnabledGlobally(args.auto_update_enabled);
 		return readGlobalSettings();
 	}
-	if (command === "get_desktop_settings") {
-		return readDesktopSettings();
-	}
 	if (command === "export_diagnostics") {
 		const sessionIds = Array.isArray(args?.sessionIds)
 			? args.sessionIds.filter(
@@ -3230,18 +3219,6 @@ export async function handleCommand(
 		const result = writeDiagnosticsReport(sessionIds);
 		openFileInEditor(dirname(result.path));
 		return result;
-	}
-	if (command === "set_cloud_sessions_enabled") {
-		if (typeof args?.cloud_sessions_enabled !== "boolean") {
-			throw new Error("cloud_sessions_enabled must be a boolean");
-		}
-		const settings = setCloudSessionsEnabled(args.cloud_sessions_enabled);
-		broadcastEvent(ctx, "cloud_sessions_changed", {});
-		broadcastEvent(ctx, "feature_flags_changed", {
-			cloudAgents: isCloudAgentsEnabled(),
-			cloudAgentsAvailable: isCloudAgentsAvailable(),
-		});
-		return settings;
 	}
 
 	// ── Connector channels ─────────────────────────────────────────────
@@ -3473,12 +3450,12 @@ export async function handleCommand(
 			typeof args?.cwd === "string" && args.cwd.trim()
 				? args.cwd.trim()
 				: binding.workspaceRoot;
-		const branches = await listGitBranches(ctx, binding, cwd);
+		const branch = await currentGitBranch(ctx, binding, cwd);
 		if (binding.kind === "local") {
 			const { prewarmWorkspaceMetadata } = await import("./chat-session");
 			prewarmWorkspaceMetadata(cwd);
 		}
-		return { environmentId: binding.environmentId, branch: branches.current };
+		return { environmentId: binding.environmentId, branch };
 	}
 	if (command === "list_git_branches") {
 		const binding = getCommandRuntimeBinding(ctx, args);

@@ -1482,6 +1482,27 @@ describe("translateSessionEvent — agent_event error", () => {
 		const result = translateSessionEvent(event, state)
 		expect(result.turnComplete).toBe(true)
 		expect(state.wasErrorSeen()).toBe(true)
+		expect(result.messages.map((message) => message.ask ?? message.say)).toEqual(["api_req_started", "api_req_failed"])
+		expect(result.messages[1].text).toBe("stream failed before assistant output")
+	})
+
+	it("renders a failure carried only by done(reason:'error') once, as a credit error when it is one", () => {
+		const state = new MessageTranslatorState()
+		const done = (text: string): CoreSessionEvent => ({
+			type: "agent_event",
+			payload: {
+				sessionId: "session-1",
+				event: { type: "done", reason: "error", text, iterations: 1 } as AgentEvent,
+			},
+		})
+
+		const first = translateSessionEvent(done("Not enough credits available"), state)
+		const failed = first.messages.filter((message) => message.ask === "api_req_failed")
+		expect(failed).toHaveLength(1)
+		expect(JSON.parse(failed[0].text ?? "{}")).toMatchObject({ code: "insufficient_credits" })
+
+		// An "error" event already rendered this turn's failure.
+		expect(translateSessionEvent(done("Not enough credits available"), state).messages).toEqual([])
 	})
 
 	it("does not record an error outcome for a successful done event", () => {
@@ -2065,6 +2086,29 @@ describe("translateSessionEvent — agent_event notice", () => {
 		}
 	}
 
+	it.each([
+		["input-token-count", { kind: "input_token_count", inputTokens: 12345, source: "tokenized" }],
+		["Measured prepared input", { kind: "input_token_count", inputTokens: 12345 }],
+		["input-token-count", undefined],
+	] as const)("keeps internal input measurement out of chat (%s)", (message, metadata) => {
+		const state = new MessageTranslatorState()
+		for (let i = 0; i < 2; i++) {
+			const result = translateSessionEvent(noticeEvent(message, metadata), state)
+			expect(result.messages).toEqual([])
+			expect(result.sessionEnded).toBe(false)
+			expect(result.turnComplete).toBe(false)
+		}
+	})
+
+	it("does not hide ordinary non-status notices that share an internal label", () => {
+		const state = new MessageTranslatorState()
+		const event = noticeEvent("input-token-count", { kind: "input_token_count" })
+		if (event.type !== "agent_event" || event.payload.event.type !== "notice") throw new Error("Invalid notice fixture")
+		event.payload.event.noticeType = "recovery"
+		const result = translateSessionEvent(event, state)
+		expect(result.messages).toEqual([expect.objectContaining({ say: "info", text: "input-token-count" })])
+	})
+
 	it("translates compaction status notices into a divider row updated in place", () => {
 		const state = new MessageTranslatorState()
 
@@ -2075,6 +2119,15 @@ describe("translateSessionEvent — agent_event notice", () => {
 		expect(started).toHaveLength(1)
 		expect(started[0].say).toBe("compaction")
 		expect(JSON.parse(started[0].text ?? "{}")).toMatchObject({ status: "started", mode: "auto" })
+
+		// Preflight and transport measurements must not produce chat rows or
+		// consume the in-flight compaction divider's identity.
+		for (let i = 0; i < 2; i++) {
+			expect(
+				translateSessionEvent(noticeEvent("input-token-count", { kind: "input_token_count", inputTokens: 40000 }), state)
+					.messages,
+			).toEqual([])
+		}
 
 		const completed = translateSessionEvent(
 			noticeEvent("auto-compacted", {
@@ -2530,6 +2583,24 @@ describe("translateSessionEvent — accumulated text streaming (S6-21 fix)", () 
 		expect(end.messages[0].text).toBe("Hello world!")
 		expect(end.messages[0].partial).toBe(false)
 		expect(end.messages[0].ts).toBe(streamingTs)
+	})
+
+	it("accumulates text chunks that carry no running total, as a cloud session sends them", () => {
+		const state = new MessageTranslatorState()
+		const chunk = (text: string): CoreSessionEvent => ({
+			type: "agent_event",
+			payload: { sessionId: "s1", event: { type: "content_start", contentType: "text", text } as AgentEvent },
+		})
+		const end = (text: string): CoreSessionEvent => ({
+			type: "agent_event",
+			payload: { sessionId: "s1", event: { type: "content_end", contentType: "text", text } as AgentEvent },
+		})
+
+		expect(translateSessionEvent(chunk("Hello "), state).messages[0].text).toBe("Hello ")
+		expect(translateSessionEvent(chunk("world"), state).messages[0].text).toBe("Hello world")
+		translateSessionEvent(end("Hello world"), state)
+		// The next text block starts from nothing.
+		expect(translateSessionEvent(chunk("Next"), state).messages[0].text).toBe("Next")
 	})
 
 	it("accumulates reasoning deltas into text for webview rendering", () => {

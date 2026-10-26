@@ -5,7 +5,7 @@ import path from "path"
 import sinon from "sinon"
 import { setDistinctId } from "@/services/logging/distinctId"
 import { stubWorkspacePaths } from "../../../test/host-provider-test-utils"
-import { HookFactory, isPathWithin } from "../hook-factory"
+import { HookFactory, isPathWithin, setResponseCompletedPushPreferenceReader } from "../hook-factory"
 import { createHookTestEnv, HookTestEnv, stubHookDirs, withPlatform, writeHookScriptForPlatform } from "./test-utils"
 
 describe("Hook System", () => {
@@ -30,6 +30,7 @@ describe("Hook System", () => {
 	})
 
 	afterEach(async () => {
+		setResponseCompletedPushPreferenceReader(undefined)
 		await hookTestEnv.cleanup()
 	})
 
@@ -54,6 +55,25 @@ describe("Hook System", () => {
 	})
 
 	describe("StdioHookRunner", () => {
+		it("passes the current response-completion push preference to each hook invocation", async () => {
+			let enabled = false
+			setResponseCompletedPushPreferenceReader(() => enabled)
+			const hookPath = path.join(tempDir, ".clinerules", "hooks", "TaskComplete")
+			await writeHookScript(
+				hookPath,
+				`#!/usr/bin/env node
+const input = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+console.log(JSON.stringify({cancel:false,contextModification:JSON.stringify({client:input.client,preferences:input.notificationPreferences})}));`,
+			)
+			const runner = await new HookFactory().create("TaskComplete")
+			const params = { taskId: "push-preference-test", taskComplete: { taskMetadata: { result: "Ready" } } }
+			const first = JSON.parse((await runner.run(params)).contextModification!)
+			first.should.deepEqual({ client: "vscode", preferences: { responseCompleted: false } })
+			enabled = true
+			const second = JSON.parse((await runner.run(params)).contextModification!)
+			second.should.deepEqual({ client: "vscode", preferences: { responseCompleted: true } })
+		})
+
 		it(
 			"should execute workspace hook from its respective workspace root directory",
 			async () => {

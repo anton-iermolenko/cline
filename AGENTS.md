@@ -32,3 +32,12 @@ A Tauri v2 (Rust) shell + Next.js webview + a Bun "sidecar" backend. Rust and th
 - **Rust version caveat:** the crate graph needs Cargo's `edition2024` feature, so **Rust ≥1.85** is required (the VM's base 1.83 fails with "feature `edition2024` is required"). The toolchain here was updated via `rustup default stable` (currently 1.97). First `cargo` build downloads/compiles the full Tauri crate graph (a few minutes); subsequent builds are cached.
 - **System libs (already installed):** `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`, `libxdo-dev`, `libssl-dev`, `build-essential`.
 - **Test/typecheck:** `bun run typecheck`, `bun run test:chat-ui` (Vitest). Both trigger `build:ui` first.
+
+
+## Local integration workflow
+
+`local-main` is the shared integration branch for both the CLI and the VS Code extension. The primary checkout stays on this branch. Keep individual fixes as branches in this repository; use temporary worktrees to develop and verify new changes, then merge the reviewed fix into `local-main` and remove the worktree after preserving its work.
+
+Build both clients from the refreshed primary `local-main` checkout and the same committed SDK source. Build caches and installed release directories are artifacts, never independent source checkouts. Record the source commit with build artifacts and deploy only verified builds after integration.
+
+Before every new commit, review the staged diff and commit message for secrets, personal paths, private hosts and saved session data; run a redacted local secret scan. Use repository-local author and committer identity `Anton I <inflyer@hotmail.com>`. Preserve existing published history unless a history rewrite is explicitly requested. The `fork` remote is the personal publishing destination; `origin` remains upstream. See `LOCAL_DEVELOPMENT.md` for the workflow.

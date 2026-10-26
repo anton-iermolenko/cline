@@ -69,6 +69,16 @@ export {
 } from "../../../../sdk/packages/core/src/services/providers/local-provider-registry"
 export { captureGitSnapshot } from "../../../../sdk/packages/core/src/services/telemetry/core-events"
 
+export function readGlobalSettings(): ReturnType<
+	typeof import("../../../../sdk/packages/core/src/services/global-settings").readGlobalSettings
+> {
+	try {
+		return JSON.parse(readFileSync(process.env.CLINE_GLOBAL_SETTINGS_PATH ?? "", "utf8"))
+	} catch {
+		return {}
+	}
+}
+
 export type GlobalCompactionStrategy = "basic" | "agentic"
 
 export function readCompactionStrategyGlobally(): GlobalCompactionStrategy {

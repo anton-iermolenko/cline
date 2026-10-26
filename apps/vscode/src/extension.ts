@@ -29,6 +29,8 @@ import { improveWithCline } from "./core/controller/commands/improveWithCline"
 import { sendAddToInputEvent } from "./core/controller/ui/subscribeToAddToInput"
 import { sendShowWebviewEvent } from "./core/controller/ui/subscribeToShowWebview"
 import { HookDiscoveryCache } from "./core/hooks/HookDiscoveryCache"
+import { setResponseCompletedPushPreferenceReader } from "./core/hooks/hook-factory"
+import { migrateOpenAiCompatibleBaseUrlToV1 } from "./core/storage/openai-base-url-migration"
 import {
 	cleanupMcpMarketplaceCatalogFromGlobalState,
 	cleanupOldApiKey,
@@ -74,6 +76,11 @@ export async function activate(context: vscode.ExtensionContext) {
 	// IMPORTANT: This must be done before any service can be registered
 	setupHostProvider(context)
 
+	setResponseCompletedPushPreferenceReader(() =>
+		vscode.workspace.getConfiguration("cline.pushNotifications").get<boolean>("responseCompleted", false),
+	)
+	context.subscriptions.push({ dispose: () => setResponseCompletedPushPreferenceReader(undefined) })
+
 	// 2. Clean up legacy data patterns within VSCode's native storage.
 	// Moves workspace→global keys, task history→file, custom instructions→rules, etc.
 	// Must run BEFORE the file export so we copy clean state.
@@ -84,6 +91,7 @@ export async function activate(context: vscode.ExtensionContext) {
 	const workspacePath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
 	const storageContext = createStorageContext({ workspacePath })
 	await exportVSCodeStorageToSharedFiles(context, storageContext)
+	migrateOpenAiCompatibleBaseUrlToV1(storageContext)
 
 	// 4. Register services and perform common initialization
 	// IMPORTANT: Must be done after host provider is setup and migrations are complete
@@ -659,6 +667,7 @@ async function getBinaryLocation(name: string): Promise<string> {
 
 // This method is called when your extension is deactivated
 export async function deactivate() {
+	Logger.clearSubscribers()
 	// Dispose Non-VSCode-specific services
 	try {
 		await tearDown()

@@ -15,6 +15,7 @@ import {
 	type CoreSessionConfig,
 	createContextCompactionPrepareTurn,
 	createSessionCompactionState,
+	readGlobalSettings,
 	type SessionCompactionState,
 } from "@cline/core"
 import type { Message as SdkMessage, ModelInfo as SdkModelInfo } from "@cline/llms"
@@ -80,6 +81,7 @@ export async function compactSessionMessages(input: CompactSessionMessagesInput)
 			// Force-enable compaction for this manual request even when
 			// auto-condense is off — the user explicitly asked for it.
 			compaction: {
+				...readGlobalSettings().compaction,
 				...input.config.compaction,
 				enabled: true,
 			},
