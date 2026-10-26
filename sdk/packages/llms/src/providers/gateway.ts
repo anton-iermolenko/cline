@@ -130,6 +130,17 @@ class GatewayModelAdapter implements AgentModel {
 		private readonly defaults: GatewayModelHandleOptions | undefined,
 	) {}
 
+	async countInputTokens(request: AgentModelRequest) {
+		for await (const event of await this.stream({
+			...request,
+			options: { ...request.options, inputTokenCountOnly: true },
+		})) {
+			if (event.type === "input-token-count") return event.measurement;
+			if (event.type === "finish" && event.error) throw new Error(event.error);
+		}
+		return undefined;
+	}
+
 	stream(request: AgentModelRequest): Promise<AsyncIterable<AgentModelEvent>> {
 		const defaultReasoning = normalizeRequestedReasoning(
 			this.defaults?.reasoning,
@@ -163,6 +174,7 @@ class GatewayModelAdapter implements AgentModel {
 					}
 				: undefined;
 		return this.gateway.stream({
+			inputTokenCountOnly: request.options?.inputTokenCountOnly === true,
 			providerId: this.selection.providerId,
 			modelId: this.selection.modelId ?? "",
 			systemPrompt: request.systemPrompt,
@@ -174,6 +186,7 @@ class GatewayModelAdapter implements AgentModel {
 				this.defaults?.temperature,
 			maxTokens:
 				(request.options?.maxTokens as number | undefined) ??
+				(request.options?.maxTokensPerTurn as number | undefined) ??
 				this.defaults?.maxTokens,
 			metadata: mergeRequestMetadata(
 				this.defaults?.metadata,
@@ -370,7 +383,9 @@ export class DefaultGateway implements Gateway {
 		const maxTokens = resolveGatewayRequestMaxTokens({
 			requestedMaxTokens: request.maxTokens,
 			model: resolved.model,
-			estimatedInputTokens: estimateRequestInputTokens(request),
+			estimatedInputTokens: resolved.model.metadata?.inputTokenCountUrl
+				? 0
+				: estimateRequestInputTokens(request),
 			reasoningBudgetTokens: request.reasoning?.budgetTokens,
 			onContextOverflow: (details) => {
 				this.logger?.log(

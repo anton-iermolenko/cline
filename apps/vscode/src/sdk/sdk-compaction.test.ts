@@ -3,6 +3,8 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 const createContextCompactionPrepareTurn = vi.fn()
 const createSessionCompactionState = vi.fn((input: unknown) => ({ version: 1, input }))
 vi.mock("@cline/core", () => ({
+	applyLocalModelLimits: vi.fn(),
+	readGlobalSettings: () => ({ compaction: { targetTokens: 61000, maxTargetTokens: 94000 } }),
 	createContextCompactionPrepareTurn: (...args: unknown[]) => createContextCompactionPrepareTurn(...args),
 	createSessionCompactionState: (input: unknown) => createSessionCompactionState(input),
 }))
@@ -21,6 +23,7 @@ const baseConfig = {
 	compaction: undefined,
 	logger: undefined,
 	telemetry: undefined,
+	systemPrompt: "Exact active system prompt",
 } as unknown as Parameters<typeof compactSessionMessages>[0]["config"]
 
 describe("compactSessionMessages", () => {
@@ -56,11 +59,12 @@ describe("compactSessionMessages", () => {
 			expect.objectContaining({
 				providerId: "anthropic",
 				modelId: "claude",
-				compaction: expect.objectContaining({ enabled: true }),
+				compaction: expect.objectContaining({ enabled: true, targetTokens: 61000, maxTargetTokens: 94000 }),
 				sessionId: "s1",
 			}),
 			{ mode: "manual" },
 		)
+		expect(compact).toHaveBeenCalledWith(expect.objectContaining({ systemPrompt: "Exact active system prompt" }))
 		expect(compact).toHaveBeenCalledOnce()
 		expect(createSessionCompactionState).toHaveBeenCalledWith({
 			sourceMessages: messages,

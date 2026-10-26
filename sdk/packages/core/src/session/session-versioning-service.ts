@@ -17,6 +17,10 @@ import {
 	type WorktreeRestoreTransaction,
 } from "./checkpoint-restore";
 import {
+	deriveSessionCompactionState,
+	type SessionCompactionState,
+} from "./models/session-compaction";
+import {
 	type CoreSessionSnapshot,
 	createCoreSessionSnapshot,
 } from "./session-snapshot";
@@ -43,6 +47,7 @@ export interface SessionCheckpointRestoreContext {
 	plan: CheckpointRestorePlan;
 	restoredCheckpointMetadata?: CheckpointMetadata;
 	initialMessages: LlmsProviders.MessageWithMetadata[];
+	initialCompactionState?: SessionCompactionState;
 	restoreMessages: boolean;
 	restoreWorkspace: boolean;
 	checkpointRunCount: number;
@@ -69,6 +74,9 @@ export interface SessionCheckpointRestoreInput<
 	start?: TRestoreStartInput;
 	getSession(sessionId: string): Promise<SessionRecord | undefined>;
 	readMessages(sessionId: string): Promise<LlmsProviders.MessageWithMetadata[]>;
+	readCompactionState?: (
+		sessionId: string,
+	) => Promise<SessionCompactionState | undefined>;
 	buildStartInput?: (
 		context: SessionCheckpointRestoreContext,
 		start: TRestoreStartInput,
@@ -259,6 +267,18 @@ export class SessionVersioningService {
 						input.checkpointRunCount,
 					)
 				: (plan.messages ?? []);
+			const sourceCompactionState = await input.readCompactionState?.(
+				sourceSession.sessionId,
+			);
+			// Validate the original anchor before removing an unchanged tail, then
+			// require the summarized prefix to fit the selected checkpoint.
+			const initialCompactionState = sourceCompactionState
+				? deriveSessionCompactionState({
+						state: sourceCompactionState,
+						sourceMessages: sourceMessages ?? [],
+						targetMessages: initialMessages,
+					})
+				: undefined;
 			const context: SessionCheckpointRestoreContext = {
 				sourceSession,
 				sourceMessages,
@@ -266,6 +286,7 @@ export class SessionVersioningService {
 				plan,
 				restoredCheckpointMetadata,
 				initialMessages,
+				initialCompactionState,
 				restoreMessages,
 				restoreWorkspace,
 				checkpointRunCount: input.checkpointRunCount,

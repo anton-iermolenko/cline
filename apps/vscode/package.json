@@ -337,7 +337,14 @@
 		},
 		"configuration": {
 			"title": "Cline",
-			"properties": {}
+			"properties": {
+				"cline.pushNotifications.responseCompleted": {
+					"type": "boolean",
+					"default": false,
+					"scope": "window",
+					"markdownDescription": "Send a Home Assistant push notification when Cline finishes responding in this VS Code window. Uses the shared Cline CLI notification helper. Question and error notifications are controlled separately."
+				}
+			}
 		}
 	},
 	"scripts": {

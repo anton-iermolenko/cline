@@ -378,3 +378,30 @@ Pass `connectorsRequest: (path, init) => Promise<Response>` to `LocalRuntimeHost
 and `createLocalHubScheduleRuntimeHandlers` to supply connector authentication.
 Paths start with `/api/v1/connectors`; the host supplies the API origin and
 authentication. Omit it to retain local account authentication and rollout checks.
+
+## Bounded compaction recovery
+
+
+Complete but empty semantic-summary responses receive one retry of the same chunk and prior checkpoint. A second empty response follows the normal fallback path. Truncation, transport failures and cancellation are not retried by this rule.
+
+When compaction starts with a native input counter and image blocks, retention selection calibrates text and vision separately. Counter-only copies omit images to measure the vision contribution; actual context and image bytes remain intact. Repeated images share per-occurrence costs, and distinct images are measured separately. Ordinary turns and image-free histories add no calibration requests. The final native recount still enforces the configured maximum. Missing or changed counter budgets preserve the original context rather than committing an unvalidated projection.
+
+Agentic compaction derives recent-history retention from the preferred full-request target, subtracting system/tool overhead, the summarizer output allowance, and any current user instruction reinserted outside the retained tail. `preserveRecentTokens` can request a smaller suffix; it cannot expand that budget. Whole messages and tool-call/result pairs remain intact, so the result can differ from the preference. `maxTargetTokens` caps compacted full requests, including default and manual targets. Measured automatic results may exceed the preference to preserve continuity only within that cap and the live input allowance. Estimated results are also rejected above the configured cap. A rejected candidate leaves the original context intact.
+
+Built-in automatic compaction, and manual compaction of an already oversized request, retry a deterministic basic fold when the selected strategy cannot return usable bounded context. Success requires estimated messages plus request overhead to fit below the compaction trigger. The input allowance and early-compaction trigger are separate values; diagnostics report both, together with remaining message tokens and request overhead when available. A missing fallback result is reported separately from an oversized result.
+
+When prior agentic compaction has replaced all typed user turns, the basic fold preserves the most recent compaction summary with its existing system provenance and keeps a recent suffix within the remaining budget. It never relabels generated summary text as user instructions. Retained tool results start with their assistant tool calls. An oversized continuation summary remains intact and causes a bounded-result failure rather than silent truncation. Custom compaction callbacks retain their existing contract.
+
+### Counted local requests
+
+`AgentModel.countInputTokens(request)` is optional and returns a source-labeled measurement or undefined for unsupported providers without generating. Configured local model entries may specify `inputTokenCountUrl`. `compaction.bufferTokens` selects proactive headroom for tokenized/bounded requests; default 2048. Every candidate is recounted before acceptance. Unavailable counters preserve the original context; the local adapter never forwards a request that exceeds its verified input allowance.
+
+## Compaction state during checkpoint restore
+
+Checkpoint message restoration preserves compatible compacted working context while retaining the full restored canonical transcript. The saved source prefix must still match and end at or before the restored boundary. State covering later messages is not inherited. The shared service reanchors eligible state for the replacement session, including its saved system prompt; an explicitly supplied initialCompactionState retains precedence.
+
+Compaction state copies validate the original canonical anchor, move an identical retained suffix outside the summarized prefix, and validate that prefix against the restore target. Checkpoint Undo can remove or replace unsummarized tail messages without discarding the summary. Restores preceding summarized content still reject that state. CLI restart and fork use the same core derivation so later Undo retains this boundary.
+
+When a restored or forked session has no compaction sidecar, core state reads and resume follow recorded ancestors (bounded to 32 with cycle protection). A recovered state must validate against the ancestor transcript and the target summarized prefix, and is rebound to the target owner. Own sidecars remain authoritative; recovery reads do not rewrite canonical history. Checkpoint restoration persists inherited state in the new session.
+
+Measured compaction recounts the complete prepared request, requires it to shrink the original input and fit the live hard allowance, and preserves the latest typed user request verbatim. Manual and overflow compaction must meet the requested target; automatic compaction may preserve a useful checkpoint above the preference only within the maximum and growth headroom. Basic compaction emits dropped-work notes separately from that protected request and does not merge it into older user turns. Bounded fallback retries reproject the original transcript, enforce the smaller projection budget for old prompts, and shorten embedded earlier assistant responses with that budget; rejected candidates report the measured target, candidate count, and rejection reason without changing saved history. A lone protected request below the hard allowance may skip without claiming compaction succeeded.

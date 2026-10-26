@@ -7,6 +7,24 @@ import {
 } from "./tokens";
 
 describe("estimateRequestInputTokens", () => {
+	it("excludes internal metadata while retaining image-aware estimates", () => {
+		const plain = {
+			role: "user",
+			content: [
+				{ type: "image", data: "A".repeat(90000), mediaType: "image/png" },
+			],
+		};
+		const internal = {
+			...plain,
+			metadata: { huge: "M".repeat(200000), broken: 1n },
+		};
+		expect(estimateRequestInputTokens({ messages: [internal] })).toBe(
+			estimateRequestInputTokens({ messages: [plain] }),
+		);
+		expect(estimateRequestInputTokens({ messages: [internal] })).toBeLessThan(
+			2000,
+		);
+	});
 	it("estimates text-only messages by char count", () => {
 		const message = { role: "user", content: "hello world" };
 		const tokens = estimateRequestInputTokens({ messages: [message] });

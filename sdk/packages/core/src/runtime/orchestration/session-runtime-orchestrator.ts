@@ -75,7 +75,6 @@ import {
 } from "../../session/services/tool-result-cache";
 import { ConversationStore } from "../../session/stores/conversation-store";
 import {
-	agentMessagesToMessages,
 	agentMessagesToMessagesWithMetadata,
 	messagesToAgentMessages,
 } from "../config/agent-message-codec";
@@ -437,6 +436,7 @@ export class SessionRuntime {
 		this.maxCachedResultChars =
 			messageBuilderOptions.maxToolResultChars ?? DEFAULT_MAX_TOOL_RESULT_CHARS;
 		this.messageBuilder = new MessageBuilder({
+			getCanonicalMessages: () => this.conversation.getMessages(),
 			...messageBuilderOptions,
 			getToolResultRecovery: (result) =>
 				this.cacheableToolNames.has(result.name ?? "")
@@ -1018,6 +1018,7 @@ export class SessionRuntime {
 				modelSupportsImages: modelSupportsImageInput(modelInfo ?? {}),
 				...this.config.toolContextMetadata,
 				toolResultCache: this.toolResultCache,
+				readCanonicalHistory: () => this.conversation.getMessages(),
 			},
 			hooks: this.createRuntimeHooks(),
 			prepareTurn: this.createRuntimePrepareTurn(modelInfo, tools),
@@ -1174,6 +1175,31 @@ export class SessionRuntime {
 							this.toolResultCache.store(ctx.toolCall.toolCallId, text);
 					}
 				}
+				if (!control?.stop && !this.loopDetectionDisabled) {
+					const verdict = this.loopTracker.observeResult(
+						{ name: ctx.toolCall.toolName, input: ctx.input },
+						result.output,
+						result.isError,
+					);
+					if (verdict.kind === "hard")
+						return { ...control, result, stop: true, reason: verdict.message };
+					if (verdict.kind === "soft") {
+						const warning = {
+							query: "continuation progress check",
+							result: verdict.message,
+						};
+						const output =
+							typeof result.output === "string"
+								? result.output + "\n\n" + verdict.message
+								: Array.isArray(result.output)
+									? [...result.output, warning]
+									: {
+											result: result.output,
+											continuation_notice: verdict.message,
+										};
+						return { ...control, result: { ...result, output } };
+					}
+				}
 				return control;
 			},
 			beforeModel: async (ctx) => {
@@ -1220,6 +1246,28 @@ export class SessionRuntime {
 				iteration: context.iteration,
 				messages,
 				apiMessages,
+				countRequestInputTokens: async (
+					candidate,
+					candidateSystemPrompt = context.systemPrompt ?? "",
+				) => {
+					const counter = createAgentModelFromConfig(this.config, undefined);
+					const prepared =
+						candidate === messages
+							? apiMessages
+							: await this.prepareProviderMessagesForApi(candidate, true);
+					return counter.countInputTokens?.({
+						systemPrompt: candidateSystemPrompt,
+						messages: messagesToAgentMessages(prepared),
+						tools: context.tools,
+						signal: context.signal,
+						options: {
+							maxTokens: this.config.maxTokensPerTurn,
+							thinking: this.config.thinking,
+							reasoningEffort: this.config.reasoningEffort,
+							thinkingBudgetTokens: this.config.thinkingBudgetTokens,
+						},
+					});
+				},
 				abortSignal: context.signal ?? new AbortController().signal,
 				systemPrompt: context.systemPrompt ?? "",
 				tools,
@@ -1250,13 +1298,14 @@ export class SessionRuntime {
 		messages: readonly AgentMessage[],
 	): Promise<AgentMessage[]> {
 		const providerMessages = await this.prepareProviderMessagesForApi(
-			agentMessagesToMessages(messages),
+			agentMessagesToMessagesWithMetadata(messages),
 		);
 		return messagesToAgentMessages(providerMessages);
 	}
 
 	private async prepareProviderMessagesForApi(
 		messages: MessageWithMetadata[],
+		preview = false,
 	): Promise<MessageWithMetadata[]> {
 		let providerMessages = messages;
 		const messageBuilders =
@@ -1264,7 +1313,9 @@ export class SessionRuntime {
 		for (const builder of messageBuilders) {
 			providerMessages = await builder.build(providerMessages);
 		}
-		return this.messageBuilder.buildForApi(providerMessages);
+		return preview
+			? this.messageBuilder.buildPreviewForApi(providerMessages)
+			: this.messageBuilder.buildForApi(providerMessages);
 	}
 
 	private handleRuntimeEvent(event: AgentRuntimeEvent): void {

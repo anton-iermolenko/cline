@@ -1,5 +1,6 @@
 import { createHandlerAsync } from "@cline/llms";
 import type { BasicLogger } from "@cline/shared";
+import { createAgentModelFromConfig } from "../../services/llms/handler-factory";
 import { countUserRunMessages } from "../../session/user-run-messages";
 import type {
 	CoreCompactionContext,
@@ -14,6 +15,7 @@ import {
 import {
 	buildSummaryMessage,
 	buildSummaryRequest,
+	DEFAULT_SUMMARY_MAX_OUTPUT_TOKENS,
 	type EstimateMessageTokens,
 	ensureFilesSection,
 	estimateTokens,
@@ -21,6 +23,7 @@ import {
 	findCutIndex,
 	findLatestSummaryIndex,
 	getCompactionSummaryMetadata,
+	isTurnStartMessage,
 	resolveEffectiveMaxInputTokens,
 	resolveSummarizerConfig,
 	serializeConversation,
@@ -67,7 +70,7 @@ interface SummaryGenerationResult {
 	incompleteReason?: string;
 }
 
-async function generateSummary(options: {
+async function generateSummaryOnce(options: {
 	providerConfig: ProviderConfig;
 	request: string;
 	logger?: BasicLogger;
@@ -105,6 +108,109 @@ async function generateSummary(options: {
 	return { text: text.trim(), reasoningChars, incompleteReason };
 }
 
+async function generateSummary(
+	options: Parameters<typeof generateSummaryOnce>[0],
+): Promise<SummaryGenerationResult> {
+	const result = await generateSummaryOnce(options);
+	if (result.text || result.incompleteReason) return result;
+	options.providerConfig.abortSignal?.throwIfAborted();
+	options.logger?.log("Retrying empty compaction summary", {
+		severity: "warn",
+		attempt: 2,
+		maxAttempts: 2,
+		reason: "empty_summary",
+		reasoningChars: result.reasoningChars,
+		modelId: options.providerConfig.modelId,
+	});
+	// Reuse the exact chunk and prior checkpoint. Only a complete empty response
+	// gets one retry; transport errors, truncation and cancellation keep their
+	// existing recovery behavior.
+	return generateSummaryOnce(options);
+}
+
+async function summarizeMeasuredChunks(options: {
+	providerConfig: ProviderConfig;
+	data: string;
+	fileOps: ReturnType<typeof extractFileOps>;
+	signal: AbortSignal;
+	logger?: BasicLogger;
+}): Promise<string> {
+	const instruction =
+		"Summarize the provided coding session into a concise continuation note with detailed next steps.";
+	const counter = createAgentModelFromConfig(
+		{
+			providerId: options.providerConfig.providerId,
+			modelId: options.providerConfig.modelId,
+			providerConfig: options.providerConfig,
+			systemPrompt: instruction,
+			tools: [],
+		},
+		undefined,
+	);
+	let position = 0,
+		checkpoint = "",
+		segments = 0;
+	do {
+		options.signal.throwIfAborted();
+		let size = Math.min(80000, options.data.length - position);
+		let request = "";
+		for (let attempt = 0; attempt < 18; attempt++) {
+			request = buildSummaryRequest({
+				previousSummary: checkpoint,
+				conversationText: options.data.slice(position, position + size),
+				fileOps: options.fileOps,
+			});
+			const count = await counter.countInputTokens?.({
+				systemPrompt: instruction,
+				messages: [
+					{
+						id: "summary-count",
+						createdAt: 0,
+						role: "user",
+						content: [{ type: "text", text: request }],
+					},
+				],
+				tools: [],
+				signal: options.signal,
+				options: {
+					maxTokens: options.providerConfig.maxOutputTokens,
+					thinking: false,
+				},
+			});
+			if (!count)
+				throw new Error(
+					"Summarizer input token counting unavailable; original context was preserved",
+				);
+			if (count.inputTokens <= Math.min(24000, count.maxInputTokens)) break;
+			if (size <= 1 || attempt === 17)
+				throw new Error(
+					"Summarizer instructions and checkpoint cannot fit the measured input allowance",
+				);
+			size = Math.max(1, Math.floor(size / 2));
+		}
+		options.signal.throwIfAborted();
+		const generated = await generateSummary({
+			providerConfig: {
+				...options.providerConfig,
+				abortSignal: options.signal,
+			},
+			request,
+			logger: options.logger,
+		});
+		if (!generated.text || generated.incompleteReason)
+			throw new Error(
+				"Summarizer returned an empty or incomplete checkpoint; original context was preserved",
+			);
+		checkpoint = generated.text;
+		position += size;
+		if (++segments >= 64 && position < options.data.length)
+			throw new Error(
+				"Compaction exceeded the bounded summary segment limit; original context was preserved",
+			);
+	} while (position < options.data.length);
+	return ensureFilesSection(checkpoint, options.fileOps);
+}
+
 function safeJsonSize(value: unknown): number {
 	try {
 		return JSON.stringify(value).length;
@@ -117,7 +223,7 @@ export async function runAgenticCompaction(options: {
 	context: CoreCompactionContext;
 	providerConfig: ProviderConfig;
 	summarizer?: CoreCompactionSummarizerConfig;
-	preserveRecentTokens: number;
+	preserveRecentTokens?: number;
 	estimateMessageTokens: EstimateMessageTokens;
 	logger?: BasicLogger;
 }): Promise<CoreCompactionResult | undefined> {
@@ -126,16 +232,64 @@ export async function runAgenticCompaction(options: {
 		return undefined;
 	}
 
-	const cutIndex = findCutIndex(
+	const summarizerProviderConfig = resolveSummarizerConfig({
+		activeProviderConfig: options.providerConfig,
+		summarizer: options.summarizer,
+	});
+	// Retain history toward the preferred full-request size, rather than a
+	// fixed 20K suffix. The caller has removed request overhead and clamped
+	// this message budget to the configured maximum and live input allowance.
+	const summaryReserveTokens =
+		summarizerProviderConfig.maxOutputTokens ??
+		DEFAULT_SUMMARY_MAX_OUTPUT_TOKENS;
+	let preserveRecentTokens = Math.max(
+		0,
+		Math.min(
+			options.preserveRecentTokens ?? Number.POSITIVE_INFINITY,
+			options.context.budget.messages.targetTokens - summaryReserveTokens,
+		),
+	);
+	let cutIndex = findCutIndex(
 		messages,
-		options.preserveRecentTokens,
+		preserveRecentTokens,
 		options.estimateMessageTokens,
 	);
+	const latestTypedIndex = messages.map(isTurnStartMessage).lastIndexOf(true);
+	// A user instruction outside the retained tail is reinserted verbatim;
+	// reserve its space separately so it does not silently consume headroom.
+	const protectedPromptTokens =
+		latestTypedIndex >= 0 && latestTypedIndex < cutIndex
+			? options.estimateMessageTokens(messages[latestTypedIndex])
+			: 0;
+	if (protectedPromptTokens > 0) {
+		preserveRecentTokens = Math.max(
+			0,
+			preserveRecentTokens - protectedPromptTokens,
+		);
+		cutIndex = findCutIndex(
+			messages,
+			preserveRecentTokens,
+			options.estimateMessageTokens,
+		);
+	}
 	if (cutIndex <= 0 || cutIndex >= messages.length) {
 		return undefined;
 	}
+	options.logger?.debug("Agentic compaction retention budget", {
+		preferredTargetTokens: options.context.budget.request.targetTokens,
+		requestOverheadTokens: options.context.budget.request.overheadTokens,
+		messageTargetTokens: options.context.budget.messages.targetTokens,
+		summaryReserveTokens,
+		protectedPromptTokens,
+		preserveRecentTokens,
+		messagesPreserved: messages.length - cutIndex,
+	});
 
 	const messagesToSummarize = messages.slice(0, cutIndex);
+	const protectedPrompt =
+		latestTypedIndex >= 0 && latestTypedIndex < cutIndex
+			? messages[latestTypedIndex]
+			: undefined;
 	const latestSummaryIndex = findLatestSummaryIndex(messagesToSummarize);
 	const previousSummary =
 		latestSummaryIndex >= 0
@@ -146,15 +300,40 @@ export async function runAgenticCompaction(options: {
 		latestSummaryIndex >= 0
 			? messagesToSummarize.slice(latestSummaryIndex + 1)
 			: messagesToSummarize;
-	if (newMessagesToFold.length === 0) {
+	if (newMessagesToFold.length === 0 && !previousSummary) {
 		return undefined;
 	}
 
 	const preProjectionFileOps = extractFileOps(messagesToSummarize);
-	const summarizerProviderConfig = resolveSummarizerConfig({
-		activeProviderConfig: options.providerConfig,
-		summarizer: options.summarizer,
-	});
+	const summaryInfo =
+		summarizerProviderConfig.modelInfo ??
+		summarizerProviderConfig.knownModels?.[summarizerProviderConfig.modelId];
+	if (typeof summaryInfo?.metadata?.inputTokenCountUrl === "string") {
+		const folded = messagesToSummarize.filter(
+			(message) => message !== protectedPrompt,
+		);
+		const fileOps = extractFileOps(folded);
+		const data = serializeConversation(folded);
+		const checkpoint = await summarizeMeasuredChunks({
+			providerConfig: summarizerProviderConfig,
+			data,
+			fileOps,
+			signal: options.context.abortSignal ?? new AbortController().signal,
+			logger: options.logger,
+		});
+		return {
+			messages: [
+				buildSummaryMessage({
+					summary: checkpoint,
+					fileOps,
+					tokensBefore: options.context.budget.request.inputTokens,
+					userRunSpan: countUserRunMessages(folded),
+				}),
+				...(protectedPrompt ? [protectedPrompt] : []),
+				...messages.slice(cutIndex),
+			],
+		};
+	}
 	const resolvedSummarizerInputLimit = resolveProviderMaxInputTokens(
 		summarizerProviderConfig,
 	);
@@ -256,7 +435,7 @@ export async function runAgenticCompaction(options: {
 		logger: options.logger,
 	});
 	const rawSummary = summaryResult.text;
-	if (!rawSummary) {
+	if (!rawSummary || summaryResult.incompleteReason) {
 		options.logger?.log(
 			"Skipped agentic compaction: summarizer returned no summary text",
 			{
@@ -285,8 +464,11 @@ export async function runAgenticCompaction(options: {
 			summary,
 			fileOps,
 			tokensBefore,
-			userRunSpan: countUserRunMessages(messagesToSummarize),
+			userRunSpan: countUserRunMessages(
+				messagesToSummarize.filter((message) => message !== protectedPrompt),
+			),
 		}),
+		...(protectedPrompt ? [protectedPrompt] : []),
 		...messages.slice(cutIndex),
 	];
 	const tokensAfter = resultMessages.reduce(

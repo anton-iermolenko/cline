@@ -1,7 +1,9 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { Message } from "@cline/shared";
 import { describe, expect, it } from "vitest";
+import { MessageBuilder } from "../../../session/services/message-builder";
 import {
 	prepareToolResultRecovery,
 	TOOL_RESULT_CACHE_MISS,
@@ -28,7 +30,8 @@ describe("createFileReadExecutor", () => {
 		};
 		const reader = createFileReadExecutor();
 		const output = String(await reader({ path: uri }, context));
-		expect(output).toContain("line 200:");
+		expect(output).toContain("Next: start_line=");
+		expect(output).not.toContain("line 200:");
 		expect(output).not.toContain("[line truncated]");
 		const lastLine =
 			(text ?? "").split("\n").findIndex((line) => line.includes("line 200:")) +
@@ -127,10 +130,10 @@ describe("createFileReadExecutor", () => {
 		const result = await readTempFile(numberedLines(2500));
 
 		expect(result).toContain("1 | line 1");
-		expect(result).toContain("2000 | line 2000");
+		expect(result).not.toContain("2000 | line 2000");
 		expect(result).not.toContain("line 2001");
-		expect(result).toContain(
-			"[Showing lines 1-2000 of 2500. Use start_line/end_line to read other sections.]",
+		expect(result).toMatch(
+			/\[Showing lines 1-\d+ of 2500. Use start_line\/end_line to read other sections. Next: start_line=\d+/,
 		);
 	});
 
@@ -138,10 +141,10 @@ describe("createFileReadExecutor", () => {
 		const result = await readTempFile(numberedLines(60_000));
 
 		expect(result).toContain("1 | line 1");
-		expect(result).toContain("2000 | line 2000");
+		expect(result).not.toContain("2000 | line 2000");
 		expect(result).not.toContain("line 2001");
-		expect(result).toContain(
-			"[Showing lines 1-2000 of 50000+ lines. Use start_line/end_line to read other sections.]",
+		expect(result).toMatch(
+			/\[Showing lines 1-\d+ of 50000\+ lines. Use start_line\/end_line to read other sections. Next: start_line=\d+/,
 		);
 	});
 
@@ -161,10 +164,10 @@ describe("createFileReadExecutor", () => {
 		});
 
 		expect(result).toContain("1 | line 1");
-		expect(result).toContain("2000 | line 2000");
+		expect(result).not.toContain("2000 | line 2000");
 		expect(result).not.toContain("line 2001");
-		expect(result).toContain(
-			"[Showing lines 1-2000 of 3000. Use start_line/end_line to read other sections.]",
+		expect(result).toMatch(
+			/\[Showing lines 1-\d+ of 3000. Use start_line\/end_line to read other sections. Next: start_line=\d+/,
 		);
 	});
 
@@ -199,9 +202,9 @@ describe("createFileReadExecutor", () => {
 			)) as string;
 
 			expect(result).toContain("1 | line 1");
-			expect(result).toContain("2000 | line 2000");
-			expect(result).toContain(
-				"[Showing lines 1-2000 of 2500. Use start_line/end_line to read other sections.]",
+			expect(result).not.toContain("2000 | line 2000");
+			expect(result).toMatch(
+				/\[Showing lines 1-\d+ of 2500. Use start_line\/end_line to read other sections. Next: start_line=\d+/,
 			);
 		} finally {
 			await fs.rm(dir, { recursive: true, force: true });
@@ -399,6 +402,85 @@ describe("createFileReadExecutor", () => {
 					mediaType: "image/png",
 				},
 			]);
+		} finally {
+			await fs.rm(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("complete preview-sized pages", () => {
+	it("delivers every escaped line intact through MessageBuilder and a next cursor", async () => {
+		const dir = await fs.mkdtemp(path.join(os.tmpdir(), "cline-page-"));
+		const file = path.join(dir, "API.md");
+		const lines = Array.from(
+			{ length: 180 },
+			(_, i) =>
+				"contract " + (i + 1) + ": " + '日本語 \\ quotes: " '.repeat(18),
+		);
+		await fs.writeFile(file, lines.join("\n"));
+		try {
+			const reader = createFileReadExecutor();
+			let start = 1;
+			let pages = 0;
+			const seen: string[] = [];
+			while (start <= lines.length) {
+				const text = String(
+					await reader(
+						{ path: file, start_line: start, end_line: lines.length },
+						{ agentId: "a", iteration: 1 },
+					),
+				);
+				const wrapped = [
+					{
+						query: file + ":" + start + "-" + lines.length,
+						result: text,
+						success: true,
+					},
+				];
+				const messages: Message[] = [
+					{
+						role: "assistant",
+						content: [
+							{
+								type: "tool_use",
+								id: "r",
+								name: "read_files",
+								input: {
+									files: [
+										{ path: file, start_line: start, end_line: lines.length },
+									],
+								},
+							},
+						],
+					},
+					{
+						role: "user",
+						content: [
+							{
+								type: "tool_result",
+								tool_use_id: "r",
+								name: "read_files",
+								content: wrapped as never,
+							},
+						],
+					},
+				];
+				const prepared = new MessageBuilder().buildForApi(messages);
+				expect(JSON.stringify(prepared)).not.toContain("...[truncated");
+				expect((prepared[1].content as unknown[])[0]).toEqual(
+					(messages[1].content as unknown[])[0],
+				);
+				for (const line of text.split("\n"))
+					if (/^\s*\d+ \| /.test(line))
+						seen.push(line.replace(/^\s*\d+ \| /, ""));
+				const cursor = text.match(/Next: start_line=(\d+)/);
+				pages++;
+				if (!cursor) break;
+				expect(Number(cursor[1])).toBeGreaterThan(start);
+				start = Number(cursor[1]);
+			}
+			expect(pages).toBeGreaterThan(2);
+			expect(seen).toEqual(lines);
 		} finally {
 			await fs.rm(dir, { recursive: true, force: true });
 		}

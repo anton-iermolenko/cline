@@ -131,6 +131,7 @@ export interface CoreCompactionBudgetMetadata {
 }
 
 export interface CoreCompactionResult {
+	systemPrompt?: string;
 	messages: MessageWithMetadata[];
 	budget?: CoreCompactionBudgetMetadata;
 }
@@ -156,8 +157,15 @@ export interface CoreCompactionSummarizerConfig {
 export type CoreCompactionStrategy = "basic" | "agentic";
 
 export interface CoreCompactionConfig {
+	/** Preferred full-request size after automatic or overflow compaction. */
+	targetTokens?: number;
+	/** Maximum full-request size after compaction; automatic results may exceed the preferred target up to this cap. */
+	maxTargetTokens?: number;
+	/** Proactive input headroom for providers with token counting. Defaults to 2048. */
+	bufferTokens?: number;
 	enabled?: boolean;
 	strategy?: CoreCompactionStrategy;
+	/** Optional recent-history limit. Defaults to the preferred target minus summary, protected prompt and request overhead. Tool-pair boundaries remain intact. */
 	preserveRecentTokens?: number;
 	summarizer?: CoreCompactionSummarizerConfig;
 	compact?: (

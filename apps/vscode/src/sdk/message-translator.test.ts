@@ -2086,6 +2086,29 @@ describe("translateSessionEvent — agent_event notice", () => {
 		}
 	}
 
+	it.each([
+		["input-token-count", { kind: "input_token_count", inputTokens: 12345, source: "tokenized" }],
+		["Measured prepared input", { kind: "input_token_count", inputTokens: 12345 }],
+		["input-token-count", undefined],
+	] as const)("keeps internal input measurement out of chat (%s)", (message, metadata) => {
+		const state = new MessageTranslatorState()
+		for (let i = 0; i < 2; i++) {
+			const result = translateSessionEvent(noticeEvent(message, metadata), state)
+			expect(result.messages).toEqual([])
+			expect(result.sessionEnded).toBe(false)
+			expect(result.turnComplete).toBe(false)
+		}
+	})
+
+	it("does not hide ordinary non-status notices that share an internal label", () => {
+		const state = new MessageTranslatorState()
+		const event = noticeEvent("input-token-count", { kind: "input_token_count" })
+		if (event.type !== "agent_event" || event.payload.event.type !== "notice") throw new Error("Invalid notice fixture")
+		event.payload.event.noticeType = "recovery"
+		const result = translateSessionEvent(event, state)
+		expect(result.messages).toEqual([expect.objectContaining({ say: "info", text: "input-token-count" })])
+	})
+
 	it("translates compaction status notices into a divider row updated in place", () => {
 		const state = new MessageTranslatorState()
 
@@ -2096,6 +2119,15 @@ describe("translateSessionEvent — agent_event notice", () => {
 		expect(started).toHaveLength(1)
 		expect(started[0].say).toBe("compaction")
 		expect(JSON.parse(started[0].text ?? "{}")).toMatchObject({ status: "started", mode: "auto" })
+
+		// Preflight and transport measurements must not produce chat rows or
+		// consume the in-flight compaction divider's identity.
+		for (let i = 0; i < 2; i++) {
+			expect(
+				translateSessionEvent(noticeEvent("input-token-count", { kind: "input_token_count", inputTokens: 40000 }), state)
+					.messages,
+			).toEqual([])
+		}
 
 		const completed = translateSessionEvent(
 			noticeEvent("auto-compacted", {

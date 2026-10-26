@@ -5,6 +5,8 @@ import { SdkCompactionCoordinator, type SdkCompactionCoordinatorOptions } from "
 
 vi.mock("@cline/core", () => ({
 	createContextCompactionPrepareTurn: vi.fn(),
+	applyLocalModelLimits: vi.fn(),
+	readGlobalSettings: () => ({}),
 	createSessionCompactionState: vi.fn((input: { compactedMessages: unknown[] }) => ({
 		version: 1,
 		messages: input.compactedMessages,
@@ -91,6 +93,9 @@ describe("SdkCompactionCoordinator", () => {
 		await coordinator.compactTask()
 
 		expect(mockCreateContextCompactionPrepareTurn).toHaveBeenCalledOnce()
+		expect(mockCreateContextCompactionPrepareTurn.mock.results[0].value).toHaveBeenCalledWith(
+			expect.objectContaining({ systemPrompt: "Coordinator active system prompt" }),
+		)
 		const rows = compactionRows(options)
 		expect(rows[0].info.status).toBe("started")
 		expect(rows[1].info.status).toBe("skipped")
@@ -400,6 +405,7 @@ function makeCoordinator(input: Partial<MakeCoordinatorInput> = {}) {
 		compaction: undefined,
 		logger: undefined,
 		telemetry: undefined,
+		systemPrompt: "Coordinator active system prompt",
 		sessionId: undefined as string | undefined,
 	}
 	const options = {

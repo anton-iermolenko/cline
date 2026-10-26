@@ -1285,7 +1285,7 @@ function asFiniteNumber(value: unknown): number | undefined {
  * sdk/packages/core/src/extensions/context/compaction.ts (the compaction phase
  * slugs are handled above via parseCompactionNoticeMetadata instead).
  */
-const INTERNAL_STATUS_NOTICES = new Set(["compaction-budget-adjusted"])
+const INTERNAL_STATUS_NOTICES = new Set(["compaction-budget-adjusted", "input-token-count"])
 
 /** Build the say:"compaction" divider message for a compaction status payload. */
 export function buildCompactionMessage(info: ClineCompactionInfo, ts: number): ClineMessage {
@@ -1926,7 +1926,7 @@ function translateAgentEvent(event: AgentEvent, state: MessageTranslatorState): 
 					messages.push(buildCompactionMessage(compaction, ts))
 					break
 				}
-				if (INTERNAL_STATUS_NOTICES.has(event.message ?? "")) {
+				if (event.metadata?.kind === "input_token_count" || INTERNAL_STATUS_NOTICES.has(event.message ?? "")) {
 					break
 				}
 			}

@@ -14,6 +14,7 @@ import type {
 	ModelToolExecution,
 	ModelToolName,
 	ProviderErrorClass,
+	RequestInputTokenCount,
 } from "@cline/shared";
 import {
 	type AiSdkFormatterMessage,
@@ -53,6 +54,7 @@ import {
 	isRetryableBeyondSdkRetries,
 } from "./error-classification";
 import { extractErrorMessage } from "./format";
+import { createInputTokenCountFetch } from "./input-token-count";
 import { createRetryEmptyResponseMiddleware } from "./middleware/retry-empty-response";
 import {
 	isAnthropicCompatibleModel,
@@ -2173,7 +2175,24 @@ function createAiSdkProvider(
 			// Multi-protocol HTTP gateways declare model adapters in models.dev.
 			// Keep native and local CLI transports authoritative for their models.
 			const kind = resolveModelProviderKind(defaultKind, context);
-			const log = context.logger;
+			const countEndpoint = context.model.metadata?.inputTokenCountUrl;
+			if (request.inputTokenCountOnly && typeof countEndpoint !== "string") {
+				yield { type: "finish", reason: "stop" };
+				return;
+			}
+			let measuredInput: RequestInputTokenCount | undefined;
+			const countingFetch =
+				typeof countEndpoint === "string"
+					? createInputTokenCountFetch(
+							config.fetch ?? globalThis.fetch,
+							countEndpoint,
+							request.inputTokenCountOnly === true,
+							(count) => {
+								measuredInput = count;
+							},
+						)
+					: config.fetch;
+			const log = request.inputTokenCountOnly ? undefined : context.logger;
 			let stream: AiSdkStreamResult | undefined;
 			const capturedError: { current: CapturedStreamError | undefined } = {
 				current: undefined,
@@ -2248,7 +2267,9 @@ function createAiSdkProvider(
 					{
 						...config,
 						fetch: wrapFetchForStickySession(
-							wrapFetchForProviderRequestCapture(config.fetch, request),
+							request.inputTokenCountOnly
+								? countingFetch
+								: wrapFetchForProviderRequestCapture(countingFetch, request),
 							request,
 							context,
 						),
@@ -2370,7 +2391,9 @@ function createAiSdkProvider(
 					return;
 				}
 				const streamTelemetry = createStreamErrorTelemetry(
-					await resolveGatewayAiSdkTelemetry(config.providerId, request),
+					request.inputTokenCountOnly
+						? { isEnabled: false }
+						: await resolveGatewayAiSdkTelemetry(config.providerId, request),
 				);
 				const aiSdkTelemetry = streamTelemetry.telemetry;
 				recordTraceError = streamTelemetry.recordError;
@@ -2436,14 +2459,18 @@ function createAiSdkProvider(
 						streamText({
 							model: withEmptyResponseRetry(
 								provider.operations.language(context.model.id),
-								provider.retryEmptyResponses,
+								request.inputTokenCountOnly
+									? false
+									: provider.retryEmptyResponses,
 								context.logger,
 							) as never,
 							messages: messages as never,
 							...(useSystemOption ? { system: systemPrompt } : {}),
 							...(tools ? { tools } : {}),
 							abortSignal: request.signal,
-							maxRetries: MODEL_REQUEST_MAX_RETRIES,
+							maxRetries: request.inputTokenCountOnly
+								? 0
+								: MODEL_REQUEST_MAX_RETRIES,
 							experimental_repairToolCall: repairMalformedToolCall as never,
 							telemetry: {
 								...aiSdkTelemetry,
@@ -2497,7 +2524,8 @@ function createAiSdkProvider(
 				// upfront or Bun/Node will surface them as unhandled rejections.
 				suppressDanglingStreamPromises(stream);
 
-				yield* emitAiSdkEvents(
+				let emittedCount = false;
+				for await (const event of emitAiSdkEvents(
 					stream,
 					modelToolRequest,
 					context,
@@ -2505,7 +2533,14 @@ function createAiSdkProvider(
 					capturedError,
 					modelToolAdapters,
 					reportError,
-				);
+				)) {
+					if (measuredInput && !emittedCount) {
+						emittedCount = true;
+						yield { type: "input-token-count", measurement: measuredInput };
+					}
+					if (!request.inputTokenCountOnly || event.type === "finish")
+						yield event;
+				}
 			} catch (error) {
 				suppressDanglingStreamPromises(stream);
 				// Prefer the real provider error captured in onError over the generic

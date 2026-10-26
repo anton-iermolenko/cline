@@ -64,6 +64,20 @@ export const GlobalSettingsSchema = z
 		autoUpdateEnabled: z.boolean().default(true).catch(true),
 		compactionStrategy: GlobalCompactionStrategySchema.optional(),
 		compactionEnabled: z.boolean().optional().catch(undefined),
+		compaction: z
+			.object({
+				maxTargetTokens: z.number().int().positive().optional(),
+				targetTokens: z.number().int().positive().optional(),
+			})
+			.refine(
+				(budget) =>
+					budget.maxTargetTokens === undefined ||
+					budget.targetTokens === undefined ||
+					budget.targetTokens <= budget.maxTargetTokens,
+				"Compaction target must not exceed its maximum",
+			)
+			.optional()
+			.catch(undefined),
 		planActMode: GlobalPlanActModeSchema.optional().catch(undefined),
 		toolAutoApprove: z.boolean().optional().catch(undefined),
 		tuiTheme: z.string().optional().catch(undefined),
@@ -79,6 +93,7 @@ export const GlobalSettingsSchema = z
 			autoUpdateEnabled: boolean;
 			compactionStrategy?: GlobalCompactionStrategy;
 			compactionEnabled?: boolean;
+			compaction?: { maxTargetTokens?: number; targetTokens?: number };
 			planActMode?: GlobalPlanActMode;
 			toolAutoApprove?: boolean;
 			tuiTheme?: string;
@@ -96,6 +111,7 @@ export const GlobalSettingsSchema = z
 		if (settings.compactionEnabled !== undefined) {
 			normalized.compactionEnabled = settings.compactionEnabled;
 		}
+		if (settings.compaction) normalized.compaction = settings.compaction;
 		if (settings.planActMode) {
 			normalized.planActMode = settings.planActMode;
 		}
@@ -145,6 +161,7 @@ function invalidateSettingsCache(): void {
 }
 
 function freezeSettings(value: GlobalSettings): GlobalSettings {
+	if (value.compaction) Object.freeze(value.compaction);
 	if (value.disabledTools) {
 		Object.freeze(value.disabledTools);
 	}

@@ -4,6 +4,7 @@ import {
 	type MessageWithMetadata,
 } from "@cline/shared";
 import { z } from "zod";
+import { attachContextMemory } from "../services/context-recovery";
 
 function isMessageWithMetadata(value: unknown): value is MessageWithMetadata {
 	if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -158,7 +159,10 @@ export function createSessionCompactionState(input: {
 		...(sourceLastMessageKey
 			? { source_last_message_key: sourceLastMessageKey }
 			: {}),
-		messages: cloneMessages(input.compactedMessages),
+		messages: attachContextMemory(
+			cloneMessages(input.compactedMessages),
+			sourceMessages,
+		),
 		...(input.systemPrompt !== undefined
 			? { system_prompt: input.systemPrompt }
 			: {}),
@@ -191,10 +195,60 @@ export function projectSessionCompactionState(
 		return undefined;
 	}
 
+	const compactedMessages = cloneMessages(state.messages);
+	// Older sidecars predate context memory. Reconstruct their immutable
+	// snapshot from the validated covered prefix, never from the live tail.
+	const snapshotMessages = compactedMessages.some(
+		(message) => message.metadata?.contextMemory !== undefined,
+	)
+		? compactedMessages
+		: attachContextMemory(
+				compactedMessages,
+				sourceMessages.slice(0, state.source_message_count),
+			);
 	return [
-		...cloneMessages(state.messages),
+		...snapshotMessages,
 		...cloneMessages(sourceMessages.slice(state.source_message_count)),
 	];
+}
+
+/** Copy a validated summary while keeping the unchanged canonical tail outside
+ * its protected boundary. Older copies anchored that tail as if summarized;
+ * peel it back only after validating the complete original anchor. */
+export function deriveSessionCompactionState(input: {
+	state: SessionCompactionState;
+	sourceMessages: readonly MessageWithMetadata[];
+	targetMessages?: readonly MessageWithMetadata[];
+	conversationId?: string;
+}): SessionCompactionState | undefined {
+	const { state } = input;
+	if (!projectSessionCompactionState(state, input.sourceMessages)) {
+		return undefined;
+	}
+	const source = canonicalSourceMessages(input.sourceMessages);
+	let boundary = state.source_message_count;
+	let workingCount = state.messages.length;
+	while (
+		boundary > 0 &&
+		workingCount > 0 &&
+		JSON.stringify(sourceMessageHashInput(source[boundary - 1]!)) ===
+			JSON.stringify(sourceMessageHashInput(state.messages[workingCount - 1]!))
+	) {
+		boundary--;
+		workingCount--;
+	}
+	const derived = createSessionCompactionState({
+		sourceMessages: source.slice(0, boundary),
+		compactedMessages: state.messages.slice(0, workingCount),
+		conversationId: input.conversationId,
+		systemPrompt: state.system_prompt,
+	});
+	return projectSessionCompactionState(
+		derived,
+		input.targetMessages ?? input.sourceMessages,
+	)
+		? derived
+		: undefined;
 }
 
 export function parseSessionCompactionState(

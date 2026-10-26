@@ -1,13 +1,14 @@
-import type { ModelInfo, ToolResultContent } from "@cline/llms";
+import type { ToolResultContent } from "@cline/llms";
 import {
 	CHARS_PER_TOKEN,
 	createImageAwareReplacer,
 	ESTIMATED_TOKENS_PER_IMAGE,
 	estimateTokens,
 	type MessageWithMetadata,
+	resolveEffectiveMaxInputTokens,
 } from "@cline/shared";
 
-export { CHARS_PER_TOKEN, estimateTokens };
+export { CHARS_PER_TOKEN, estimateTokens, resolveEffectiveMaxInputTokens };
 
 import type { CoreCompactionSummarizerConfig } from "../../types/config";
 import type { ProviderConfig } from "../../types/provider-settings";
@@ -57,32 +58,6 @@ function isPositiveFiniteNumber(value: unknown): value is number {
 	return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
-/**
- * Resolve the model's usable prompt budget. A reported input limit is
- * authoritative but cannot exceed the context window. When the model only
- * reports a context window, retain a conservative margin for request overhead.
- */
-export function resolveEffectiveMaxInputTokens(
-	input: Pick<ModelInfo, "maxInputTokens" | "contextWindow">,
-): number | undefined {
-	const contextWindow = isPositiveFiniteNumber(input.contextWindow)
-		? input.contextWindow
-		: undefined;
-	const maxInputTokens = isPositiveFiniteNumber(input.maxInputTokens)
-		? input.maxInputTokens
-		: undefined;
-
-	if (maxInputTokens !== undefined) {
-		return contextWindow === undefined
-			? maxInputTokens
-			: Math.min(maxInputTokens, contextWindow);
-	}
-
-	return contextWindow === undefined
-		? undefined
-		: contextWindow * CONTEXT_WINDOW_INPUT_RATIO;
-}
-
 export function truncateText(text: string, limit: number): string {
 	if (text.length <= limit) {
 		return text;
@@ -93,43 +68,115 @@ export function truncateText(text: string, limit: number): string {
 export function flattenToolResultContent(
 	content: ToolResultContent["content"],
 ): string {
-	const truncated = truncateToolResultContentForCompaction(content);
-	if (typeof truncated === "string") {
-		return truncated;
-	}
-	return truncated
-		.map((block) => {
-			switch (block.type) {
-				case "text":
-					return block.text;
-				case "file":
-					return `<file path="${block.path}">\n${block.content}\n</file>`;
-				case "image":
-					return `[image:${block.mediaType}]`;
-				default:
-					return "";
+	return compactEvidenceText(
+		normalizeToolResultText(content),
+		TOOL_RESULT_CHAR_LIMIT,
+	);
+}
+
+/** Tool results may be MCP blocks, JSON strings, or built-in result records. */
+export function normalizeToolResultText(value: unknown, depth = 0): string {
+	if (typeof value === "string") {
+		if (depth < 6 && /^[\s]*[[{]/.test(value)) {
+			try {
+				return normalizeToolResultText(JSON.parse(value), depth + 1);
+			} catch {
+				/* Plain text. */
 			}
-		})
-		.join("\n");
+		}
+		return value;
+	}
+	if (Array.isArray(value))
+		return value
+			.map((item) => normalizeToolResultText(item, depth + 1))
+			.join("\n");
+	if (value && typeof value === "object") {
+		const record = value as Record<string, unknown>;
+		if (record.type === "image")
+			return `[image:${record.mediaType ?? "unknown"}]`;
+		if (record.type === "text" && typeof record.text === "string")
+			return normalizeToolResultText(record.text, depth + 1);
+		if (record.type === "file")
+			return `<file path="${record.path}">\n${String(record.content ?? "")}\n</file>`;
+		if ("result" in record)
+			return `${typeof record.query === "string" ? `${record.query}\n` : ""}${record.success === false ? "[failed]\n" : ""}${normalizeToolResultText(record.result, depth + 1)}`;
+		if (depth < 6 && "content" in record && !Array.isArray(record.content))
+			return normalizeToolResultText(record.content, depth + 1);
+		if (depth < 6 && Array.isArray(record.content))
+			return normalizeToolResultText(record.content, depth + 1);
+		try {
+			return JSON.stringify(record);
+		} catch {
+			return "[unserializable tool result]";
+		}
+	}
+	return value === undefined ? "" : String(value);
+}
+
+/** Keep terminal errors/exit markers as well as the beginning of bounded logs. */
+export function compactEvidenceText(text: string, limit: number): string {
+	if (text.length <= limit) return text;
+	const markers = [
+		...new Set(
+			text.match(
+				/\b[A-Z][A-Z_]*EXIT[A-Z_]*\s*[=:]\s*-?\d+|\b\d+\s+(?:pass|fail)\b|\berror TS\d+[^\n]{0,180}/g,
+			) ?? [],
+		),
+	]
+		.slice(-8)
+		.join("\n")
+		.slice(0, Math.max(0, Math.floor(limit / 3)));
+	const available = Math.max(0, limit - markers.length),
+		head = Math.ceil(available / 2),
+		tail = Math.floor(available / 2);
+	return `${text.slice(0, head)}\n...[truncated ${text.length - available} chars]\n${text.slice(text.length - tail)}${markers ? `\nKey results:\n${markers}` : ""}`;
+}
+
+function toolResultStatus(value: unknown, depth = 0): boolean | undefined {
+	if (depth > 6) return undefined;
+	if (typeof value === "string") {
+		try {
+			return toolResultStatus(JSON.parse(value), depth + 1);
+		} catch {
+			return undefined;
+		}
+	}
+	if (Array.isArray(value)) {
+		const states = value.map((item) => toolResultStatus(item, depth + 1));
+		return states.includes(false)
+			? false
+			: states.includes(true)
+				? true
+				: undefined;
+	}
+	if (!value || typeof value !== "object") return undefined;
+	const record = value as Record<string, unknown>;
+	if (typeof record.success === "boolean") return record.success;
+	if (typeof record.isError === "boolean") return !record.isError;
+	if (record.type === "text") return toolResultStatus(record.text, depth + 1);
+	if ("content" in record) return toolResultStatus(record.content, depth + 1);
+	if ("result" in record) return toolResultStatus(record.result, depth + 1);
+	if (typeof record.error === "string" && record.error.length > 0) return false;
+	return undefined;
 }
 
 export function truncateToolResultContentForCompaction(
 	content: ToolResultContent["content"],
 ): ToolResultContent["content"] {
 	if (typeof content === "string") {
-		return truncateText(content, TOOL_RESULT_CHAR_LIMIT);
+		return compactEvidenceText(content, TOOL_RESULT_CHAR_LIMIT);
 	}
 	return content.map((block) => {
 		switch (block.type) {
 			case "text":
 				return {
 					...block,
-					text: truncateText(block.text, TOOL_RESULT_CHAR_LIMIT),
+					text: compactEvidenceText(block.text, TOOL_RESULT_CHAR_LIMIT),
 				};
 			case "file":
 				return {
 					...block,
-					content: truncateText(block.content, FILE_CONTENT_CHAR_LIMIT),
+					content: compactEvidenceText(block.content, FILE_CONTENT_CHAR_LIMIT),
 				};
 			case "image":
 				return block;
@@ -158,10 +205,9 @@ export function serializeMessage(message: MessageWithMetadata): string {
 				);
 				break;
 			case "thinking":
-				lines.push(`[Bot thinking]: ${truncateText(block.thinking, 2_000)}`);
-				break;
 			case "redacted_thinking":
-				lines.push("[Bot thinking]: [redacted]");
+				// Old scratch reasoning is not execution evidence. Preserve visible
+				// conclusions and tool outcomes instead of reviving superseded plans.
 				break;
 			case "tool_use":
 				lines.push(
@@ -209,7 +255,13 @@ export function createTokenEstimator(): EstimateMessageTokens {
 		// finished; see the matching comment in estimateRequestInputTokens.
 		let images = 0;
 		try {
-			serialized = JSON.stringify(message, replacer);
+			serialized = JSON.stringify(
+				{
+					role: message.role,
+					content: message.content,
+				},
+				replacer,
+			);
 			images = imageCount();
 		} catch {
 			serialized = serializeMessage(message);
@@ -285,9 +337,20 @@ export function isToolResultOnlyUserMessage(
 export function isTurnStartMessage(message: MessageWithMetadata): boolean {
 	return (
 		message.role === "user" &&
-		message.metadata?.userRunSpan !== 0 &&
 		!isToolResultOnlyUserMessage(message) &&
-		!isCompactionSummaryMessage(message)
+		!isCompactionSummaryMessage(message) &&
+		(message.metadata?.userRunSpan !== 0 ||
+			message.metadata?.humanInput === true ||
+			// Recover human steering saved before provenance was recorded.
+			(message.metadata?.kind === undefined &&
+				(Array.isArray(message.content)
+					? message.content
+					: [{ type: "text", text: message.content }]
+				).some(
+					(block) =>
+						block.type === "text" &&
+						/^\s*<user_input\b[^>]*>[\s\S]*<\/user_input>\s*$/.test(block.text),
+				)))
 	);
 }
 
@@ -368,19 +431,35 @@ export function findCutIndex(
 		return 0;
 	}
 
-	// Never summarize away the latest typed user prompt: when one exists
-	// past index 0, the cut stays at or before it so that whole turn
-	// survives verbatim. Transcripts without a later typed turn (a single
-	// task followed by one long tool loop, or a projection that starts
-	// with a compaction summary) still cut at the token-budget candidate.
-	const lastTurnStartIndex = findLastTurnStartIndex(messages);
-	let cut =
-		lastTurnStartIndex > 0
-			? Math.min(candidate, lastTurnStartIndex)
-			: candidate;
+	// Completed work inside the active turn is compactable. The caller
+	// reinserts its human instructions verbatim, independently of the tail.
+	let cut = candidate;
 	while (cut > 0 && !isSafeCutBoundary(messages[cut])) {
 		cut -= 1;
 	}
+	const calls = new Map<string, number>();
+	const spans: { start: number; end: number }[] = [];
+	for (let index = 0; index < messages.length; index += 1) {
+		const content = messages[index].content;
+		if (!Array.isArray(content)) continue;
+		for (const block of content) {
+			if (block.type === "tool_use") calls.set(block.id, index);
+			if (block.type === "tool_result") {
+				const owner = calls.get(block.tool_use_id);
+				if (owner !== undefined) spans.push({ start: owner, end: index });
+				calls.delete(block.tool_use_id);
+			}
+		}
+	}
+	// Repeat because moving a boundary can expose an interleaved pair.
+	for (const index of calls.values())
+		spans.push({ start: index, end: messages.length });
+	let previous: number;
+	do {
+		previous = cut;
+		for (const span of spans)
+			if (span.start < cut && span.end >= cut) cut = span.start;
+	} while (cut < previous);
 	return cut;
 }
 
@@ -457,15 +536,15 @@ export function extractFileOps(
 				continue;
 			}
 			const paths = collectPaths(block.input);
-			if (block.name === "read_files") {
+			if ((block.name.split("__").at(-1) ?? block.name) === "read_files") {
 				readFiles = mergeUnique(readFiles, paths);
-				continue;
-			}
-			if (block.name === "editor" || block.name === "apply_patch") {
-				modifiedFiles = mergeUnique(modifiedFiles, paths);
 			}
 		}
 	}
+	modifiedFiles = mergeUnique(
+		modifiedFiles,
+		summarizeToolActivity(messages).editedFiles,
+	);
 	return { readFiles, modifiedFiles };
 }
 
@@ -481,13 +560,18 @@ export interface ToolActivitySummary {
 	readFiles: string[];
 	editedFiles: string[];
 	commands: string[];
+	/** Durable, bounded execution facts rather than a list of attempted calls. */
+	changes?: string[];
+	outcomes?: string[];
 }
 
 export function hasToolActivity(summary: ToolActivitySummary): boolean {
 	return (
 		summary.readFiles.length > 0 ||
 		summary.editedFiles.length > 0 ||
-		summary.commands.length > 0
+		summary.commands.length > 0 ||
+		(summary.changes?.length ?? 0) > 0 ||
+		(summary.outcomes?.length ?? 0) > 0
 	);
 }
 
@@ -574,14 +658,37 @@ export function summarizeToolActivity(
 	const editedFiles: string[] = [];
 	const commands: string[] = [];
 	const editorPathsByToolUseId = new Map<string, string>();
+	const callsById = new Map<
+		string,
+		{ name: string; input: Record<string, unknown> }
+	>();
+	const changes: string[] = [],
+		outcomes: string[] = [];
 	for (const message of messages) {
+		const prior = message.metadata?.executionState as
+			| ToolActivitySummary
+			| undefined;
+		if (prior) {
+			for (const [destination, entries] of [
+				[readFiles, prior.readFiles],
+				[editedFiles, prior.editedFiles],
+				[commands, prior.commands],
+				[changes, prior.changes],
+				[outcomes, prior.outcomes],
+			] as const) {
+				for (const entry of Array.isArray(entries) ? entries : [])
+					if (typeof entry === "string") pushUniqueEntry(destination, entry);
+			}
+		}
 		if (!Array.isArray(message.content)) {
 			continue;
 		}
 		for (const block of message.content) {
 			if (block.type === "tool_use") {
 				const input = (block.input ?? {}) as Record<string, unknown>;
-				if (block.name === "read_files") {
+				const name = block.name.split("__").at(-1) ?? block.name;
+				callsById.set(block.id, { name: block.name, input });
+				if (name === "read_files") {
 					if (Array.isArray(input.files)) {
 						for (const file of input.files) {
 							if (file && typeof file === "object") {
@@ -600,14 +707,14 @@ export function summarizeToolActivity(
 					}
 					continue;
 				}
-				if (block.name === "editor" || block.name === "apply_patch") {
+				if (name === "editor" || name === "apply_patch") {
 					const path = collectPaths(input)[0];
 					if (path) {
 						editorPathsByToolUseId.set(block.id, path);
 					}
 					continue;
 				}
-				if (block.name === "run_commands") {
+				if (name === "run_commands") {
 					const commandList = Array.isArray(input.commands)
 						? input.commands
 						: [];
@@ -623,33 +730,81 @@ export function summarizeToolActivity(
 				continue;
 			}
 			if (block.type === "tool_result") {
+				const call = callsById.get(block.tool_use_id);
+				const text = normalizeToolResultText(block.content);
+				const status = toolResultStatus(block.content);
+				const failed =
+					block.is_error === true ||
+					status === false ||
+					(status === undefined &&
+						/\[failed\]|\[Command exited with code [1-9]/.test(text));
+				if (
+					call &&
+					(failed ||
+						/(?:EXIT|exit(?: code)?)[_A-Z]*\s*[=:]\s*-?\d|\b(?:pass|fail|error TS|installed|saved|completed)\b/i.test(
+							text,
+						))
+				) {
+					pushUniqueEntry(
+						outcomes,
+						`${call.name}${failed ? " failed" : " result"}: ${compactEvidenceText(text, 500)}`,
+					);
+				}
 				const path = editorPathsByToolUseId.get(block.tool_use_id);
 				if (!path) {
 					continue;
 				}
-				const range = extractDiffLineRange(block.content);
-				pushUniqueEntry(
-					editedFiles,
-					range ? `${path}:${range.start}-${range.end}` : path,
-				);
+				if (!failed) {
+					const range = extractDiffLineRange(block.content);
+					pushUniqueEntry(
+						editedFiles,
+						range ? `${path}:${range.start}-${range.end}` : path,
+					);
+					const replacement =
+						call?.input.new_text ?? call?.input.content ?? call?.input.patch;
+					pushUniqueEntry(
+						changes,
+						`${path}: ${String(call?.input.operation ?? "edit")} confirmed${typeof replacement === "string" ? `; ${compactEvidenceText(replacement, 300)}` : `; ${compactEvidenceText(text, 300)}`}`,
+					);
+				}
 				editorPathsByToolUseId.delete(block.tool_use_id);
 			}
 		}
 	}
-	// Editor calls whose results fell outside the span still count as edits.
+	// An absent result is pending work, not a confirmed saved edit.
 	for (const path of editorPathsByToolUseId.values()) {
-		pushUniqueEntry(editedFiles, path);
+		pushUniqueEntry(
+			outcomes,
+			`${path}: edit requested; result not present, verify before assuming it was saved.`,
+		);
 	}
-	return { readFiles, editedFiles, commands };
+	return {
+		readFiles,
+		editedFiles,
+		commands,
+		changes: changes.slice(-24),
+		outcomes: outcomes.slice(-24),
+	};
 }
 
 export function formatToolActivitySummary(
 	summary: ToolActivitySummary,
+	evidenceCharLimit = 8_000,
 ): string {
 	return [
 		`Files read:\n${summary.readFiles.join("\n")}`,
 		`Files edited:\n${summary.editedFiles.join("\n")}`,
 		`Commands ran:\n${summary.commands.join("\n")}`,
+		...(summary.changes?.length
+			? [
+					`Confirmed changes (may still need committing):\n${compactEvidenceText(summary.changes.join("\n"), Math.max(128, Math.floor(evidenceCharLimit / 2)))}`,
+				]
+			: []),
+		...(summary.outcomes?.length
+			? [
+					`Verification and failures:\n${compactEvidenceText(summary.outcomes.join("\n"), Math.max(128, Math.floor(evidenceCharLimit / 2)))}`,
+				]
+			: []),
 	].join("\n\n");
 }
 
@@ -681,21 +836,22 @@ export function buildSummaryRequest(options: {
 	fileOps: FileOperationSummary;
 }): string {
 	const parts: string[] = [
-		`Summarize this session for continuation. Be concise and factual.
+		`Summarize this SAME session for continuation. Be concise and factual. Latest observed tool outcomes and human corrections override earlier plans, claims and summaries.
 
 ## Goal
-One sentence: what is being built or fixed.
+Current objective and scope.
 
 ## State
-- Done: completed steps
-- In Progress: current work
-- Blocked: blockers or open questions
+Done / In Progress / Blocked. Preserve saved edits, intentional uncommitted changes, exact check results and exit codes. Completed work stays completed unless later evidence invalidates it. Reconcile the old summary with the newest results.
+
+## Constraints and corrections
+Preserve applicable human requirements, exact paths, pending approvals/questions, active job IDs/revisions, and failed approaches with outcomes. Distinguish observations, verified facts and hypotheses. Keep verified API contracts with source sections/ranges; prior reads may be missing or truncated. This internal summary request is not a human request or a new conversation.
 
 ## Highlights
-Key technical choices or notable findings (omit if none).
+Key choices and confirmed findings; omit if none.
 
 ## Next
-Immediate next steps.
+Only actual unfinished work. If edits and relevant checks succeeded, delivery is next. Do not add rediscovery, context recovery or repeat checks of unchanged state. Check running work before retrying it.
 
 ## Files
 Read: ${options.fileOps.readFiles.join(", ") || "none"}

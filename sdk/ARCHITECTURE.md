@@ -469,6 +469,7 @@ Design implication:
 - transport-specific translation belongs inside concrete hosts, not in top-level orchestration
 - `RuntimeHost` inputs stay transport-safe, while `ClineCore.start(...)` is the app-facing facade that normalizes broad local config before delegation
 - `RuntimeSessionConfig` is transport-neutral across local, shared hub, and remote hub modes; host-local bootstrap concerns stay under `localRuntime`
+- session-start normalization preserves compaction `targetTokens` and `maxTargetTokens` across the runtime-host transport, so local and hub execution use the same configured budget; custom compactor functions stay under `localRuntime`
 - client-local runtime behaviors that must survive hub mode, such as `defaultToolExecutors`, are attached at session start and proxied through hub capability requests instead of changing host selection
 - pending prompt list/update/delete are exposed through the grouped
   `ClineCore.pendingPrompts` service. Usage summary lookup and active-session
@@ -1244,3 +1245,62 @@ session’s tool approval policies or approval callback, matching generic subage
 and teammates. The parent’s `subagent_<name>` delegation call still follows the
 parent’s approval policy. Tool allowlists and disabled-tool filtering remain in
 effect when constructing child tools. Inherited runtime hooks are unchanged.
+
+## Local measured input budgeting
+
+Core merges local model limits/pricing through the shared provider registry. Providers with `ModelInfo.metadata.inputTokenCountUrl` can count a candidate through the real AI SDK serializer using `AgentModel.countInputTokens`. Count-only transports never submit inference or execute tools. The native local adapter counts its normalized body with llama-server's `/v1/chat/completions/input_tokens`, verifies running capacity, and guards final submission.
+
+Core recounts compaction candidates using an independent message-builder preview before committing a sidecar. Tokenized input uses a configurable fixed compaction buffer (2048 by default), separate from completion reservation and server boundary slack. Estimated providers retain their existing percentage trigger. `input-token-count` is observational status, not provider usage or cost. Doctor reports the installed SDK fingerprint and running hub fingerprint because daemon code can differ from the client even at the same semver.
+
+## Compaction state during checkpoint restore
+
+Checkpoint restore reads the source compaction artifact in the shared SessionVersioningService, validates it against the checkpoint-trimmed canonical prefix, and reanchors the projected summary plus retained tail for the new session. Both local and hub restore paths carry this state unless an explicit initial state was provided. A checkpoint earlier than the covered prefix, or an edited prefix, discards that artifact rather than leaking later context; workspace-only restore does not load it.
+
+Compaction state copies validate the original canonical anchor, move an identical retained suffix outside the summarized prefix, and validate that prefix against the restore target. Checkpoint Undo can remove or replace unsummarized tail messages without discarding the summary. Restores preceding summarized content still reject that state. CLI restart and fork use the same core derivation so later Undo retains this boundary.
+
+When a restored or forked session has no compaction sidecar, core state reads and resume follow recorded ancestors (bounded to 32 with cycle protection). A recovered state must validate against the ancestor transcript and the target summarized prefix, and is rebound to the target owner. Own sidecars remain authoritative; recovery reads do not rewrite canonical history. Checkpoint restoration persists inherited state in the new session.
+
+Measured compaction accepts a candidate only when the complete prepared request reaches its preferred target or an allowed continuity ceiling, stays within the live hard allowance, shrinks the original input, and preserves the latest typed user request verbatim. Basic compaction emits dropped-work notes separately from that protected request and does not merge it into older user turns. Bounded fallback retries reproject the original transcript, enforce the smaller projection budget for old prompts, and shorten embedded earlier assistant responses with that budget; rejected candidates report the measured target, candidate count, and rejection reason without changing saved history. A lone protected request below the hard allowance may skip without claiming compaction succeeded.
+
+
+## Task execution context during compaction
+
+Human input delivered during an active run carries explicit `humanInput` provenance independently of `userRunSpan` turn accounting. Core compaction protects these instructions, including legacy CLI user-input wrappers, while internal notices remain eligible for summarization. Semantic compaction can summarize completed work inside the active turn and reinserts the latest human instruction verbatim; unresolved and interleaved tool pairs stay together.
+
+Tool-result serialization accepts built-in structured results and MCP payloads and retains bounded head/tail evidence. Basic fallback persists a bounded execution-state record of confirmed edits, validation outcomes, pending edits, and failures across repeated folds. Namespaced MCP editors are recognized and failed writes are not recorded as saved changes. A measured semantic checkpoint may miss the preferred shrink target if it retains enough growth headroom; hard admission and manual targets remain binding. Output-limit recovery measures the previously prepared request after host hooks and preserves history when input headroom is available.
+
+Automatic compaction budgets are configuration, not trigger changes. SDK `CoreCompactionConfig.targetTokens` specifies the preferred complete-request size after compaction; `maxTargetTokens` sets its moving upper bound. The CLI reads both from the optional `compaction` object in `data/settings/global-settings.json`. Omitted fields retain the existing model-derived defaults. Positive integers are required and the preferred target must not exceed the maximum. The measured automatic path may accept a larger continuity-preserving candidate up to the configured ceiling, additionally bounded below the existing trigger and hard input allowance by two output budgets (or the compaction buffer, whichever is larger). The next compaction again starts with the preferred target; effective retained size can move within those bounds. Manual targets and overflow recovery remain strict. Changes apply when a CLI session starts or resumes.
+
+
+## Compaction provenance and source recovery
+
+Canonical messages remain the full-fidelity record. A compaction sidecar stores a bounded
+human-input ledger and source index as metadata on its first summary message. Original
+requests, later steering, and answers to the built-in clarification tool have explicit
+provenance; internal summaries are never counted as human requests. Checkpoint inheritance
+rebuilds this metadata from the validated canonical prefix so Undo cannot retain future
+instructions.
+
+The final MessageBuilder projection embeds a continuity brief of at most 2,400 UTF-8
+bytes in the existing compaction summary. It identifies condensed context as the same
+conversation and reminds the model to continue remaining work. It never appends a
+synthetic user turn after tool results. The full human-input ledger and source index
+remain in metadata, with only two recent human excerpts in the brief. Native input-token
+counting uses the same projection. The brief reserves text budget before evidence
+trimming; rebuilding a request does not accumulate notices or mutate canonical history.
+
+The existing read_files tool accepts cline://history/user-inputs.txt and
+cline://history/evidence.txt with ordinary line ranges. Their callback is bound to the
+current runtime conversation, including after restore. Human inputs use reversible JSON
+string chunks; source references include prior read ranges and result hashes without
+claiming those details are currently visible or requesting a reread. No cross-session
+history lookup or new tool schema is introduced.
+
+Stale-read pruning requires a later complete replacement, never an older whole-file read
+that happens to share the same path. A truncated replacement or aggregate text pressure
+cannot invalidate an earlier retained section. Rewrites still batch to preserve provider
+prefix caches and clear when a conversation is restored.
+
+### Continuation efficiency
+
+Provider preparation embeds a bounded continuity brief in the existing compaction summary, without adding a user turn after tool results. Canonical human inputs and source references remain session-scoped, paged on demand. Compaction serialization omits old scratch reasoning; summary instructions reconcile completed edits and verification against the latest observed results. Text reads budget their JSON-escaped page before execution returns, leaving room for the tool envelope and an explicit next-line cursor. The per-session safety tracker also observes a bounded window of read-only outcomes, warning and stopping repeated unchanged inspections across alternating calls; possible mutations, errors and unknown commands reset that window.

@@ -601,6 +601,12 @@ export interface AgentPrepareTurnContext {
 	parentAgentId: string | null;
 	iteration: number;
 	messages: MessageWithMetadata[];
+	/** Pure candidate preparation and provider token counting supplied by the host. */
+	countRequestInputTokens?: (
+		messages: MessageWithMetadata[],
+		systemPrompt?: string,
+	) => Promise<import("../agent").RequestInputTokenCount | undefined>;
+
 	apiMessages: MessageWithMetadata[];
 	abortSignal: AbortSignal;
 	systemPrompt: string;

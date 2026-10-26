@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	createSessionCompactionState,
+	deriveSessionCompactionState,
 	parseSessionCompactionState,
 	projectSessionCompactionState,
 } from "./session-compaction";
@@ -317,5 +318,148 @@ describe("display-only history and compaction", () => {
 		expect(
 			projectSessionCompactionState(state, [...history, error, tail]),
 		).toEqual([...summary, tail]);
+	});
+});
+
+describe("compaction state copy boundaries", () => {
+	const source = [
+		{ role: "user" as const, content: "first task" },
+		{ role: "assistant" as const, content: "first answer" },
+		{ role: "user" as const, content: "second task" },
+		{ role: "assistant" as const, content: "second answer" },
+	];
+	const summary = {
+		role: "user" as const,
+		content: "first task summary",
+		metadata: { kind: "compaction_summary" },
+	};
+	const recoveredSummary = {
+		...summary,
+		metadata: {
+			...summary.metadata,
+			contextMemory: expect.objectContaining({
+				inputs: [expect.objectContaining({ text: "first task" })],
+			}),
+		},
+	};
+	const oldCopy = createSessionCompactionState({
+		sourceMessages: source,
+		compactedMessages: [summary, ...source.slice(2)],
+		conversationId: "old",
+	});
+	it("recovers an older inflated anchor before Undo and repost", () => {
+		const undo = source.slice(0, 2);
+		const carried = deriveSessionCompactionState({
+			state: oldCopy,
+			sourceMessages: source,
+			targetMessages: undo,
+		});
+		expect(carried?.source_message_count).toBe(2);
+		expect(carried?.conversation_id).toBeUndefined();
+		expect(projectSessionCompactionState(carried!, undo)).toEqual([
+			recoveredSummary,
+		]);
+		const repost = [...undo, { ...source[2]!, content: "reposted task" }];
+		expect(projectSessionCompactionState(carried!, repost)).toEqual([
+			recoveredSummary,
+			repost[2],
+		]);
+		const copied = deriveSessionCompactionState({
+			state: carried!,
+			sourceMessages: repost,
+		});
+		expect(copied?.source_message_count).toBe(2);
+		expect(projectSessionCompactionState(copied!, undo)).toEqual([
+			recoveredSummary,
+		]);
+	});
+	it("keeps copy boundaries independent of later canonical messages", () => {
+		const state = createSessionCompactionState({
+			sourceMessages: source.slice(0, 2),
+			compactedMessages: [summary],
+		});
+		const copied = deriveSessionCompactionState({
+			state,
+			sourceMessages: source,
+		});
+		expect(copied?.source_message_count).toBe(2);
+		expect(projectSessionCompactionState(copied!, source)).toEqual([
+			recoveredSummary,
+			...source.slice(2),
+		]);
+	});
+	it("rejects an edited original anchor before peeling its tail", () => {
+		expect(
+			deriveSessionCompactionState({
+				state: oldCopy,
+				sourceMessages: [
+					source[0]!,
+					{ ...source[1]!, content: "edited" },
+					...source.slice(2),
+				],
+				targetMessages: source.slice(0, 2),
+			}),
+		).toBeUndefined();
+	});
+	it("rejects Undo into history represented only by the summary", () => {
+		expect(
+			deriveSessionCompactionState({
+				state: oldCopy,
+				sourceMessages: source,
+				targetMessages: source.slice(0, 1),
+			}),
+		).toBeUndefined();
+		const future = createSessionCompactionState({
+			sourceMessages: source,
+			compactedMessages: [summary],
+		});
+		expect(
+			deriveSessionCompactionState({
+				state: future,
+				sourceMessages: source,
+				targetMessages: source.slice(0, 2),
+			}),
+		).toBeUndefined();
+	});
+	it("compares durable content across normalized input and regenerated IDs", () => {
+		const old = createSessionCompactionState({
+			sourceMessages: source,
+			compactedMessages: [
+				summary,
+				{
+					...source[2]!,
+					id: "wire",
+					content: '<user_input mode="act">second task</user_input>',
+				},
+				{ ...source[3]!, ts: 123 },
+			],
+		});
+		const carried = deriveSessionCompactionState({
+			state: old,
+			sourceMessages: source,
+			targetMessages: source.slice(0, 2),
+			conversationId: "new",
+		});
+		expect(carried?.conversation_id).toBe("new");
+		expect(carried?.source_message_count).toBe(2);
+	});
+	it("handles display-only history without moving the canonical boundary", () => {
+		const history = [
+			...source.slice(0, 2),
+			{
+				role: "assistant" as const,
+				content: "error",
+				metadata: { displayOnly: true },
+			},
+			...source.slice(2),
+		];
+		const carried = deriveSessionCompactionState({
+			state: oldCopy,
+			sourceMessages: history,
+			targetMessages: history.slice(0, 3),
+		});
+		expect(
+			projectSessionCompactionState(carried!, history.slice(0, 3)),
+		).toEqual([recoveredSummary]);
 	});
 });

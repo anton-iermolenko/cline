@@ -705,6 +705,7 @@ export type {
 } from "./services/plugin-uninstall";
 export { uninstallPlugin } from "./services/plugin-uninstall";
 export {
+	applyLocalModelLimits,
 	ensureCustomProvidersLoadedSync,
 	readModelsFileSync,
 	resolveModelsRegistryPath,
@@ -1115,6 +1116,7 @@ export {
 } from "./services/telemetry/TelemetryService";
 export {
 	createSessionCompactionState,
+	deriveSessionCompactionState,
 	parseSessionCompactionState,
 	projectSessionCompactionState,
 	type SessionCompactionState,

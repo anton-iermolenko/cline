@@ -15,6 +15,8 @@ import type {
 	ITelemetryService,
 	ModelInfo,
 } from "@cline/shared";
+import { resolveEffectiveMaxInputTokens } from "@cline/shared";
+import { applyLocalModelLimits } from "../providers/local-provider-registry";
 import { createAgentModelFromApiHandler } from "./apihandler-agent-model-adapter";
 import type { ProviderConfig } from "./provider-settings";
 
@@ -104,11 +106,18 @@ export function resolveKnownModelsFromConfig(
 	config: AgentConfig,
 ): Record<string, ModelInfo> | undefined {
 	const pc = config.providerConfig as ProviderConfig | undefined;
-	const knownModels = pc?.knownModels
+	let knownModels = pc?.knownModels
 		? pc.knownModels
 		: (config.knownModels ??
 			MODEL_COLLECTIONS_BY_PROVIDER_ID[config.providerId]?.models ??
 			undefined);
+	const local = {
+		providerId: config.providerId,
+		modelId: config.modelId,
+		knownModels,
+	};
+	applyLocalModelLimits(local);
+	knownModels = local.knownModels;
 	// Caller-configured limits are authoritative for the selected model —
 	// surface them to the gateway so the resolved model definition carries
 	// the right limits (e.g. Ollama's num_ctx derives from the resolved
@@ -125,20 +134,33 @@ export function resolveKnownModelsFromConfig(
 	if (configuredContextWindow === undefined && !modelInfo) {
 		return knownModels;
 	}
-	return {
+	const merged = {
 		...(knownModels ?? {}),
 		[config.modelId]: {
 			...knownModels?.[config.modelId],
 			...(configuredContextWindow !== undefined
 				? {
-						contextWindow: configuredContextWindow,
+						contextWindow:
+							knownModels?.[config.modelId]?.contextWindow ??
+							configuredContextWindow,
 						maxInputTokens: configuredContextWindow,
 					}
 				: {}),
 			...modelInfo,
+			metadata: {
+				...knownModels?.[config.modelId]?.metadata,
+				...modelInfo?.metadata,
+			},
 			id: config.modelId,
 		},
 	};
+	const selected = merged[config.modelId];
+	const inputLimit = resolveEffectiveMaxInputTokens({
+		...selected,
+		maxOutputTokens: pc?.maxOutputTokens,
+	});
+	if (inputLimit !== undefined) selected.maxInputTokens = inputLimit;
+	return merged;
 }
 
 function toGatewayConfiguredModel(
@@ -158,6 +180,9 @@ function toGatewayConfiguredModel(
 		capabilities: toGatewayModelCapabilities(model.capabilities),
 		reasoningOptions: model.reasoningOptions,
 		metadata: {
+			...(typeof model.metadata?.inputTokenCountUrl === "string"
+				? { inputTokenCountUrl: model.metadata.inputTokenCountUrl }
+				: {}),
 			// Configured models replace gateway catalog entries, so retain the
 			// per-model protocol used by providers with mixed API endpoints.
 			...(model.metadata?.apiProtocol

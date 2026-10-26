@@ -28,6 +28,46 @@ import {
 } from "./global-settings";
 
 describe("global-settings", () => {
+	it("persists moving compaction targets through other settings updates", async () => {
+		const root = await mkdtemp(join(tmpdir(), "core-compaction-settings-"));
+		try {
+			process.env.CLINE_GLOBAL_SETTINGS_PATH = join(
+				root,
+				"global-settings.json",
+			);
+			writeGlobalSettings({
+				disabledTools: ["editor"],
+				compaction: { targetTokens: 35000, maxTargetTokens: 62000 },
+			});
+			setPlanActModeGlobally("act");
+			expect(readGlobalSettings()).toMatchObject({
+				disabledTools: ["editor"],
+				planActMode: "act",
+				compaction: { targetTokens: 35000, maxTargetTokens: 62000 },
+			});
+			writeGlobalSettings({
+				...readGlobalSettings(),
+				compaction: { targetTokens: 30000, maxTargetTokens: 58000 },
+			});
+			expect(readGlobalSettings().compaction).toEqual({
+				targetTokens: 30000,
+				maxTargetTokens: 58000,
+			});
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+	it("ignores invalid target bounds without discarding unrelated settings", () => {
+		expect(
+			GlobalSettingsSchema.parse({
+				disabledTools: ["editor"],
+				compaction: { targetTokens: 64000, maxTargetTokens: 62000 },
+			}),
+		).toMatchObject({ disabledTools: ["editor"] });
+		expect(
+			GlobalSettingsSchema.parse({ compaction: { targetTokens: -1 } }),
+		).not.toHaveProperty("compaction");
+	});
 	const previousGlobalSettingsPath = process.env.CLINE_GLOBAL_SETTINGS_PATH;
 
 	afterEach(() => {

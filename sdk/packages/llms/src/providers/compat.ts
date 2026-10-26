@@ -70,6 +70,9 @@ function toGatewayModelDefinition(
 		capabilities: toGatewayModelCapabilities(model.capabilities),
 		reasoningOptions: model.reasoningOptions,
 		metadata: {
+			...(typeof model.metadata?.inputTokenCountUrl === "string"
+				? { inputTokenCountUrl: model.metadata.inputTokenCountUrl }
+				: {}),
 			...(model.metadata?.apiProtocol
 				? { apiProtocol: model.metadata.apiProtocol }
 				: {}),
@@ -530,6 +533,8 @@ function toApiStreamChunk(
 	event: AgentModelEvent,
 ): ApiStreamChunk | undefined {
 	switch (event.type) {
+		case "input-token-count":
+			return undefined;
 		case "text-delta":
 			return { type: "text", id, text: event.text };
 		case "media":

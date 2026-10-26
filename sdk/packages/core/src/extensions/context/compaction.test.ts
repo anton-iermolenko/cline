@@ -8,6 +8,7 @@ import {
 	createSessionCompactionState,
 	projectSessionCompactionState,
 } from "../../session/models/session-compaction";
+import { MessageBuilder } from "../../session/services/message-builder";
 import type { CoreCompactionContext } from "../../types/config";
 import { buildAgenticSummaryInputBudget } from "./agentic-compaction";
 import { runBasicCompaction } from "./basic-compaction";
@@ -123,7 +124,10 @@ describe("createTokenEstimator", () => {
 		};
 
 		expect(estimateMessageTokens(message)).toBe(
-			Math.ceil(JSON.stringify(message).length / 3),
+			Math.ceil(
+				JSON.stringify({ role: message.role, content: message.content })
+					.length / 3,
+			),
 		);
 	});
 
@@ -138,7 +142,10 @@ describe("createTokenEstimator", () => {
 		};
 
 		expect(estimateMessageTokens(message)).toBe(
-			Math.ceil(JSON.stringify(message).length / 3),
+			Math.ceil(
+				JSON.stringify({ role: message.role, content: message.content })
+					.length / 3,
+			),
 		);
 	});
 
@@ -172,7 +179,7 @@ describe("createTokenEstimator", () => {
 	});
 
 	it("does not add a duplicate per-image bonus after JSON.stringify falls back", () => {
-		// A BigInt in the message's metadata makes the primary,
+		// A BigInt in an image content block makes the primary,
 		// replacer-driven JSON.stringify throw, so createTokenEstimator
 		// falls back to serializeMessage, which already renders images
 		// without base64 ("[User image]: mediaType"). The images the
@@ -187,8 +194,10 @@ describe("createTokenEstimator", () => {
 		const buildMessage = (imageCount: number): MessageWithMetadata =>
 			({
 				role: "user",
-				content: Array.from({ length: imageCount }, () => imageBlock),
-				metadata: { broken: 1n },
+				content: Array.from({ length: imageCount }, () => ({
+					...imageBlock,
+					broken: 1n,
+				})),
 			}) as unknown as MessageWithMetadata;
 
 		const estimateMessageTokens = createTokenEstimator();
@@ -501,7 +510,7 @@ describe("createContextCompactionPrepareTurn", () => {
 
 		expectNoOrphanedToolPairs(compacted);
 		expect(collectToolPairPresence(compacted).get("tool-a")).toBeUndefined();
-		expect(compacted).toEqual([
+		expect(compacted).toMatchObject([
 			{
 				role: "user",
 				content: "Read the file",
@@ -605,23 +614,20 @@ describe("createContextCompactionPrepareTurn", () => {
 
 		const compacted = runForcedBasicCompaction(messages, 1);
 
-		// Adjacent typed user messages left behind by the removals merge
-		// into a single user message carrying the compaction metadata.
-		expect(compacted).toEqual([
+		// Keep the latest typed request separate and verbatim.
+		expect(compacted).toMatchObject([
 			{
 				role: "user",
-				content: [
-					{ type: "text", text: "Old request" },
-					{ type: "text", text: "Read the latest file" },
-				],
+				content: "Old request",
 				metadata: {
 					kind: "compaction",
 					reason: "manual_compaction",
 					displayRole: "system",
-					messagesRemoved: 4,
-					userRunSpan: 2,
+					messagesRemoved: 3,
+					userRunSpan: 1,
 				},
 			},
+			{ role: "user", content: "Read the latest file" },
 		]);
 		expectNoOrphanedToolPairs(compacted);
 	});
@@ -816,7 +822,7 @@ describe("createContextCompactionPrepareTurn", () => {
 		// Token metrics no longer add up after compaction and are dropped;
 		// the aggregate survives on the compaction message's metadata.
 		expect(JSON.stringify(compacted)).not.toContain('"metrics"');
-		expect(first.metadata).toEqual({
+		expect(first.metadata).toMatchObject({
 			kind: "compaction",
 			reason: "manual_compaction",
 			displayRole: "system",
@@ -902,6 +908,7 @@ describe("createContextCompactionPrepareTurn", () => {
 
 		expect(compacted.map((message) => message.id)).toEqual([
 			"u1",
+			undefined,
 			"a2",
 			"t2",
 			"a3",
@@ -910,12 +917,13 @@ describe("createContextCompactionPrepareTurn", () => {
 		const pairs = collectToolPairPresence(compacted);
 		expect(pairs.get("pair-2")).toEqual({ hasResult: true, hasUse: true });
 		expect(pairs.get("pair-1")).toBeUndefined();
-		// The dropped oldest pair is summarized onto the typed prompt.
+		// The dropped pair is summarized separately from the latest request.
+		expect(compacted[0].content).toEqual(messages[0].content);
 		const firstTexts = (
-			Array.isArray(compacted[0].content) ? compacted[0].content : []
+			Array.isArray(compacted[1].content) ? compacted[1].content : []
 		).map((block) => (block.type === "text" ? block.text : ""));
-		expect(firstTexts[1]).toContain("Files read:\n/tmp/one.ts");
-		expect(firstTexts[1]).not.toContain("/tmp/two.ts");
+		expect(firstTexts[0]).toContain("Files read:\n/tmp/one.ts");
+		expect(firstTexts[0]).not.toContain("/tmp/two.ts");
 
 		// Tighter budget cutting inside the newest pair: the kept suffix
 		// snaps forward to the next assistant message so the pair is never
@@ -929,7 +937,11 @@ describe("createContextCompactionPrepareTurn", () => {
 			messages,
 			tightTarget,
 		) as MessageWithMetadata[];
-		expect(snapped.map((message) => message.id)).toEqual(["u1", "a3"]);
+		expect(snapped.map((message) => message.id)).toEqual([
+			"u1",
+			undefined,
+			"a3",
+		]);
 		expectNoOrphanedToolPairs(snapped);
 	});
 
@@ -1051,6 +1063,7 @@ describe("createContextCompactionPrepareTurn", () => {
 			"u2",
 			"a3",
 			"u3",
+			undefined,
 			"b3",
 		]);
 		// The earlier compaction's output is untouched: same answers, no
@@ -1067,10 +1080,10 @@ describe("createContextCompactionPrepareTurn", () => {
 					block.type === "text" && block.text.includes("<SYSTEM_NOTICE>"),
 			),
 		).toHaveLength(1);
-		// Only the new turn was folded; its dropped pair is summarized onto
-		// the new prompt.
-		const newPromptBlocks = Array.isArray(secondPass[4].content)
-			? secondPass[4].content
+		// Only the new turn was folded; the latest request stays untouched.
+		expect(secondPass[4].content).toEqual(secondPassMessages[4].content);
+		const newPromptBlocks = Array.isArray(secondPass[5].content)
+			? secondPass[5].content
 			: [];
 		const newSummary = newPromptBlocks.find(
 			(block) =>
@@ -1079,11 +1092,11 @@ describe("createContextCompactionPrepareTurn", () => {
 		expect(
 			newSummary && newSummary.type === "text" ? newSummary.text : "",
 		).toContain("Files read:\n/tmp/b.ts");
-		expect(secondPass[5].metadata).toMatchObject({ compaction: "preserved" });
+		expect(secondPass[6].metadata).toMatchObject({ compaction: "preserved" });
 		// Stats accumulate across passes instead of being overwritten.
 		expect(secondPass[0].metadata).toMatchObject({
 			kind: "compaction",
-			messagesRemoved: 4,
+			messagesRemoved: 3,
 			usageBefore: {
 				inputTokens: 350,
 				outputTokens: 35,
@@ -1436,10 +1449,10 @@ describe("createContextCompactionPrepareTurn", () => {
 		expect(explicitWins.maxOutputTokens).toBe(6_000);
 	});
 
-	it("skips with a diagnostic warning when the summarizer only produced reasoning output", async () => {
+	it("falls back to a bounded fold when the summarizer only produced reasoning output", async () => {
 		// Repro for CLINE-2911: a reasoning model can spend the entire output
 		// budget thinking. Reasoning chunks are discarded, so no summary text
-		// arrives and compaction is skipped — that skip must be diagnosable.
+		// arrives; automatic compaction must recover without another oversized request.
 		const logger = { debug: vi.fn(), log: vi.fn() };
 		const emitStatusNotice = vi.fn();
 		createHandlerMock.mockReturnValue({
@@ -1471,6 +1484,13 @@ describe("createContextCompactionPrepareTurn", () => {
 				enabled: true,
 				strategy: "agentic",
 				preserveRecentTokens: 1,
+				// Isolate output-budget exhaustion from the primary model's tiny
+				// input window; the continuation instructions must fit first.
+				summarizer: {
+					providerId: "openai",
+					modelId: "summary-reasoner",
+					modelInfo: { id: "summary-reasoner", maxInputTokens: 2000 },
+				},
 			},
 			logger,
 		});
@@ -1485,28 +1505,31 @@ describe("createContextCompactionPrepareTurn", () => {
 			tools: [],
 			messages: [
 				{ role: "user", content: "Old turn" },
-				{ role: "assistant", content: "Old answer" },
+				{ role: "assistant", content: "Old answer".repeat(200) },
 				{ role: "user", content: "Latest turn" },
 				{ role: "assistant", content: "Latest answer" },
 			],
 			apiMessages: [
 				{ role: "user", content: "Old turn" },
-				{ role: "assistant", content: "Old answer" },
+				{ role: "assistant", content: "Old answer".repeat(200) },
 				{ role: "user", content: "Latest turn" },
 				{ role: "assistant", content: "Latest answer" },
 			],
 			model: {
 				id: "local-reasoner",
 				provider: "openai",
-				info: { id: "local-reasoner", maxInputTokens: 10 },
+				info: { id: "local-reasoner", maxInputTokens: 200 },
 			},
 			emitStatusNotice,
 		});
 
-		expect(result).toBeUndefined();
+		expect(result?.messages).toBeDefined();
+		expect(
+			result?.messages.reduce((sum, m) => sum + createTokenEstimator()(m), 0),
+		).toBeLessThan(180);
 		expect(emitStatusNotice).toHaveBeenCalledWith(
-			"auto-compaction-skipped",
-			expect.objectContaining({ phase: "skipped" }),
+			"auto-compacted",
+			expect.objectContaining({ phase: "completed" }),
 		);
 		expect(logger.log).toHaveBeenCalledWith(
 			"Skipped agentic compaction: summarizer returned no summary text",
@@ -1577,7 +1600,7 @@ describe("createContextCompactionPrepareTurn", () => {
 			tools: [],
 			messages: [
 				{ role: "user", content: "Old turn to compact" },
-				{ role: "assistant", content: "Old answer" },
+				{ role: "assistant", content: "Old answer".repeat(2000) },
 				{ role: "user", content: "Older follow-up to compact" },
 				{ role: "assistant", content: "Older follow-up answer" },
 				{ role: "user", content: "Implement the change" },
@@ -1607,7 +1630,7 @@ describe("createContextCompactionPrepareTurn", () => {
 			],
 			apiMessages: [
 				{ role: "user", content: "Old turn to compact" },
-				{ role: "assistant", content: "Old answer" },
+				{ role: "assistant", content: "Old answer".repeat(2000) },
 				{ role: "user", content: "Older follow-up to compact" },
 				{ role: "assistant", content: "Older follow-up answer" },
 				{ role: "user", content: "Implement the change" },
@@ -1638,7 +1661,7 @@ describe("createContextCompactionPrepareTurn", () => {
 			model: {
 				id: "mock-model",
 				provider: "anthropic",
-				info: { id: "mock-model", maxInputTokens: 10 },
+				info: { id: "mock-model", maxInputTokens: 2000 },
 			},
 		});
 
@@ -1651,7 +1674,7 @@ describe("createContextCompactionPrepareTurn", () => {
 				iteration: 1,
 			}),
 		);
-		expect(result?.messages).toHaveLength(5);
+		expect(result?.messages).toHaveLength(3);
 		expect(result?.messages[0]).toMatchObject({
 			role: "user",
 			metadata: expect.objectContaining({
@@ -1659,7 +1682,7 @@ describe("createContextCompactionPrepareTurn", () => {
 				displayRole: "system",
 				userRunSpan: 2,
 				details: {
-					readFiles: [],
+					readFiles: ["/tmp/example.ts"],
 					modifiedFiles: [],
 				},
 			}),
@@ -1678,7 +1701,7 @@ describe("createContextCompactionPrepareTurn", () => {
 			role: "user",
 			content: "Implement the change",
 		});
-		expect(result?.messages[4]).toEqual({
+		expect(result?.messages[2]).toEqual({
 			role: "assistant",
 			content: "Recent assistant state",
 		});
@@ -1687,7 +1710,7 @@ describe("createContextCompactionPrepareTurn", () => {
 	describe("summarizer connection resolution", () => {
 		const messages: LlmsProviders.Message[] = [
 			{ role: "user", content: "Old turn to compact" },
-			{ role: "assistant", content: "Old answer" },
+			{ role: "assistant", content: "Old answer".repeat(2000) },
 			{ role: "user", content: "Recent turn" },
 			{ role: "assistant", content: "Recent assistant state" },
 		];
@@ -1704,7 +1727,7 @@ describe("createContextCompactionPrepareTurn", () => {
 			model: {
 				id: "mock-model",
 				provider: "cline",
-				info: { id: "mock-model", maxInputTokens: 10 },
+				info: { id: "mock-model", maxInputTokens: 2000 },
 			},
 		};
 		// Mirrors bootstrap.config: the nested providerConfig is a snapshot of
@@ -1799,7 +1822,7 @@ describe("createContextCompactionPrepareTurn", () => {
 		const log = vi.fn();
 		const messages: LlmsProviders.Message[] = [
 			{ role: "user", content: "Original task" },
-			{ role: "assistant", content: `Old answer ${"x".repeat(500)}` },
+			{ role: "assistant", content: `Old answer ${"x".repeat(12000)}` },
 			{ role: "user", content: "Older follow-up" },
 			{ role: "assistant", content: "Older response" },
 			{ role: "user", content: "Latest request" },
@@ -1832,7 +1855,7 @@ describe("createContextCompactionPrepareTurn", () => {
 			model: {
 				id: "mock-model",
 				provider: "anthropic",
-				info: { id: "mock-model", maxInputTokens: 10 },
+				info: { id: "mock-model", maxInputTokens: 2000 },
 			},
 		});
 
@@ -1847,7 +1870,7 @@ describe("createContextCompactionPrepareTurn", () => {
 		);
 	});
 
-	it("does not fall back to basic compaction when agentic compaction is cancelled", async () => {
+	it("does not run the summarizer or basic compaction when already cancelled", async () => {
 		const providerError = new Error("request stopped");
 		createHandlerMock.mockReturnValue({
 			createMessage: vi.fn(() => {
@@ -1894,7 +1917,8 @@ describe("createContextCompactionPrepareTurn", () => {
 					info: { id: "mock-model", maxInputTokens: 10 },
 				},
 			}),
-		).rejects.toBe(providerError);
+		).rejects.toMatchObject({ name: "AbortError" });
+		expect(createHandlerMock).not.toHaveBeenCalled();
 		expect(log).not.toHaveBeenCalledWith(
 			"Agentic compaction failed; falling back to basic compaction",
 			expect.anything(),
@@ -1998,7 +2022,7 @@ describe("createContextCompactionPrepareTurn", () => {
 			model: {
 				id: "mock-model",
 				provider: "anthropic",
-				info: { id: "mock-model", maxInputTokens: 10 },
+				info: { id: "mock-model", maxInputTokens: 2000 },
 			},
 		});
 
@@ -2092,7 +2116,7 @@ describe("createContextCompactionPrepareTurn", () => {
 		const heavyToolOutput = "x".repeat(1_500);
 		const sharedMessages = [
 			{ role: "user" as const, content: "Old turn to summarize" },
-			{ role: "assistant" as const, content: "Old reply" },
+			{ role: "assistant" as const, content: "Old reply".repeat(2000) },
 			{ role: "user" as const, content: "Read the file" },
 			{
 				role: "assistant" as const,
@@ -2132,7 +2156,7 @@ describe("createContextCompactionPrepareTurn", () => {
 			model: {
 				id: "mock-model",
 				provider: "anthropic",
-				info: { id: "mock-model", maxInputTokens: 10 },
+				info: { id: "mock-model", maxInputTokens: 2000 },
 			},
 		});
 
@@ -2417,20 +2441,20 @@ describe("createContextCompactionPrepareTurn", () => {
 			tools: [],
 			messages: [
 				{ role: "user", content: "Old turn" },
-				{ role: "assistant", content: "Old answer" },
+				{ role: "assistant", content: "Old answer".repeat(2000) },
 				{ role: "user", content: "Latest turn" },
 				{ role: "assistant", content: "Latest answer" },
 			],
 			apiMessages: [
 				{ role: "user", content: "Old turn" },
-				{ role: "assistant", content: "Old answer" },
+				{ role: "assistant", content: "Old answer".repeat(2000) },
 				{ role: "user", content: "Latest turn" },
 				{ role: "assistant", content: "Latest answer" },
 			],
 			model: {
 				id: "primary-model",
 				provider: "anthropic",
-				info: { id: "primary-model", maxInputTokens: 10 },
+				info: { id: "primary-model", maxInputTokens: 2000 },
 			},
 		});
 
@@ -2571,14 +2595,7 @@ describe("createContextCompactionPrepareTurn", () => {
 				},
 				{
 					role: "user",
-					content: [
-						{ type: "text", text: "Most recent user turn" },
-						{
-							type: "image",
-							data: "abc",
-							mediaType: "image/png",
-						},
-					],
+					content: [{ type: "text", text: "Most recent user turn" }],
 				},
 				{
 					role: "assistant",
@@ -2620,14 +2637,7 @@ describe("createContextCompactionPrepareTurn", () => {
 				},
 				{
 					role: "user",
-					content: [
-						{ type: "text", text: "Most recent user turn" },
-						{
-							type: "image",
-							data: "abc",
-							mediaType: "image/png",
-						},
-					],
+					content: [{ type: "text", text: "Most recent user turn" }],
 				},
 				{
 					role: "assistant",
@@ -2644,7 +2654,7 @@ describe("createContextCompactionPrepareTurn", () => {
 			model: {
 				id: "mock-model",
 				provider: "anthropic",
-				info: { id: "mock-model", maxInputTokens: 10 },
+				info: { id: "mock-model", maxInputTokens: 200 },
 			},
 		});
 
@@ -3933,7 +3943,7 @@ describe("createContextCompactionPrepareTurn", () => {
 		expect(result?.messages.length).toBeLessThan(4);
 	});
 
-	it("automatic agentic compaction clamps preservation to a small model budget", async () => {
+	it("automatic compaction refolds an oversized preserved tail for a small model budget", async () => {
 		createHandlerMock.mockReturnValue({
 			createMessage: vi.fn(() =>
 				streamChunks([
@@ -3984,9 +3994,12 @@ describe("createContextCompactionPrepareTurn", () => {
 		expect(createHandlerMock).toHaveBeenCalledTimes(1);
 		expect(result?.messages[0]).toMatchObject({
 			role: "user",
-			metadata: expect.objectContaining({ kind: "compaction_summary" }),
+			metadata: expect.objectContaining({ kind: "compaction" }),
 		});
 		expect(result?.messages.length).toBeLessThan(messages.length);
+		expect(
+			result?.messages.reduce((sum, m) => sum + createTokenEstimator()(m), 0),
+		).toBeLessThan(1800);
 	});
 
 	it("drops old user image blocks during basic compaction sanitization", () => {
@@ -4102,7 +4115,7 @@ describe("createContextCompactionPrepareTurn", () => {
 			model: {
 				id: "mock-model",
 				provider: "anthropic",
-				info: { id: "mock-model", maxInputTokens: 100 },
+				info: { id: "mock-model", maxInputTokens: 200 },
 			},
 		});
 
@@ -4169,7 +4182,7 @@ describe("createContextCompactionPrepareTurn", () => {
 			model: {
 				id: "mock-model",
 				provider: "anthropic",
-				info: { id: "mock-model", maxInputTokens: 100 },
+				info: { id: "mock-model", maxInputTokens: 200 },
 			},
 		});
 
@@ -4676,6 +4689,81 @@ describe("createContextCompactionPrepareTurn", () => {
 		expect(saveState).not.toHaveBeenCalled();
 	});
 
+	it.each([
+		false,
+		true,
+	])("keeps the first post-compaction request identical to its sidecar projection (existing=%s)", async (existing) => {
+		const canonical: MessageWithMetadata[] = [
+			{
+				id: "original",
+				role: "user",
+				content: "Preserve this original requirement",
+			},
+		];
+		const summary: MessageWithMetadata = {
+			id: "summary",
+			role: "user",
+			content: "Context summary: continue",
+			metadata: { kind: "compaction_summary" },
+		};
+		let state = existing
+			? createSessionCompactionState({
+					sourceMessages: canonical,
+					compactedMessages: [summary],
+				})
+			: undefined;
+		const compact = vi
+			.fn()
+			.mockResolvedValueOnce({ messages: [summary] })
+			.mockResolvedValue(undefined);
+		const prepareTurn = createCompactionStateAwarePrepareTurn({
+			compact,
+			getState: () => state,
+			saveState: (value) => {
+				state = value;
+			},
+		});
+		const context: CoreCompactionContext = {
+			agentId: "a",
+			conversationId: "c",
+			parentAgentId: null,
+			iteration: 1,
+			abortSignal: new AbortController().signal,
+			systemPrompt: "system",
+			tools: [],
+			messages: canonical,
+			apiMessages: canonical,
+			model: {
+				id: "mock",
+				provider: "anthropic",
+				info: { id: "mock", maxInputTokens: 100000 },
+			},
+		};
+		const first = await prepareTurn(context);
+		const builder = new MessageBuilder({
+			getCanonicalMessages: () => canonical,
+		});
+		const before = builder.buildForApi(first!.messages!);
+		expect(JSON.stringify(before)).toContain(
+			"Preserve this original requirement",
+		);
+		const next = [
+			...canonical,
+			{
+				id: "followup",
+				role: "user" as const,
+				content: "New user instruction",
+			},
+		];
+		const result = await prepareTurn({
+			...context,
+			iteration: 2,
+			messages: next,
+			apiMessages: next,
+		});
+		const after = builder.buildForApi(result!.messages!);
+		expect(after.slice(0, before.length)).toEqual(before);
+	});
 	it("passes the exact source messages to saveState so hosts can validate against them", async () => {
 		// Regression: local-runtime-host validated the persist by projecting the
 		// state against agent.getMessages(), which mid-turn can legally differ
@@ -4720,5 +4808,73 @@ describe("createContextCompactionPrepareTurn", () => {
 		expect(
 			projectSessionCompactionState(savedState, currentMessages),
 		).toBeDefined();
+	});
+});
+
+describe("automatic compaction no-result recovery", () => {
+	function prepare(messages: MessageWithMetadata[]) {
+		const handler = createContextCompactionPrepareTurn({
+			providerId: "openai",
+			modelId: "local",
+			compaction: { enabled: true, strategy: "agentic" },
+		});
+		return handler?.({
+			agentId: "test",
+			conversationId: "test",
+			parentAgentId: null,
+			iteration: 1,
+			abortSignal: new AbortController().signal,
+			systemPrompt: "",
+			tools: [],
+			messages,
+			apiMessages: messages,
+			model: {
+				id: "local",
+				provider: "openai",
+				info: { id: "local", maxInputTokens: 2000, maxTokens: 1000 },
+			},
+		});
+	}
+	it("folds an oversized latest turn when no safe summary cut exists", async () => {
+		const messages: MessageWithMetadata[] = [
+			{ role: "user", content: "Keep my latest request" },
+			{ role: "assistant", content: "x".repeat(30000) },
+		];
+		const result = await prepare(messages);
+		expect(result?.messages).toBeDefined();
+		expect(
+			result?.messages.reduce((sum, m) => sum + createTokenEstimator()(m), 0),
+		).toBeLessThan(1800);
+		expect(JSON.stringify(result?.messages)).toContain(
+			"Keep my latest request",
+		);
+	});
+	it("can re-fold previously frozen messages to fit the current budget", async () => {
+		const messages: MessageWithMetadata[] = [
+			{ role: "user", content: "Keep my latest request" },
+			{
+				role: "assistant",
+				content: "x".repeat(15000),
+				metadata: { compaction: "preserved" },
+			},
+			{
+				role: "assistant",
+				content: "y".repeat(15000),
+				metadata: { compaction: "preserved" },
+			},
+		];
+		const result = await prepare(messages);
+		expect(result?.messages).toBeDefined();
+		expect(
+			result?.messages.reduce((sum, m) => sum + createTokenEstimator()(m), 0),
+		).toBeLessThan(1800);
+		expect(JSON.stringify(result?.messages)).toContain(
+			"Keep my latest request",
+		);
+	});
+	it("stops before sending when the only protected prompt cannot fit", async () => {
+		await expect(
+			prepare([{ role: "user", content: "x".repeat(30000) }]),
+		).rejects.toThrow("Compaction cannot fit");
 	});
 });

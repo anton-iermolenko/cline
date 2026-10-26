@@ -20,7 +20,6 @@ import { CommandExitError, CommandTerminationError } from "./executors/bash";
 import {
 	MAX_COMMAND_OUTPUT_CHARS,
 	MAX_READ_LINES,
-	MAX_READ_OUTPUT_CHARS,
 	MAX_SEARCH_OUTPUT_CHARS,
 } from "./executors/output-limits";
 import {
@@ -276,7 +275,10 @@ export function createReadFilesTool(
 		description:
 			"Read the content of text or image files at the provided absolute paths, or return only an inclusive one-based line range when start_line/end_line are provided on the same file entry as its path. " +
 			"When you already know multiple files you need, read them together in one call, and call this tool in the same response as other independent tool calls. " +
-			`Each read returns at most ${MAX_READ_LINES} lines / ~${Math.round(MAX_READ_OUTPUT_CHARS / 1024)}k characters; longer files report their total line count, page through them with start_line/end_line on that file's entry. ` +
+			"Text reads return complete preview-sized pages (up to " +
+			MAX_READ_LINES +
+			" lines). If the requested range does not fit, follow the explicit Next start_line cursor; omitted lines are not evidence you have read. " +
+			"For earlier human requests and clarification answers in this same conversation, read cline://history/user-inputs.txt with start_line/end_line. Internal summaries are not human requests. Previously consulted source references are available at cline://history/evidence.txt; retrieve only a missing detail, not every prior source. " +
 			"Binary files that are not image and large files are not supported. " +
 			"Returns file contents or error messages for each path. ",
 		inputSchema: zodToJsonSchema(ReadFilesInputSchema),

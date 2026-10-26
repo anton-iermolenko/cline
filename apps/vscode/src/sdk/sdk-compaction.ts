@@ -11,9 +11,11 @@
 // context while saved messages remain intact.
 
 import {
+	applyLocalModelLimits,
 	type CoreSessionConfig,
 	createContextCompactionPrepareTurn,
 	createSessionCompactionState,
+	readGlobalSettings,
 	type SessionCompactionState,
 } from "@cline/core"
 import type { Message as SdkMessage, ModelInfo as SdkModelInfo } from "@cline/llms"
@@ -28,10 +30,11 @@ export interface CompactSessionMessagesInput {
 	/** Provider/model/compaction config for the active session. */
 	config: Pick<
 		CoreSessionConfig,
-		"providerConfig" | "providerId" | "modelId" | "knownModels" | "compaction" | "logger" | "telemetry"
+		"providerConfig" | "providerId" | "modelId" | "knownModels" | "compaction" | "logger" | "telemetry" | "systemPrompt"
 	>
 	/** The active session id (used for telemetry keying). */
 	sessionId: string
+	tools?: unknown[]
 	/** The conversation transcript to compact (SDK message shape). */
 	messages: SdkMessage[]
 	/**
@@ -58,6 +61,7 @@ export async function compactSessionMessages(input: CompactSessionMessagesInput)
 		return { compacted: false, messages: input.messages }
 	}
 
+	applyLocalModelLimits(input.config)
 	const modelInfo: SdkModelInfo | undefined = input.config.knownModels?.[input.config.modelId]
 	const compactionModelInfo: SdkModelInfo = modelInfo
 		? {
@@ -77,6 +81,7 @@ export async function compactSessionMessages(input: CompactSessionMessagesInput)
 			// Force-enable compaction for this manual request even when
 			// auto-condense is off — the user explicitly asked for it.
 			compaction: {
+				...readGlobalSettings().compaction,
 				...input.config.compaction,
 				enabled: true,
 			},
@@ -102,8 +107,8 @@ export async function compactSessionMessages(input: CompactSessionMessagesInput)
 		messages: input.messages,
 		apiMessages: input.messages,
 		abortSignal: new AbortController().signal,
-		systemPrompt: "",
-		tools: [],
+		systemPrompt: input.config.systemPrompt ?? "",
+		tools: input.tools ?? [],
 		model: {
 			id: input.config.modelId,
 			provider: input.config.providerId,

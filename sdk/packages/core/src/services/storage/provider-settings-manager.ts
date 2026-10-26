@@ -26,6 +26,7 @@ import {
 } from "../../types/provider-settings";
 import { getLiveModelsCatalog } from "../llms/provider-defaults";
 import {
+	applyLocalModelLimits,
 	ensureCustomProvidersLoadedSync,
 	registerConfiguredProvidersFromSettings,
 } from "../providers/local-provider-registry";
@@ -335,7 +336,9 @@ export class ProviderSettingsManager {
 		if (!settings) {
 			return undefined;
 		}
-		return toProviderConfig(settings, options);
+		const config = toProviderConfig(settings, options);
+		applyLocalModelLimits(config, this);
+		return config;
 	}
 
 	getLastUsedProviderConfig(
@@ -346,7 +349,9 @@ export class ProviderSettingsManager {
 		if (!settings) {
 			return undefined;
 		}
-		return toProviderConfig(settings, options);
+		const config = toProviderConfig(settings, options);
+		applyLocalModelLimits(config, this);
+		return config;
 	}
 
 	async refreshCatalog(): Promise<void> {

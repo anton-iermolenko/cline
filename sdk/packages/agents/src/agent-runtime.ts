@@ -599,6 +599,7 @@ export class AgentRuntime {
 	private initialization?: Promise<void>;
 	private abortController?: AbortController;
 	private modelSteerController?: AbortController;
+	private lastPreparedModelRequest?: AgentModelRequest;
 	private readonly telemetryProviderId?: string;
 	private readonly telemetryModelId?: string;
 	private modelRequestId?: string;
@@ -1366,7 +1367,10 @@ export class AgentRuntime {
 		interrupted?: boolean;
 	}> {
 		const first = await this.generateAssistantMessage();
-		if (this.isRecoverableMaxTokensTurn(first)) {
+		if (
+			this.isRecoverableMaxTokensTurn(first) &&
+			(await this.shouldCompactTruncatedTurn())
+		) {
 			return await this.retryTruncatedTurnWithCompaction(first);
 		}
 		if (!this.isRecoverableOverflowTurn(first)) {
@@ -1444,6 +1448,46 @@ export class AgentRuntime {
 		// Provider-executed tool activity lives in metadata, not content, and has
 		// already happened — replaying the turn would repeat its side effects.
 		return !this.hasModelToolActivity(turn.message);
+	}
+
+	private async shouldCompactTruncatedTurn(): Promise<boolean> {
+		const counter = this.config.model.countInputTokens;
+		if (!counter) return true; // Preserve recovery for counterless providers.
+		try {
+			// Count the request after compaction and host hooks, not canonical
+			// state or a reconstruction missing dynamic instructions/tools.
+			if (!this.lastPreparedModelRequest) return false;
+			const count = await counter.call(this.config.model, {
+				...this.lastPreparedModelRequest,
+				signal: this.abortController?.signal,
+			});
+			this.throwIfAborted();
+			if (!count) return false;
+			const nearLimit =
+				count.inputTokens >=
+				count.maxInputTokens - count.compactionBufferTokens;
+			if (!nearLimit) {
+				await this.emit({
+					type: "status-notice",
+					snapshot: this.snapshot(),
+					message:
+						"output token limit reached with input headroom — continuing without compaction",
+					metadata: {
+						kind: "max_tokens_continuation",
+						inputTokens: count.inputTokens,
+						maxInputTokens: count.maxInputTokens,
+					},
+				});
+			}
+			return nearLimit;
+		} catch (error) {
+			this.throwIfAborted();
+			this.config.logger?.debug(
+				"Output-limit recovery kept history because input pressure could not be measured",
+				{ error: error instanceof Error ? error.message : String(error) },
+			);
+			return false;
+		}
 	}
 
 	/** Tool activity executed outside AgentRuntime is recorded in metadata. */
@@ -1732,6 +1776,7 @@ export class AgentRuntime {
 			...summarizeModelRequest(request),
 		});
 
+		this.lastPreparedModelRequest = request;
 		return { request, startedAt };
 	}
 
@@ -1972,6 +2017,15 @@ export class AgentRuntime {
 					});
 					break;
 				}
+				case "input-token-count": {
+					await this.emit({
+						type: "status-notice",
+						snapshot: this.snapshot(),
+						message: "input-token-count",
+						metadata: { kind: "input_token_count", ...event.measurement },
+					});
+					break;
+				}
 				case "usage": {
 					// Record the provider's own input-token count for this request so
 					// the prepare-turn pipeline can trigger compaction on real usage
@@ -2033,7 +2087,7 @@ export class AgentRuntime {
 				});
 				continue;
 			}
-			const parsed = parseToolInput(assembly);
+			const parsed = parseToolInput(assembly, finishReason);
 			if (parsed.reason) {
 				invalidToolCalls.push({
 					toolCallId: assembly.toolCallId,
@@ -2310,6 +2364,7 @@ export class AgentRuntime {
 		}
 		const message = createMessage("user", [{ type: "text", text: pending }], {
 			userRunSpan: 0,
+			humanInput: true,
 		});
 		this.state.messages.push(message);
 		await this.emit({
@@ -2811,7 +2866,10 @@ function mergeToolMetadata(current: unknown, patch: unknown): unknown {
 	};
 }
 
-function parseToolInput(assembly: PendingToolAssembly): {
+function parseToolInput(
+	assembly: PendingToolAssembly,
+	finishReason: AgentModelFinishReason,
+): {
 	input: unknown;
 	parseError?: string;
 	invalidInput: Record<string, unknown>;
@@ -2829,7 +2887,7 @@ function parseToolInput(assembly: PendingToolAssembly): {
 			invalidInput: {},
 		};
 	}
-	const parsed = parseToolArguments(assembly.inputText);
+	const parsed = parseToolArguments(assembly.inputText, finishReason);
 	if (parsed.ok) {
 		return {
 			input: parsed.value,
@@ -2838,7 +2896,10 @@ function parseToolInput(assembly: PendingToolAssembly): {
 	}
 	return {
 		input: {},
-		invalidInput: buildInvalidToolInput(assembly.inputText, parsed.error),
+		invalidInput: {
+			...buildInvalidToolInput(assembly.inputText, parsed.error),
+			modelFinishReason: finishReason,
+		},
 		parseError: `Tool call ${assembly.toolName ?? assembly.toolCallId} emitted invalid JSON arguments: ${parsed.error}`,
 		reason: "invalid_arguments",
 	};
@@ -2859,6 +2920,7 @@ function buildInvalidToolInput(
 
 function parseToolArguments(
 	value: string,
+	finishReason: AgentModelFinishReason,
 ): { ok: true; value: unknown } | { ok: false; error: string } {
 	const trimmed = value.trim();
 	if (!trimmed) {
@@ -2868,10 +2930,11 @@ function parseToolArguments(
 		};
 	}
 
+	let syntaxError = "Invalid JSON syntax";
 	try {
 		return { ok: true, value: JSON.parse(trimmed) };
-	} catch {
-		// Fall through to a normalized error below.
+	} catch (error) {
+		if (error instanceof Error) syntaxError = error.message.slice(0, 240);
 	}
 
 	if (!(trimmed.startsWith("{") || trimmed.startsWith("["))) {
@@ -2881,10 +2944,21 @@ function parseToolArguments(
 		};
 	}
 
+	const position = syntaxError.match(/position (\d+)/i)?.[1];
+	const incomplete =
+		/unterminated|unexpected end|end of (?:json|data|input)/i.test(
+			syntaxError,
+		) ||
+		(position !== undefined && Number(position) === trimmed.length);
+	const guidance =
+		finishReason === "max-tokens"
+			? "The response reached its output-token limit. Send smaller complete tool calls or stage content in small acknowledged chunks. Do not repair and execute a partial payload."
+			: incomplete
+				? "The arguments ended before the JSON value was complete. Retry with a smaller complete call; never apply partial content."
+				: "Ensure the outer tool payload is valid JSON and escape embedded quotes/newlines inside string fields.";
 	return {
 		ok: false,
-		error:
-			"Tool call arguments could not be parsed as JSON. Ensure the outer tool payload is valid JSON and escape embedded quotes/newlines inside string fields.",
+		error: `${incomplete ? "Incomplete JSON arguments" : "Invalid JSON syntax"}. Model finish reason: ${finishReason}. ${syntaxError}. ${guidance}`,
 	};
 }
 

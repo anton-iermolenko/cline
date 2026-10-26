@@ -16,6 +16,7 @@ import {
 	getProviderAuthHandler,
 	type ProviderSettings,
 	readCompactionStrategyGlobally,
+	readGlobalSettings,
 	resolveProviderApiKeyFromSettings,
 	type StartSessionResult,
 } from "@cline/core"
@@ -1187,6 +1188,7 @@ export async function buildSessionConfig(input: SessionConfigInput): Promise<Cor
 		...(useAutoCondense
 			? {
 					compaction: {
+						...readGlobalSettings().compaction,
 						enabled: true,
 						strategy: compactionStrategy,
 					},

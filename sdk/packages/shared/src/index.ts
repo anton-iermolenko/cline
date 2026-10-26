@@ -267,6 +267,7 @@ export {
 	ESTIMATED_TOKENS_PER_IMAGE,
 	estimateRequestInputTokens,
 	estimateTokens,
+	resolveEffectiveMaxInputTokens,
 	type TokenEstimatedRequest,
 } from "./llms/tokens";
 export type {

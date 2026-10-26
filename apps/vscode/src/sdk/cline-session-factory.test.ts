@@ -1468,6 +1468,23 @@ describe("buildSessionConfig", () => {
 		})
 	})
 
+	it("applies the CLI's persisted full-request compaction targets", async () => {
+		writeJson(process.env.CLINE_GLOBAL_SETTINGS_PATH!, {
+			compaction: { targetTokens: 61000, maxTargetTokens: 94000, bufferTokens: 2048 },
+		})
+		mocks.stateManager.getGlobalSettingsKey.mockImplementation((key: string) =>
+			key === "useAutoCondense" ? true : undefined,
+		)
+		const config = await buildSessionConfig({ cwd: "/tmp/workspace" })
+		expect(config.compaction).toEqual({
+			enabled: true,
+			strategy: "agentic",
+			targetTokens: 61000,
+			maxTargetTokens: 94000,
+			bufferTokens: 2048,
+		})
+	})
+
 	it("falls back to agentic SDK compaction for an invalid stored strategy", async () => {
 		writeJson(process.env.CLINE_GLOBAL_SETTINGS_PATH!, { compactionStrategy: "invalid" })
 		mocks.stateManager.getGlobalSettingsKey.mockImplementation((key: string) => {

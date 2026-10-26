@@ -71,6 +71,7 @@ import {
 	withSessionHistoryOriginMetadata,
 } from "../../session/history-origin";
 import {
+	deriveSessionCompactionState,
 	projectSessionCompactionState,
 	type SessionCompactionState,
 } from "../../session/models/session-compaction";
@@ -531,10 +532,7 @@ export class LocalRuntimeHost implements RuntimeHost {
 					manifest: existingManifest,
 				};
 				resumedCompactionState =
-					await this.invokeOptionalValue<SessionCompactionState>(
-						"readSessionCompactionState",
-						sessionId,
-					);
+					await this.readSessionCompactionState(sessionId);
 			}
 		}
 		const initialAggregateUsage = await this.seedAggregateUsageFromArtifacts({
@@ -1113,6 +1111,8 @@ export class LocalRuntimeHost implements RuntimeHost {
 			telemetry: this.defaultTelemetry,
 			getSession: (sessionId) => this.getSession(sessionId),
 			readMessages: (sessionId) => this.readSessionMessages(sessionId),
+			readCompactionState: (sessionId) =>
+				this.readSessionCompactionState(sessionId),
 			buildStartInput: (context, startInput) => {
 				const sessionMetadata = context.restoredCheckpointMetadata
 					? {
@@ -1124,6 +1124,8 @@ export class LocalRuntimeHost implements RuntimeHost {
 					...startInput,
 					...(sessionMetadata ? { sessionMetadata } : {}),
 					initialMessages: context.initialMessages,
+					initialCompactionState:
+						startInput.initialCompactionState ?? context.initialCompactionState,
 				};
 			},
 			startSession: (startInput) => this.startSession(startInput),
@@ -1464,15 +1466,69 @@ export class LocalRuntimeHost implements RuntimeHost {
 			for (;;) {
 				const pendingWrite = activeSession.compactionStateWriteQueue;
 				if (!pendingWrite) {
-					return activeSession.compactionState;
+					if (activeSession.compactionState)
+						return activeSession.compactionState;
+					break;
 				}
 				await pendingWrite.catch(() => undefined);
 			}
 		}
-		return await this.invokeOptionalValue<SessionCompactionState>(
+		const ownState = await this.invokeOptionalValue<SessionCompactionState>(
 			"readSessionCompactionState",
 			target,
 		);
+		if (ownState) return ownState;
+		// Earlier restore bugs left descendants without sidecars. Recover only
+		// along recorded lineage, validating both the ancestor and target prefix.
+		const targetRecord = await this.getSession(target);
+		if (!targetRecord) return undefined;
+		const targetMessages = await this.readSessionMessages(target);
+		const visited = new Set([target]);
+		const pending: string[] = [];
+		const enqueueParents = (record: SessionRecord): void => {
+			const fork = record.metadata?.fork;
+			const forkParent =
+				fork && typeof fork === "object" && !Array.isArray(fork)
+					? (fork as Record<string, unknown>).forkedFromSessionId
+					: undefined;
+			for (const parent of [
+				forkParent,
+				record.metadata?.restoredFromSessionId,
+			]) {
+				if (
+					typeof parent === "string" &&
+					parent.trim() &&
+					!visited.has(parent.trim())
+				) {
+					visited.add(parent.trim());
+					pending.push(parent.trim());
+				}
+			}
+		};
+		enqueueParents(targetRecord);
+		for (let count = 0; count < 32 && pending.length > 0; count++) {
+			const parentId = pending.shift();
+			if (!parentId) break;
+			const state = await this.invokeOptionalValue<SessionCompactionState>(
+				"readSessionCompactionState",
+				parentId,
+			);
+			if (
+				state &&
+				(!state.conversation_id || state.conversation_id === parentId)
+			) {
+				const recovered = deriveSessionCompactionState({
+					state,
+					sourceMessages: await this.readSessionMessages(parentId),
+					targetMessages,
+					conversationId: target,
+				});
+				if (recovered) return recovered;
+			}
+			const record = await this.getSession(parentId);
+			if (record) enqueueParents(record);
+		}
+		return undefined;
 	}
 
 	private isCompactionStateForSession(

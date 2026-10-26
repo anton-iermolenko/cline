@@ -222,6 +222,18 @@ export interface AgentTool<TInput = unknown, TOutput = unknown>
 // Model adapter contract
 // =============================================================================
 
+export interface RequestInputTokenCount {
+	inputTokens: number;
+	source: "tokenized" | "bounded";
+	fingerprint: string;
+	budgetRevision: string;
+	contextWindow: number;
+	maxInputTokens: number;
+	maxOutputTokens: number;
+	compactionBufferTokens: number;
+	serverBoundaryTokens: number;
+}
+
 export interface AgentModelRequest {
 	systemPrompt?: string;
 	messages: readonly AgentMessage[];
@@ -304,6 +316,7 @@ export type AgentModelFinishReason =
 export type ProviderErrorClass = "context_window_exceeded" | "auth" | "unknown";
 
 export type AgentModelEvent =
+	| { type: "input-token-count"; measurement: RequestInputTokenCount }
 	| { type: "text-delta"; text: string }
 	| { type: "media"; media: GeneratedMedia }
 	| {
@@ -367,6 +380,9 @@ export type AgentModelEvent =
 	  };
 
 export interface AgentModel {
+	countInputTokens?: (
+		request: AgentModelRequest,
+	) => Promise<RequestInputTokenCount | undefined>;
 	stream: (
 		request: AgentModelRequest,
 	) => AsyncIterable<AgentModelEvent> | Promise<AsyncIterable<AgentModelEvent>>;

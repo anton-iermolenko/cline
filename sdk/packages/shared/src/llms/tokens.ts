@@ -108,7 +108,18 @@ export function estimateRequestInputTokens(
 		serialized = JSON.stringify(
 			{
 				systemPrompt: request.systemPrompt,
-				messages: request.messages,
+				messages: request.messages.map((message) => {
+					if (
+						message &&
+						typeof message === "object" &&
+						"role" in message &&
+						"content" in message
+					) {
+						const m = message as { role: unknown; content: unknown };
+						return { role: m.role, content: m.content };
+					}
+					return message;
+				}),
 				tools: request.tools,
 			},
 			replacer,
@@ -126,4 +137,41 @@ export function estimateRequestInputTokens(
 	return (
 		estimateTokens(serialized.length) + images * ESTIMATED_TOKENS_PER_IMAGE
 	);
+}
+
+function isPositiveBudgetNumber(value: unknown): value is number {
+	return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+/**
+ * Resolve the model's usable prompt budget. A reported input limit is
+ * authoritative but cannot exceed the context window. When the model only
+ * reports a context window, retain a conservative margin for request overhead.
+ */
+export function resolveEffectiveMaxInputTokens(input: {
+	maxInputTokens?: number;
+	contextWindow?: number;
+	maxOutputTokens?: number;
+}): number | undefined {
+	const contextWindow = isPositiveBudgetNumber(input.contextWindow)
+		? input.contextWindow
+		: undefined;
+	const maxInputTokens = isPositiveBudgetNumber(input.maxInputTokens)
+		? input.maxInputTokens
+		: undefined;
+
+	const output = isPositiveBudgetNumber(input.maxOutputTokens)
+		? Math.floor(input.maxOutputTokens)
+		: undefined;
+	const available =
+		contextWindow === undefined ? undefined : contextWindow - (output ?? 0);
+	if (available !== undefined && available <= 0)
+		throw new Error("Output allowance leaves no usable input capacity");
+	if (maxInputTokens !== undefined) {
+		return available === undefined
+			? maxInputTokens
+			: Math.min(maxInputTokens, available);
+	}
+	if (available !== undefined && output !== undefined) return available;
+
+	return contextWindow === undefined ? undefined : contextWindow * 0.9;
 }

@@ -1,3 +1,9 @@
+import {
+	clearContextRecovery,
+	hasCompactedContext,
+	MAX_CONTINUITY_BYTES,
+	withContextRecovery,
+} from "./context-recovery";
 /**
  * API-safe message builder for provider payloads.
  *
@@ -76,6 +82,7 @@ interface TruncationCandidate {
 }
 
 export interface MessageBuilderOptions {
+	getCanonicalMessages?: () => readonly Message[];
 	/** Synchronous Core-owned recovery lookup; undefined leaves the normal result projection unchanged. */
 	getToolResultRecovery?: (
 		result: ToolResultContent,
@@ -111,10 +118,14 @@ export function getMessageBuilderOptionsFromEnv(
  * Builds an API-safe message copy without mutating original conversation history.
  */
 export class MessageBuilder {
+	private readonly getCanonicalMessages?: MessageBuilderOptions["getCanonicalMessages"];
 	private readonly recoveryNotices = new WeakSet<object>();
 	private readonly getToolResultRecovery?: MessageBuilderOptions["getToolResultRecovery"];
 	private recoveryNoticeBytes = 0;
 	private indexedMessageCount = 0;
+	private readonly readOwnerOrder = new Map<string, number>();
+	private readonly readOwnerResults = new Map<string, ToolResultContent>();
+	private pruneReadCopies = true;
 	private indexedTailRef: Message | undefined;
 	private readonly toolNameByIdCache = new Map<string, string>();
 	private readonly readLocatorsByToolUseIdCache = new Map<
@@ -140,6 +151,7 @@ export class MessageBuilder {
 
 	constructor(options: MessageBuilderOptions = {}) {
 		this.getToolResultRecovery = options.getToolResultRecovery;
+		this.getCanonicalMessages = options.getCanonicalMessages;
 		this.maxToolResultChars = normalizePositiveLimit(
 			options.maxToolResultChars,
 			DEFAULT_MAX_TOOL_RESULT_CHARS,
@@ -172,9 +184,51 @@ export class MessageBuilder {
 		this.committedOutdatedRewrites.clear();
 	}
 
+	buildPreviewForApi(messages: Message[]): Message[] {
+		const preview = new MessageBuilder({
+			getToolResultRecovery: this.getToolResultRecovery,
+			getCanonicalMessages: this.getCanonicalMessages,
+			maxToolResultChars: this.maxToolResultChars,
+			maxFileContentChars: this.maxFileContentChars,
+			maxTotalTextBytes: this.maxTotalTextBytes,
+			mediaBudget: this.mediaBudget,
+			maxAssistantTextChars: this.maxAssistantTextChars,
+			maxAssistantToolMarkupChars: this.maxAssistantToolMarkupChars,
+			minOutdatedRewriteBytes: this.minOutdatedRewriteBytes,
+		});
+		for (const [id, locators] of this.committedOutdatedRewrites)
+			preview.committedOutdatedRewrites.set(id, new Set(locators));
+		return preview.buildForApi(messages);
+	}
+
 	buildForApi(messages: Message[]): Message[] {
 		this.recoveryNoticeBytes = 0;
+		messages = clearContextRecovery(messages);
+		// Reserve a bounded share for recovery without displacing protected user text.
+		let pinnedBytes = 0;
+		for (const m of messages)
+			if (m.role === "user") {
+				if (typeof m.content === "string")
+					pinnedBytes += utf8ByteLength(m.content);
+				else
+					for (const b of m.content)
+						if (b.type === "text") pinnedBytes += utf8ByteLength(b.text);
+			}
+		const noteBudget = Math.max(
+			0,
+			Math.min(
+				MAX_CONTINUITY_BYTES,
+				Math.floor(this.maxTotalTextBytes / 4),
+				this.maxTotalTextBytes - pinnedBytes,
+			),
+		);
+		const canonical = this.getCanonicalMessages?.();
+		const hasRecovery = noteBudget > 0 && hasCompactedContext(messages);
 		this.reindex(messages);
+		// Under total-output pressure a replacement can itself be trimmed later.
+		this.pruneReadCopies =
+			this.countMessageTextBytes(messages) <=
+			this.maxTotalTextBytes - (hasRecovery ? noteBudget : 0);
 		this.commitOutdatedRewrites(messages);
 		const repairedMessages = this.addMissingToolResults(messages);
 
@@ -211,7 +265,14 @@ export class MessageBuilder {
 		});
 
 		const mediaLimited = this.applyMediaBudget(prepared);
-		return this.truncateToTotalTextBudget(mediaLimited);
+		const budgeted = mediaLimited;
+		// Reserve the full notice allowance before trimming evidence. The final
+		// status text can then change without making the request exceed its budget.
+		const final = this.truncateToTotalTextBudget(
+			budgeted,
+			this.maxTotalTextBytes - (hasRecovery ? noteBudget : 0),
+		);
+		return withContextRecovery(final, canonical, noteBudget);
 	}
 
 	private transformBlock(
@@ -329,6 +390,7 @@ export class MessageBuilder {
 			for (let j = 0; j < message.content.length; j++) {
 				const block = message.content[j];
 				if (block.type === "file") {
+					this.readOwnerOrder.set("file:" + i + ":" + j, i * 1_000_000 + j);
 					this.latestFullContentOwnerByPathCache.set(
 						block.path,
 						`file:${i}:${j}`,
@@ -347,6 +409,8 @@ export class MessageBuilder {
 					if (!this.isReadTool(toolName) || block.is_error === true) {
 						continue;
 					}
+					this.readOwnerOrder.set(block.tool_use_id, i * 1_000_000 + j);
+					this.readOwnerResults.set(block.tool_use_id, block);
 					const locators = this.getReadLocators(block);
 					for (const locator of locators) {
 						this.latestReadToolUseByLocatorCache.set(
@@ -747,6 +811,8 @@ export class MessageBuilder {
 	}
 
 	private resetIndexes(): void {
+		this.readOwnerOrder.clear();
+		this.readOwnerResults.clear();
 		this.indexedMessageCount = 0;
 		this.indexedTailRef = undefined;
 		this.toolNameByIdCache.clear();
@@ -934,14 +1000,31 @@ export class MessageBuilder {
 		locator: ReadLocator,
 		toolUseId: string,
 	): boolean {
-		const fullOwner = this.latestFullContentOwnerByPathCache.get(locator.path);
-		if (fullOwner && fullOwner !== toolUseId) {
-			return true;
-		}
+		if (!this.pruneReadCopies) return false;
+		const newerCompleteCopy = (owner: string | undefined): boolean => {
+			if (!owner || owner === toolUseId) return false;
+			const before = this.readOwnerOrder.get(toolUseId);
+			const after = this.readOwnerOrder.get(owner);
+			if (before === undefined || after === undefined || after <= before)
+				return false;
+			const result = this.readOwnerResults.get(owner);
+			if (!result) return false; // Attachments have a separate projection budget.
+			const { text } = prepareToolResultPreview(result.content);
+			return (
+				typeof text === "string" &&
+				text.length <= this.maxToolResultChars &&
+				!/(?:\[.*truncated|\[Showing lines|\[outdated -)/i.test(text)
+			);
+		};
 		return (
-			this.latestReadToolUseByLocatorCache.get(
-				this.toReadLocatorKey(locator),
-			) !== toolUseId
+			newerCompleteCopy(
+				this.latestFullContentOwnerByPathCache.get(locator.path),
+			) ||
+			newerCompleteCopy(
+				this.latestReadToolUseByLocatorCache.get(
+					this.toReadLocatorKey(locator),
+				),
+			)
 		);
 	}
 
@@ -1196,9 +1279,12 @@ export class MessageBuilder {
 		return false;
 	}
 
-	private truncateToTotalTextBudget(messages: Message[]): Message[] {
+	private truncateToTotalTextBudget(
+		messages: Message[],
+		maxBytes = this.maxTotalTextBytes,
+	): Message[] {
 		let totalBytes = this.countMessageTextBytes(messages);
-		if (totalBytes <= this.maxTotalTextBytes) {
+		if (totalBytes <= maxBytes) {
 			return messages;
 		}
 
@@ -1228,10 +1314,10 @@ export class MessageBuilder {
 
 		const candidates = this.collectTruncationCandidates(next);
 		const retentionFloor = Math.floor(
-			this.maxTotalTextBytes / (2 * Math.max(1, candidates.length)),
+			maxBytes / (2 * Math.max(1, candidates.length)),
 		);
 		for (const candidate of candidates) {
-			if (totalBytes <= this.maxTotalTextBytes) {
+			if (totalBytes <= maxBytes) {
 				break;
 			}
 			const currentBytes = candidate.byteLength;
@@ -1239,7 +1325,7 @@ export class MessageBuilder {
 			if (currentBytes <= minBytes) {
 				continue;
 			}
-			const overflow = totalBytes - this.maxTotalTextBytes;
+			const overflow = totalBytes - maxBytes;
 			const targetBytes = Math.max(minBytes, currentBytes - overflow);
 			const truncated = truncateMiddleToBytes(
 				candidate.get(),
