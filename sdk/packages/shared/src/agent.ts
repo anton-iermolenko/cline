@@ -215,7 +215,14 @@ export interface AgentToolWaitRequest {
 export interface AgentToolWaitObservation {
 	jobId: string;
 	revision: number;
-	state: "running" | "completed" | "failed" | "cancelled" | "waiting_for_input";
+	state:
+		| "running"
+		| "completed"
+		| "failed"
+		| "cancelled"
+		| "waiting_for_input"
+		| "exited"
+		| "identity_changed";
 }
 
 export interface AgentToolWaiting {

@@ -52,7 +52,6 @@ import {
 	type ToolCallRecord,
 	usesImageGenerationOperation,
 } from "@cline/shared";
-import { inheritBackgroundCommandPolicy } from "../../extensions/tools/background-command-policy";
 import { filterDisabledTools } from "../../services/global-settings";
 import {
 	createAgentModelFromConfig,
@@ -157,8 +156,7 @@ function isToolEnabledByPolicies(
 	toolPolicies: AgentConfig["toolPolicies"],
 ): boolean {
 	const globalPolicy = toolPolicies?.["*"] ?? {};
-	const toolPolicy =
-		inheritBackgroundCommandPolicy(toolPolicies)?.[toolName] ?? {};
+	const toolPolicy = toolPolicies?.[toolName] ?? {};
 	return (
 		{
 			...globalPolicy,
@@ -771,6 +769,10 @@ export class SessionRuntime {
 		availableToolNames: ReadonlySet<string>,
 	): Promise<string> {
 		const rules: string[] = [];
+		if (availableToolNames.has("wait_for_process"))
+			rules.push(
+				"For long-running shell work, launch with run_commands, detach the process and redirect stdout/stderr to a log so the launch call can finish. Capture the actual long-lived process PID, not a short-lived launcher PID. Wait sequentially with wait_for_process using wait_seconds=60 and the last revision instead of issuing repeated sleep/tail/ps checks. Keep routine waits quiet. Process exit alone does not prove success: inspect the log or a completion record for the outcome.",
+			);
 		for (const rule of this.contributionRegistry.getRegisteredRules()) {
 			if (
 				rule.whenToolAvailable &&

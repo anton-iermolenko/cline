@@ -66,14 +66,10 @@ const BASE_TOOL_CATALOG: readonly RuntimeToolCatalogEntry[] = [
 		headlessToolNames: ["run_commands"],
 	},
 	{
-		id: "background_commands",
+		id: "wait_for_process",
 		description:
-			"Start, wait for, and cancel managed background shell commands.",
-		headlessToolNames: [
-			"start_background_command",
-			"wait_for_job",
-			"cancel_background_command",
-		],
+			"Wait on the PID and optional log of a shell-launched process, with process identity checks.",
+		headlessToolNames: ["wait_for_process"],
 	},
 	{
 		id: "editor",
@@ -128,7 +124,7 @@ const TOOL_NAME_TO_FLAG: Partial<
 			| "enableReadFiles"
 			| "enableSearch"
 			| "enableBash"
-			| "enableBackgroundCommands"
+			| "enableProcessWait"
 			| "enableWebFetch"
 			| "enableApplyPatch"
 			| "enableEditor"
@@ -141,7 +137,7 @@ const TOOL_NAME_TO_FLAG: Partial<
 	read_files: "enableReadFiles",
 	search_codebase: "enableSearch",
 	run_commands: "enableBash",
-	background_commands: "enableBackgroundCommands",
+	wait_for_process: "enableProcessWait",
 	fetch_web_content: "enableWebFetch",
 	apply_patch: "enableApplyPatch",
 	editor: "enableEditor",
@@ -160,7 +156,7 @@ type ResolvedToolFlags = Pick<
 	| "enableReadFiles"
 	| "enableSearch"
 	| "enableBash"
-	| "enableBackgroundCommands"
+	| "enableProcessWait"
 	| "enableWebFetch"
 	| "enableApplyPatch"
 	| "enableEditor"
@@ -233,6 +229,8 @@ function isEntryEnabledByDefault(
 	if (entryId === "tasks") {
 		return true;
 	}
+	if (entryId === "wait_for_process")
+		return flags.enableBash === true && flags.enableProcessWait === true;
 	if (entryId === "editor") {
 		return flags.enableEditor === true || flags.enableApplyPatch === true;
 	}

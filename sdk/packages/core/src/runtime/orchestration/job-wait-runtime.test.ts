@@ -2,6 +2,10 @@ import { createAgentRuntime } from "@cline/agents";
 import type { AgentModel, AgentTool } from "@cline/shared";
 import { describe, expect, it } from "vitest";
 import {
+	createProcessWaitExecutor,
+	createWaitForProcessTool,
+} from "../../extensions/tools/process-wait";
+import {
 	createJobWaitCapability,
 	parseJobWaitObservation,
 	waitForJobStatus,
@@ -30,6 +34,7 @@ async function runCalls(tool: AgentTool, inputs: unknown[]) {
 		},
 	};
 	const errors: string[] = [];
+	const prompts: string[] = [];
 	const session = new SessionRuntime(
 		{
 			providerId: "cline",
@@ -41,16 +46,43 @@ async function runCalls(tool: AgentTool, inputs: unknown[]) {
 		},
 		{
 			createAgentRuntimeImpl: (config) =>
-				createAgentRuntime({ ...config, model }),
+				createAgentRuntime({
+					...config,
+					model: {
+						stream: async (request) => {
+							prompts.push(request.systemPrompt ?? "");
+							return model.stream(request);
+						},
+					},
+				}),
 		},
 	);
 	session.subscribeEvents((event) => {
 		if (event.type === "error") errors.push(event.error.message);
 	});
 	const result = await session.run("wait for the job");
-	return { result, errors, turns: turn };
+	return { result, errors, turns: turn, prompts };
 }
 describe("job waits through the real agent runtime", () => {
+	it("guides shell launches into the one PID-wait tool and allows six quiet waits", async () => {
+		const tool = createWaitForProcessTool(
+			createProcessWaitExecutor({
+				probe: async () => ({ status: "found", token: "same-process" }),
+			}),
+		);
+		const { result, errors, turns, prompts } = await runCalls(
+			tool,
+			Array(6).fill({ pid: 123, wait_seconds: 1, after_revision: 0 }),
+		);
+		expect(result.finishReason).toBe("completed");
+		expect(turns).toBe(7);
+		expect(errors).toEqual([]);
+		expect(prompts[0]).toContain("launch with run_commands");
+		expect(prompts[0]).toContain(
+			"instead of issuing repeated sleep/tail/ps checks",
+		);
+		expect(prompts[0]).not.toContain("start_background_command");
+	});
 	it("allows more than five identical quiet waits without a mistake-limit abort", async () => {
 		const observation = { job_id: "job", state: "running", revision: 0 };
 		const capability = createJobWaitCapability();

@@ -1313,23 +1313,24 @@ Compaction captures continuity memory once and reuses it for the first prepared 
 When an interactive client loses its hub session but still has saved messages, it resumes the saved session identity. Core then restores its validated compaction state, checkpoints and complete transcript rather than creating a fresh session that replays pre-compaction images as current context. Empty missing sessions may still start fresh.
 
 
-## Managed background commands and validated waiting
+## PID-based process waiting
 
-Core owns session-scoped command jobs and waiting budgets. The default shell
-toolset exposes start/wait/cancel tools; custom shell hosts opt in explicitly
-with a background executor. The existing cross-platform shell executor owns
-subprocess execution and process-tree cleanup. Job records survive client and
-toolset reconstruction in the same hub process; they are not restored after a
-hub restart.
+Shell launch and termination remain `run_commands` operations. Core supplies one
+`wait_for_process` tool that adopts a PID on first inspection, pins its kernel
+start identity, and optionally reads a bounded regular log tail. Registrations
+belong to a session and survive client/toolset reconstruction in the same hub,
+including after exit; a reused PID never silently replaces the original target.
+Non-child process exit is reported with unknown outcome. Probe unavailability is
+distinct from absence. Custom shell hosts explicitly provide a matching process
+inspection executor for their OS/PID namespace.
 
-`AgentTool.waiting` is a runtime-only capability supplied by a registered tool.
-The shared bounded-wait primitive supports local command snapshots and remote
-expert status. The MCP adapter attaches this capability to the registered expert
-status tool, preserving that server's interface and batching of routine progress.
-Core defers repetitive-call inspection until it can validate job identity,
-revision, state, and elapsed waiting time. Failed and invalid observations retain
-ordinary loop protection. Valid waits have their own wall-clock deadline; Core
-persists the last running result before stopping at the next model boundary.
+`AgentTool.waiting` remains a runtime-only capability shared by process monitoring
+and the registered expert-status adapter. Core validates identity, revision,
+state, and elapsed blocking time after execution before granting a loop exemption.
+Invalid and premature observations retain the ordinary guard. Valid waits use a
+separate wall-clock budget; the last running result is persisted before stopping
+at the next model boundary. Tool-conditional system guidance directs shell-launched
+work into PID waits rather than repeated shell polling.
 
-See [the API reference](DOC.md#managed-background-commands-and-validated-waiting)
-for tool usage, policies, limits, cancellation, and job lifetime.
+See [the API reference](DOC.md#pid-based-process-waiting) for inputs, states,
+limits, cancellation, and registration lifetime.

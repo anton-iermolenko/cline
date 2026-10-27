@@ -6,8 +6,6 @@
 
 // Zod Utilities
 export { validateWithZod, zodToJsonSchema } from "@cline/shared";
-export { createBackgroundCommandTools } from "./background-job-tools";
-export { BackgroundCommandJobs } from "./background-jobs";
 export {
 	createPlanModeCommandGuardExtension,
 	PLAN_MODE_COMMAND_GUARD_EXTENSION_NAME,
@@ -74,6 +72,15 @@ export {
 	ToolPresets,
 } from "./presets";
 export {
+	createProcessWaitExecutor,
+	createWaitForProcessTool,
+	type ProcessWaitExecutor,
+	ProcessWaiter,
+	type ProcessWaitInput,
+	type ProcessWaitOptions,
+	type ProcessWaitResult,
+} from "./process-wait";
+export {
 	type BuiltinToolAvailabilityContext,
 	getCoreAcpToolNames,
 	getCoreBuiltinToolCatalog,
@@ -138,7 +145,7 @@ export type {
 // Convenience: Create Tools with Built-in Executors
 // =============================================================================
 
-import { type AgentTool, getDefaultShell } from "@cline/shared";
+import { type AgentTool, getDefaultShell, getShellKind } from "@cline/shared";
 import { createDefaultTools } from "./definitions";
 import {
 	createDefaultExecutors,
@@ -210,9 +217,6 @@ export function createBuiltinTools(
 		getDefaultShell(process.platform);
 	const resolvedExecutorOptions: DefaultExecutorsOptions = {
 		...executorOptions,
-		backgroundCommandTimeoutMs:
-			toolsConfig.backgroundCommandTimeoutMs ??
-			executorOptions.backgroundCommandTimeoutMs,
 		bash: {
 			...executorOptions.bash,
 			shell,
@@ -224,8 +228,11 @@ export function createBuiltinTools(
 		...(executorOverrides ?? {}),
 	};
 
-	if (executorOverrides?.bash && !executorOverrides.backgroundBash)
-		delete executors.backgroundBash;
+	if (
+		(executorOverrides?.bash || getShellKind(shell) === "wsl") &&
+		!executorOverrides?.processWait
+	)
+		delete executors.processWait;
 	return createDefaultTools({
 		...toolsConfig,
 		shell,

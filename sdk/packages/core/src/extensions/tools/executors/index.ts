@@ -6,6 +6,7 @@
  * for custom implementations.
  */
 
+import { createProcessWaitExecutor } from "../process-wait";
 import type { ToolExecutors } from "../types";
 import {
 	type ApplyPatchExecutorOptions,
@@ -60,7 +61,6 @@ export interface DefaultExecutorsOptions {
 	fileRead?: FileReadExecutorOptions;
 	search?: SearchExecutorOptions;
 	bash?: ShellExecutorOptions;
-	backgroundCommandTimeoutMs?: number;
 	webFetch?: WebFetchExecutorOptions;
 	applyPatch?: ApplyPatchExecutorOptions;
 	editor?: EditorExecutorOptions;
@@ -102,11 +102,7 @@ export function createDefaultExecutors(
 		readFile: createFileReadExecutor(options.fileRead),
 		search: createSearchExecutor(options.search),
 		bash: createDefaultShellExecutor(options.bash),
-		backgroundBash: createDefaultShellExecutor({
-			...options.bash,
-			timeoutMs: options.backgroundCommandTimeoutMs ?? 60 * 60_000,
-			executionController: undefined,
-		}),
+		processWait: createProcessWaitExecutor(),
 		webFetch: createWebFetchExecutor(options.webFetch),
 		applyPatch: createApplyPatchExecutor(options.applyPatch),
 		editor: createEditorExecutor(options.editor),

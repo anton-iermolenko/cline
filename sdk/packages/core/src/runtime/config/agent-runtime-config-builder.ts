@@ -26,7 +26,6 @@ import type {
 	ITelemetryService,
 } from "@cline/shared";
 import { version as clineCoreVersion } from "../../../package.json";
-import { inheritBackgroundCommandPolicy } from "../../extensions/tools/background-command-policy";
 
 /**
  * Inputs required to assemble an `AgentRuntimeConfig`. Distinct from
@@ -126,7 +125,7 @@ export function createAgentRuntimeConfig(
 				: (input.completionPolicy ?? agentConfig.completionPolicy),
 		maxIterations: agentConfig.maxIterations,
 		toolExecution,
-		toolPolicies: inheritBackgroundCommandPolicy(agentConfig.toolPolicies),
+		toolPolicies: agentConfig.toolPolicies,
 		toolContextMetadata: input.toolContextMetadata,
 		requestToolApproval: agentConfig.requestToolApproval,
 	};

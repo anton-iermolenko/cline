@@ -407,59 +407,81 @@ When a restored or forked session has no compaction sidecar, core state reads an
 Measured compaction recounts the complete prepared request, requires it to shrink the original input and fit the live hard allowance, and preserves the latest typed user request verbatim. Manual and overflow compaction must meet the requested target; automatic compaction may preserve a useful checkpoint above the preference only within the maximum and growth headroom. Basic compaction emits dropped-work notes separately from that protected request and does not merge it into older user turns. Bounded fallback retries reproject the original transcript, enforce the smaller projection budget for old prompts, and shorten embedded earlier assistant responses with that budget; rejected candidates report the measured target, candidate count, and rejection reason without changing saved history. A lone protected request below the hard allowance may skip without claiming compaction succeeded.
 
 
-## Managed background commands and validated waiting
+## PID-based process waiting
 
-The default subprocess toolset offers `start_background_command`, `wait_for_job`,
-and `cancel_background_command`. Start one complete command, keep its returned
-`job_id`, then wait sequentially with `wait_seconds: 60` and `after_revision`
-from the previous response. Waits return `state`, `revision`, `changed`, and
-bounded output when changed. `wait_seconds: 0` requests an immediate snapshot.
-Command completion, nonzero exit, cancellation, and inspection errors are
-distinct outcomes. Quiet running timeouts are successful observations.
+Launch long-running work through `run_commands`, detach the actual worker so
+the launch call can finish, redirect stdout/stderr to a log, and capture its PID.
+Use the single `wait_for_process` tool for subsequent waiting:
 
-`enableBackgroundCommands` controls the group (enabled in act/yolo, disabled
-in plan). `enableBash: false` also removes it. Starting a job inherits shell
-disablement and approval requirements and passes through the plan command guard.
-Hosts overriding `executors.bash` must explicitly supply `backgroundBash` to
-enable these tools; the built-in subprocess executor never silently replaces a
-host's command sandbox or terminal. Custom executors must honor `context.signal`
-and emit output through `context.emitUpdate` to support incremental revisions.
-The built-in executor uses the configured shell, environment, bounded output,
-and process-tree cancellation. `backgroundCommandTimeoutMs` defaults to one hour.
+```json
+{"pid": 12345, "log_path": "experiment.log", "wait_seconds": 60}
+```
 
-`BackgroundCommandJobs` is hub-process scoped, with session-owned job IDs and a
-32-job per-session cap. Terminal records are retained for one hour and evicted
-before rejecting new starts. Client disconnects, stopping a wait, and toolset
-rebuilds do not terminate jobs; use the cancellation tool explicitly. Jobs and
-logs are held in bounded memory, not restored after a hub restart. Unknown or
-cross-session IDs fail explicitly; a lost process is never assumed to be running.
-Already-detached `nohup`/shell jobs are not adopted by these tools.
+Then wait sequentially with the returned `revision` as `after_revision`. The tool
+waits internally for log progress, process exit, or the interval to expire;
+routine waits should stay quiet. Omitted `wait_seconds` defaults to 60, values
+0–60 are accepted, and zero requests an immediate snapshot. There are no managed
+start/wait/cancel tools: launch and termination remain shell operations.
 
-`waitForJobStatus` and `createJobWaitCapability` from `@cline/core` provide the
-shared adapter interface. A registered tool's runtime-only `waiting` capability
-parses requests and validates job identity, revision, and state. Tool names,
-model-supplied polling flags, arbitrary `sleep` commands, and MCP descriptions
-cannot grant an exemption. Before execution, Core defers identical-call checks
-only for valid positive wait requests. After execution, a matching observation
-must either advance the verified revision, introduce a terminal/actionable state,
-or have actually spent the requested interval waiting while running. Invalid,
-failed, and premature responses retain loop detection by stable job identity.
-Repeated terminal snapshots also retain detection. Actual tool failures keep
-their ordinary mistake accounting.
+The result contains `pid`, `state`, `revision`, `changed`, `exit_code: null`, and
+a short explanatory `note`. Changed results can include a bounded log tail;
+unchanged waits omit repeated output. A missing/unreadable log is reported through
+`log_error` without inventing process exit. Relative `log_path` values resolve
+from the session workspace. A registration can add its log once but cannot switch
+to another log. The tool reads at most the last 16 KiB and rejects non-regular
+files, including FIFOs/devices, instead of blocking on them.
 
-Core enforces a separate default 30-minute wall-clock budget per tool/job. Configure
-`createJobWaitCapability({ maxWaitMs })` for another budget. Routine progress and
-changing wait durations do not reset it. Budget checks occur after each bounded
-wait (at most 60 seconds), so the deadline can be exceeded by one wait interval.
-Exhaustion stores `wait_budget_exhausted` with the latest running status before
-stopping at the next model boundary; it does not manufacture consecutive mistakes
-or cancel the job. A new human follow-up renews the waiting budget; automatic
-continuation preserves it. History reset/restore clears all waiting trackers.
+States are `running`, `exited`, `identity_changed`, and `unavailable`. A quiet
+running timeout is a successful wait. Disappearance of an adopted non-child
+process establishes that it stopped, not whether its command succeeded: no exit
+code is invented. Inspect its log or a completion record written by the launch
+command for success/failure. Identity-probe failure returns `unavailable` and does
+not prove exit or receive a loop exemption. Cancelling a wait never signals the
+process.
 
-The MCP adapter for the registered `consult-expert` server's `expert_status`
-uses the same primitive and runtime capability. Its public name, input schema,
-readiness checks, explicit snapshots, and response envelope are preserved,
-including custom tool-name transforms. Routine expert progress is collected for
-the requested interval; human questions and terminal states return immediately.
-The adapter forwards cancellation to MCP calls and normalizes expert state names
-only for internal validation. It replaces the former name-based loop exemption.
+On first inspection, Core registers PID plus the kernel process-start token.
+Later inspections compare the pinned token; a reused PID returns
+`identity_changed` rather than following the replacement. A PID already absent
+on first inspection returns `exited` with unknown outcome and is not automatically
+adopted if it later appears. Registration cannot establish an identity that exited
+before the first inspection, or prove that the first observed process was the one
+launched. Capture the actual long-lived worker PID rather than a launcher/wrapper.
+Registrations are isolated by session, persist across toolset/client reconstruction
+in the same hub process, and stay pinned after exit. They are held in memory, with
+a 128-PID cap per session, and are not restored after a hub restart.
+
+`enableProcessWait` controls this tool and `enableBash: false` removes it.
+Hosts overriding `executors.bash` must explicitly supply `executors.processWait`
+that inspects the same OS/PID namespace. A Windows-hosted WSL shell also requires
+an explicit process executor. Core never assumes that a remote or
+sandboxed shell shares the hub's processes. SDK integrations can use
+`createWaitForProcessTool`, `createProcessWaitExecutor`, or `ProcessWaiter`.
+Runtime guidance is added only when the tool is available, directing background
+shell launches into PID waits instead of repeated `sleep`/`tail`/`ps` commands.
+
+### Shared wait protocol
+
+`waitForJobStatus` and `createJobWaitCapability` provide the common adapter
+mechanism for process monitoring and `consult-expert` status. A registered tool's
+runtime-only `waiting` capability validates requests and observations. Names,
+model-supplied polling flags, and arbitrary sleep commands cannot exempt a call.
+Core defers identical-call checks until it can verify matching target identity,
+monotonic revision, state, and actual elapsed waiting time. Running observations
+must advance the verified revision or spend the requested interval waiting.
+Invalid, failed, premature, and repeated terminal observations retain detection
+by stable target identity, regardless of changes to wait duration or cursor.
+
+Valid waits have a separate default 30-minute wall-clock budget per tool/target.
+`createJobWaitCapability({ maxWaitMs })` configures another budget. Progress does
+not reset it. Checks occur after each bounded wait, allowing at most one interval
+of overshoot. Exhaustion preserves the running status with `wait_budget_exhausted`
+before stopping at the next model boundary, without adding consecutive mistakes
+or terminating the process. A new human follow-up renews the budget; automatic
+continuation preserves it. History reset/restore clears waiting trackers.
+
+The registered `consult-expert` server's `expert_status` adapter uses the same
+primitive and runtime capability while preserving its public interface and MCP
+response envelope, including custom tool-name transforms. Readiness and explicit
+snapshots pass through. Routine expert progress is collected for the requested
+interval; questions and terminal states return immediately. Cancellation reaches
+the MCP request. Expert state normalization is internal to validation.

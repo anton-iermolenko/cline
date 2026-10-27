@@ -105,6 +105,8 @@ export function parseJobWaitObservation(
 			"failed",
 			"cancelled",
 			"waiting_for_input",
+			"exited",
+			"identity_changed",
 		].includes(String(v.state))
 	)
 		return;
