@@ -1,3 +1,4 @@
+import { createSessionCompactionState, projectSessionCompactionState, type SessionCompactionState } from "@cline/core"
 import { CLOUD_CREATION_UNCONFIRMED_ERROR_CODE } from "@shared/cloud/cloud-sessions"
 import type { ClineMessage, TurnState } from "@shared/ExtensionMessage"
 import { GetTaskHistoryRequest } from "@shared/proto/cline/task"
@@ -6,7 +7,9 @@ import { ClineError } from "@/services/error/ClineError"
 import { telemetryService } from "@/services/telemetry"
 import { isClineManagedProvider } from "@/shared/utils/cline"
 import { Controller as SdkController } from "./SdkController"
+import type { SdkInitialMessages } from "./session-host"
 import { createTaskProxy, type TaskProxy } from "./task-proxy"
+import type { VscodeSessionHost } from "./vscode-session-host"
 import { resolveWorkspaceManagerPaths, resolveWorkspaceRootPath } from "./workspace-root"
 
 describe("isClineManagedProvider", () => {
@@ -516,6 +519,141 @@ describe("SDK remote-config coordination", () => {
 		await SdkController.prototype.reinitExistingTaskFromId.call(controller as never, "task-id")
 
 		expect(events).toEqual(["policy", "resume"])
+	})
+})
+
+describe("edit/regenerate compaction", () => {
+	const source: SdkInitialMessages = [
+		{ role: "user", content: "initial task" },
+		{ role: "assistant", content: "initial answer" },
+		{ role: "user", content: "follow-up" },
+		{ role: "assistant", content: "follow-up answer" },
+		{ role: "user", content: "superseded newest prompt" },
+		{ role: "assistant", content: "superseded answer" },
+	]
+	const summary: SdkInitialMessages = [{ role: "user", content: "First summary", metadata: { kind: "compaction_summary" } }]
+	function fixture(state?: SessionCompactionState, active = true) {
+		const sdkHost = {
+			readSessionCompactionState: vi.fn().mockResolvedValue(state),
+			readLiveMessages: vi.fn().mockResolvedValue(source),
+			readMessages: vi.fn().mockResolvedValue(source.slice(0, 4)),
+			get: vi.fn().mockResolvedValue({ cwd: "/workspace" }),
+			dispose: vi.fn().mockResolvedValue(undefined),
+		}
+		const startNewSession = vi.fn(async (_input: Parameters<VscodeSessionHost["start"]>[0]) => ({
+			startResult: { sessionId: "replacement" },
+			sdkHost,
+		}))
+		const controller = {
+			task: {
+				taskId: "original",
+				messageStateHandler: {
+					getClineMessages: () => [
+						{ ts: 1, type: "say", say: "task", text: "initial task" },
+						{ ts: 3, type: "say", say: "user_feedback", text: "follow-up" },
+						{ ts: 5, type: "say", say: "user_feedback", text: "superseded newest prompt" },
+					],
+				},
+			},
+			sessions: {
+				getActiveSession: () => (active ? { sessionId: "original", sdkHost, isRunning: false } : undefined),
+				startNewSession,
+				fireAndForgetSend: vi.fn(),
+			},
+			createRemoteConfigAwareSessionHost: vi.fn().mockResolvedValue(sdkHost),
+			taskHistory: { findHistoryItem: async () => undefined, updateTaskHistoryItem: vi.fn() },
+			getWorkspaceRoot: async () => "/workspace",
+			stateManager: { getGlobalSettingsKey: () => "act" },
+			sessionConfigBuilder: { build: async () => ({ providerId: "anthropic", apiKey: "test-key", modelId: "model" }) },
+			resolveContextMentions: async (text: string) => text,
+			interactions: { clearPending: vi.fn() },
+			turnStateTracker: { set: vi.fn() },
+			messageTranslatorState: { clearTurnOutcome: vi.fn() },
+			resetMessageTranslatorAndFence: vi.fn(),
+			postStateToWebview: vi.fn(),
+		}
+		const edit = (messageTs = 5) =>
+			SdkController.prototype.editMessageAndRegenerate.call(controller as never, { messageTs, text: "edited newest" })
+		return { controller, sdkHost, startNewSession, edit }
+	}
+
+	it.each([true, false])("keeps a validated summary and recent tail for active=%s", async (active) => {
+		// An older copied checkpoint may cover an unchanged tail as well as
+		// the actual summary. Derivation must peel that tail before the edit.
+		const state = createSessionCompactionState({
+			sourceMessages: source,
+			compactedMessages: [...summary, ...source.slice(2)],
+			conversationId: "original",
+		})
+		const before = JSON.stringify(state)
+		const { controller, sdkHost, startNewSession, edit } = fixture(state, active)
+		await edit()
+		const start = startNewSession.mock.calls[0][0]
+		expect(start.initialMessages).toEqual(source.slice(0, 4))
+		expect(start.initialCompactionState?.source_message_count).toBe(2)
+		expect(start.initialCompactionState?.conversation_id).toBeUndefined()
+		expect(start.config.sessionId).toBeUndefined()
+		if (!start.initialCompactionState || !start.initialMessages) throw new Error("Missing carried context")
+		const projected = projectSessionCompactionState(start.initialCompactionState, [
+			...start.initialMessages,
+			{ role: "user", content: "edited newest" },
+		])
+		expect(projected?.map((m) => m.content)).toEqual(["First summary", "follow-up", "follow-up answer", "edited newest"])
+		expect(JSON.stringify(start.initialCompactionState)).not.toContain("superseded")
+		expect(JSON.stringify(state)).toBe(before)
+		expect(sdkHost.readSessionCompactionState).toHaveBeenCalledWith("original")
+		expect(sdkHost.readSessionCompactionState.mock.invocationCallOrder[0]).toBeLessThan(
+			sdkHost.readLiveMessages.mock.invocationCallOrder[0],
+		)
+		expect(sdkHost.readMessages).not.toHaveBeenCalled()
+		expect(controller.sessions.fireAndForgetSend).toHaveBeenCalledWith(
+			sdkHost,
+			"replacement",
+			"edited newest",
+			undefined,
+			undefined,
+		)
+		if (!active) expect(sdkHost.dispose).toHaveBeenCalledWith("editMessageAndRegenerate")
+	})
+
+	it.each([1, 3])("invalidates a summary when editing covered message %s", async (messageTs) => {
+		const state = createSessionCompactionState({ sourceMessages: source.slice(0, 4), compactedMessages: summary })
+		const { startNewSession, edit } = fixture(state)
+		await edit(messageTs)
+		expect(startNewSession.mock.calls[0][0].initialMessages).toEqual(source.slice(0, messageTs === 1 ? 0 : 2))
+		expect(startNewSession.mock.calls[0][0]).not.toHaveProperty("initialCompactionState")
+	})
+
+	it("rejects a stale summary whose source prefix no longer matches", async () => {
+		const state = createSessionCompactionState({
+			sourceMessages: [{ role: "user", content: "different history" }],
+			compactedMessages: summary,
+		})
+		const { startNewSession, edit } = fixture(state)
+		await edit()
+		expect(startNewSession.mock.calls[0][0]).not.toHaveProperty("initialCompactionState")
+	})
+
+	it("edits normally when there is no compaction checkpoint", async () => {
+		const { startNewSession, edit } = fixture()
+		await edit()
+		expect(startNewSession.mock.calls[0][0].initialMessages).toEqual(source.slice(0, 4))
+		expect(startNewSession.mock.calls[0][0]).not.toHaveProperty("initialCompactionState")
+	})
+
+	it("supports a host without a compaction reader", async () => {
+		const { sdkHost, startNewSession, edit } = fixture()
+		Reflect.deleteProperty(sdkHost, "readSessionCompactionState")
+		await edit()
+		expect(startNewSession.mock.calls[0][0]).not.toHaveProperty("initialCompactionState")
+	})
+
+	it("leaves the old session intact when reading its checkpoint fails", async () => {
+		const { controller, sdkHost, startNewSession, edit } = fixture()
+		sdkHost.readSessionCompactionState.mockRejectedValue(new Error("checkpoint read failed"))
+		await expect(edit()).rejects.toThrow("checkpoint read failed")
+		expect(startNewSession).not.toHaveBeenCalled()
+		expect(controller.interactions.clearPending).not.toHaveBeenCalled()
 	})
 })
 

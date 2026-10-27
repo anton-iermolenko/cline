@@ -1,4 +1,9 @@
-import { type ClineCoreStartInput, type ITelemetryService, toClineCoreStartInput } from "@cline/core"
+import {
+	type ClineCoreStartInput,
+	createSessionCompactionState,
+	type ITelemetryService,
+	toClineCoreStartInput,
+} from "@cline/core"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 const mockClineCoreCreate = vi.hoisted(() => vi.fn())
@@ -68,6 +73,32 @@ describe("VscodeSessionHost telemetry wiring", () => {
 		expect(mockClineCoreCreate).toHaveBeenCalledWith(expect.objectContaining({ telemetry }))
 		expect(mockClineCoreCreate.mock.calls[0][0].prepare).toBeUndefined()
 		expect(mockInnerStart.mock.calls[0][0]).toMatchObject({ source: "vscode", config: { telemetry } })
+		await host.dispose()
+	})
+
+	it("reads and forwards compaction state through replacement-session preparation", async () => {
+		const initialMessages = [{ role: "user" as const, content: "long source history" }]
+		const state = createSessionCompactionState({
+			sourceMessages: initialMessages,
+			compactedMessages: [{ role: "user", content: "summary" }],
+		})
+		const readSessionCompactionState = vi.fn().mockResolvedValue(state)
+		mockClineCoreCreate.mockResolvedValue({
+			readSessionCompactionState,
+			start: mockInnerStart,
+			stop: async () => {},
+			dispose: async () => {},
+		})
+		const host = await VscodeSessionHost.create({ mcpHub: {} as never, telemetry: makeTelemetry() })
+		const saved = await host.readSessionCompactionState("source-task")
+		await host.start({
+			config: { ...gitStartInput.config, sessionId: undefined },
+			initialMessages,
+			initialCompactionState: saved,
+		})
+		expect(readSessionCompactionState).toHaveBeenCalledWith("source-task")
+		expect(mockInnerStart.mock.calls[0][0].initialCompactionState).toBe(state)
+		expect(mockInnerStart.mock.calls[0][0].config.sessionId).toBeUndefined()
 		await host.dispose()
 	})
 

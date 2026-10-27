@@ -42,6 +42,7 @@ export interface SdkSessionHost {
 	 * lost to the persisted transcript lagging behind.
 	 */
 	readLiveMessages?(sessionId: string): Promise<SdkInitialMessages>
+	readSessionCompactionState?(sessionId: string): Promise<SessionCompactionState | undefined>
 	updateSessionCompactionState?(sessionId: string, state: SessionCompactionState): Promise<{ updated: boolean }>
 	restore(input: RestoreInput): Promise<RestoreResult>
 	/** Diffs a checkpoint snapshot against the current working tree. */

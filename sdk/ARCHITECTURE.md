@@ -298,6 +298,13 @@ Callers can opt into a display-only latest-message preview during history hydrat
 lightweight status refreshes do not reread transcripts. The CLI shows resume errors
 in its chat view even when the request began on the welcome screen.
 
+VS Code edit/regenerate copies canonical history up to the edited user message
+and derives an initial compaction state against that unchanged prefix. A valid
+summary and its newer tail carry into the replacement session, with Core assigning
+the new conversation identity. Edits inside the summarized prefix and stale
+checkpoints invalidate reuse. Reading the checkpoint precedes the live transcript
+snapshot so an in-flight turn cannot move its anchor past the copied history.
+
 Session history provenance keeps the client surface and initiation mode separate.
 `StartSessionInput.source` identifies the client (`vscode`, `desktop`, `cli`,
 `core`, and so on), while top-level `StartSessionInput.mode` identifies how the
