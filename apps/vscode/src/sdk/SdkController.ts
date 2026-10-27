@@ -10,6 +10,7 @@ import {
 	type CompareCheckpointResult,
 	createRestoredCheckpointMetadata,
 	createUserInstructionConfigService,
+	deriveSessionCompactionState,
 	ensureChatWorkspace,
 	findCheckpointForRun,
 	getProviderAuthStorageId,
@@ -107,7 +108,7 @@ import {
 	isSyntheticSdkUserMessage,
 	type SdkUserMessage,
 } from "./sdk-user-message-mapping"
-import { readCurrentMessages } from "./session-host"
+import { readCurrentMessages, type SdkInitialMessages } from "./session-host"
 import { buildDisabledWorkflowNames, expandSlashCommands } from "./slash-command-expansion"
 import { StatePostDebouncer } from "./state-post-debouncer"
 import { createTaskProxy, type TaskProxy } from "./task-proxy"
@@ -1795,20 +1796,30 @@ export class Controller {
 		const userOrdinal = clineMessages.slice(0, targetIndex + 1).filter(isVisibleCheckpointUserMessage).length
 		const canRestoreWorkspace = getCheckpointRunCountForMessage(clineMessages, targetIndex) !== undefined
 		const sourceSessionId = activeSession?.sessionId ?? currentTask.taskId
-		let sdkMessages: SdkUserMessage[]
+		let sdkMessages: SdkInitialMessages
 		let tempHost: VscodeSessionHost | undefined
 		const sessionHost = activeSession?.sdkHost ?? (tempHost = await this.createRemoteConfigAwareSessionHost())
 		try {
-			sdkMessages = (await readCurrentMessages(sessionHost, sourceSessionId)) as SdkUserMessage[]
+			// Read the checkpoint before the live transcript so a concurrent turn
+			// cannot advance its anchor beyond the messages copied below.
+			const sourceCompactionState = await sessionHost.readSessionCompactionState?.(sourceSessionId)
+			sdkMessages = await readCurrentMessages(sessionHost, sourceSessionId)
 			const sdkTargetIndex = findSdkUserMessageIndexByOrdinal(sdkMessages, userOrdinal)
 			if (sdkTargetIndex === -1) {
 				throw new Error("Could not map edited message to the conversation history")
 			}
 			const checkpointRunCount = getSdkCheckpointRunCountForMessageIndex(sdkMessages, sdkTargetIndex)
 
-			const initialMessages = sdkMessages.slice(0, sdkTargetIndex) as Parameters<
-				VscodeSessionHost["start"]
-			>[0]["initialMessages"]
+			const initialMessages = sdkMessages.slice(0, sdkTargetIndex)
+			// Carry only a summary whose covered prefix survives the edit. The
+			// derived state is unowned; Core binds it to the replacement session.
+			const initialCompactionState = sourceCompactionState
+				? deriveSessionCompactionState({
+						state: sourceCompactionState,
+						sourceMessages: sdkMessages,
+						targetMessages: initialMessages,
+					})
+				: undefined
 			const firstUserMessage = sdkMessages.find(
 				(message) => message.role === "user" && !!extractSdkUserText(message) && !isSyntheticSdkUserMessage(message),
 			)
@@ -1844,6 +1855,7 @@ export class Controller {
 			const startInput = {
 				...buildStartSessionInput(config, { prompt: historyTitle, cwd, mode }),
 				initialMessages,
+				...(initialCompactionState ? { initialCompactionState } : {}),
 				sessionMetadata: {
 					title: historyTitle,
 					modelId: config.modelId,

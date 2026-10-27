@@ -68,6 +68,11 @@ export {
 	syncStoredProviderRegistration,
 } from "../../../../sdk/packages/core/src/services/providers/local-provider-registry"
 export { captureGitSnapshot } from "../../../../sdk/packages/core/src/services/telemetry/core-events"
+export {
+	createSessionCompactionState,
+	deriveSessionCompactionState,
+	projectSessionCompactionState,
+} from "../../../../sdk/packages/core/src/session/models/session-compaction"
 
 export function readGlobalSettings(): ReturnType<
 	typeof import("../../../../sdk/packages/core/src/services/global-settings").readGlobalSettings
