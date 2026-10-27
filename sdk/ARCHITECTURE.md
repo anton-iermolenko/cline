@@ -1311,3 +1311,26 @@ Provider preparation embeds a bounded continuity brief in the existing compactio
 Compaction captures continuity memory once and reuses it for the first prepared request and later sidecar projections. Follow-up user messages append to the transcript without rewriting the compacted prefix. Legacy sidecars reconstruct memory only from their validated covered source prefix; bare summaries keep static source-retrieval guidance.
 
 When an interactive client loses its hub session but still has saved messages, it resumes the saved session identity. Core then restores its validated compaction state, checkpoints and complete transcript rather than creating a fresh session that replays pre-compaction images as current context. Empty missing sessions may still start fresh.
+
+
+## PID-based process waiting
+
+Shell launch and termination remain `run_commands` operations. Core supplies one
+`wait_for_process` tool that adopts a PID on first inspection, pins its kernel
+start identity, and optionally reads a bounded regular log tail. Registrations
+belong to a session and survive client/toolset reconstruction in the same hub,
+including after exit; a reused PID never silently replaces the original target.
+Non-child process exit is reported with unknown outcome. Probe unavailability is
+distinct from absence. Custom shell hosts explicitly provide a matching process
+inspection executor for their OS/PID namespace.
+
+`AgentTool.waiting` remains a runtime-only capability shared by process monitoring
+and the registered expert-status adapter. Core validates identity, revision,
+state, and elapsed blocking time after execution before granting a loop exemption.
+Invalid and premature observations retain the ordinary guard. Valid waits use a
+separate wall-clock budget; the last running result is persisted before stopping
+at the next model boundary. Tool-conditional system guidance directs shell-launched
+work into PID waits rather than repeated shell polling.
+
+See [the API reference](DOC.md#pid-based-process-waiting) for inputs, states,
+limits, cancellation, and registration lifetime.

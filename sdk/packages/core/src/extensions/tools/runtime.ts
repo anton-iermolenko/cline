@@ -66,6 +66,12 @@ const BASE_TOOL_CATALOG: readonly RuntimeToolCatalogEntry[] = [
 		headlessToolNames: ["run_commands"],
 	},
 	{
+		id: "wait_for_process",
+		description:
+			"Wait on the PID and optional log of a shell-launched process, with process identity checks.",
+		headlessToolNames: ["wait_for_process"],
+	},
+	{
 		id: "editor",
 		description:
 			"Make controlled filesystem edits on text files with create, replace, and insert operations.",
@@ -118,6 +124,7 @@ const TOOL_NAME_TO_FLAG: Partial<
 			| "enableReadFiles"
 			| "enableSearch"
 			| "enableBash"
+			| "enableProcessWait"
 			| "enableWebFetch"
 			| "enableApplyPatch"
 			| "enableEditor"
@@ -130,6 +137,7 @@ const TOOL_NAME_TO_FLAG: Partial<
 	read_files: "enableReadFiles",
 	search_codebase: "enableSearch",
 	run_commands: "enableBash",
+	wait_for_process: "enableProcessWait",
 	fetch_web_content: "enableWebFetch",
 	apply_patch: "enableApplyPatch",
 	editor: "enableEditor",
@@ -148,6 +156,7 @@ type ResolvedToolFlags = Pick<
 	| "enableReadFiles"
 	| "enableSearch"
 	| "enableBash"
+	| "enableProcessWait"
 	| "enableWebFetch"
 	| "enableApplyPatch"
 	| "enableEditor"
@@ -220,6 +229,8 @@ function isEntryEnabledByDefault(
 	if (entryId === "tasks") {
 		return true;
 	}
+	if (entryId === "wait_for_process")
+		return flags.enableBash === true && flags.enableProcessWait === true;
 	if (entryId === "editor") {
 		return flags.enableEditor === true || flags.enableApplyPatch === true;
 	}

@@ -83,6 +83,8 @@ import {
 	type ConnectionUpdate,
 	normalizeConnectionUpdate,
 } from "../config/connection-update";
+import type { JobWaitRequest } from "../safety/job-wait";
+import { JobWaitTracker } from "../safety/job-wait-tracker";
 import { LoopDetectionTracker } from "../safety/loop-detection";
 import { MistakeTracker } from "../safety/mistake-tracker";
 import { RuntimeEventAdapter } from "./runtime-event-adapter";
@@ -395,6 +397,12 @@ export class SessionRuntime {
 	private toolStartedAt = new Map<string, Date>();
 	/** Tool-call input snapshot for `ToolCallRecord.input`. */
 	private toolInputs = new Map<string, unknown>();
+	private readonly jobWaitTracker = new JobWaitTracker();
+	private pendingJobWaitStop: string | undefined;
+	private pendingWaits = new Map<
+		string,
+		{ tool: AgentTool; request: JobWaitRequest }
+	>();
 	/**
 	 * Per-turn tool outcome counters used by the MistakeTracker wiring.
 	 * Reset on every `turn-started` event; consumed on `turn-finished`
@@ -606,6 +614,9 @@ export class SessionRuntime {
 		this.messageBuilder.resetConversationState();
 		this.mistakeTracker.reset();
 		this.loopTracker.reset();
+		this.jobWaitTracker.reset();
+		this.pendingJobWaitStop = undefined;
+		this.pendingWaits.clear();
 	}
 
 	// -------------------------------------------------------------------
@@ -739,6 +750,9 @@ export class SessionRuntime {
 	): Promise<AgentResult> {
 		const rejection = this.getRunAdmissionError();
 		if (rejection) return Promise.reject(rejection);
+		if (userMessage?.trim()) this.jobWaitTracker.reset();
+		this.pendingJobWaitStop = undefined;
+		this.pendingWaits.clear();
 		return this.executeRun({
 			userMessage,
 			userImages,
@@ -755,6 +769,10 @@ export class SessionRuntime {
 		availableToolNames: ReadonlySet<string>,
 	): Promise<string> {
 		const rules: string[] = [];
+		if (availableToolNames.has("wait_for_process"))
+			rules.push(
+				"For long-running shell work, launch with run_commands, detach the process and redirect stdout/stderr to a log so the launch call can finish. Capture the actual long-lived process PID, not a short-lived launcher PID. Wait sequentially with wait_for_process using wait_seconds=60 and the last revision instead of issuing repeated sleep/tail/ps checks. Keep routine waits quiet. Process exit alone does not prove success: inspect the log or a completion record for the outcome.",
+			);
 		for (const rule of this.contributionRegistry.getRegisteredRules()) {
 			if (
 				rule.whenToolAvailable &&
@@ -1159,6 +1177,20 @@ export class SessionRuntime {
 		]);
 		return {
 			...hooks,
+			beforeTool: async (ctx) => {
+				const control = await hooks.beforeTool?.(ctx);
+				if (!control?.skip && !control?.stop) {
+					const request = ctx.tool.waiting?.request(
+						control?.input ?? ctx.input,
+					);
+					if (request && request.waitMs > 0)
+						this.pendingWaits.set(ctx.toolCall.toolCallId, {
+							tool: ctx.tool,
+							request,
+						});
+				}
+				return control;
+			},
 			afterTool: async (ctx) => {
 				const control = await hooks.afterTool?.(ctx);
 				const result = control?.result ?? ctx.result;
@@ -1175,6 +1207,50 @@ export class SessionRuntime {
 							this.toolResultCache.store(ctx.toolCall.toolCallId, text);
 					}
 				}
+				const pendingWait = this.pendingWaits.get(ctx.toolCall.toolCallId);
+				this.pendingWaits.delete(ctx.toolCall.toolCallId);
+				if (pendingWait && !control?.stop && !this.loopDetectionDisabled) {
+					const verdict = result.isError
+						? "invalid"
+						: this.jobWaitTracker.inspect(
+								pendingWait.tool,
+								pendingWait.request,
+								result.output,
+								ctx.durationMs,
+							);
+					if (verdict === "deadline") {
+						const reason =
+							"Job is still running; the overall waiting deadline was reached. Resume waiting explicitly or inspect the job. This is not a tool failure.";
+						const output =
+							result.output &&
+							typeof result.output === "object" &&
+							!Array.isArray(result.output)
+								? {
+										...result.output,
+										wait_budget_exhausted: true,
+										message: reason,
+									}
+								: {
+										result: result.output,
+										wait_budget_exhausted: true,
+										message: reason,
+									};
+						this.pendingJobWaitStop = reason;
+						return { ...control, result: { ...result, output } };
+					}
+					if (verdict === "valid") {
+						this.loopTracker.reset();
+						return control;
+					}
+					// Count invalid/failed/immediate responses by job identity, even if the
+					// caller changes wait_seconds or after_revision between attempts.
+					this.inspectLoopForToolCall(
+						ctx.tool.name,
+						{ job_id: pendingWait.request.jobId },
+						ctx.snapshot.iteration,
+					);
+					return control;
+				}
 				if (!control?.stop && !this.loopDetectionDisabled) {
 					const verdict = this.loopTracker.observeResult(
 						{ name: ctx.toolCall.toolName, input: ctx.input },
@@ -1190,7 +1266,7 @@ export class SessionRuntime {
 						};
 						const output =
 							typeof result.output === "string"
-								? result.output + "\n\n" + verdict.message
+								? `${result.output}\n\n${verdict.message}`
 								: Array.isArray(result.output)
 									? [...result.output, warning]
 									: {
@@ -1203,6 +1279,9 @@ export class SessionRuntime {
 				return control;
 			},
 			beforeModel: async (ctx) => {
+				// Stop only after the tool result has entered the canonical transcript.
+				if (this.pendingJobWaitStop)
+					return { stop: true, reason: this.pendingJobWaitStop };
 				const control = await hooks.beforeModel?.(ctx);
 				if (control?.stop) {
 					return control;
@@ -1353,6 +1432,7 @@ export class SessionRuntime {
 				// verdict we feed the mistake tracker with
 				// forceAtLimit:true and abort. Parity with pre-Step-9
 				// agent.ts L917-954.
+				if (this.pendingWaits.has(event.toolCall.toolCallId)) break;
 				this.inspectLoopForToolCall(
 					event.toolCall.toolName,
 					event.toolCall.input,

@@ -205,8 +205,37 @@ export interface AgentToolContext {
 	emitEvent?: (name: string, payload?: unknown) => void;
 }
 
+/** Runtime-only capability supplied by a tool implementation, never by model arguments. */
+export interface AgentToolWaitRequest {
+	jobId: string;
+	waitMs: number;
+	afterRevision?: number;
+}
+
+export interface AgentToolWaitObservation {
+	jobId: string;
+	revision: number;
+	state:
+		| "running"
+		| "completed"
+		| "failed"
+		| "cancelled"
+		| "waiting_for_input"
+		| "exited"
+		| "identity_changed";
+}
+
+export interface AgentToolWaiting {
+	request(input: unknown): AgentToolWaitRequest | undefined;
+	observe(output: unknown): AgentToolWaitObservation | undefined;
+	/** Overall wall-clock budget per job in this session; routine progress does not reset it. */
+	maxWaitMs?: number;
+}
+
 export interface AgentTool<TInput = unknown, TOutput = unknown>
 	extends AgentToolDefinition {
+	/** Validated blocking-job waits use a separate deadline rather than the mistake counter. */
+	waiting?: AgentToolWaiting;
 	/** Override the runtime execution mode. Adjacent parallel calls may overlap; sequential calls form ordering boundaries. */
 	executionMode?: "sequential" | "parallel";
 	timeoutMs?: number;

@@ -81,6 +81,7 @@ function normalizeToolInputSchema(
 export function createTool<TInput, TOutput>(config: {
 	name: string;
 	resultPolicy?: AgentTool["resultPolicy"];
+	waiting?: AgentTool["waiting"];
 	description: string;
 	inputSchema: Record<string, unknown>;
 	execute: (input: TInput, context: AgentToolContext) => Promise<TOutput>;
@@ -93,6 +94,7 @@ export function createTool<TInput, TOutput>(config: {
 export function createTool<TSchema extends z.ZodTypeAny, TOutput>(config: {
 	name: string;
 	resultPolicy?: AgentTool["resultPolicy"];
+	waiting?: AgentTool["waiting"];
 	description: string;
 	inputSchema: TSchema;
 	execute: (
@@ -108,6 +110,7 @@ export function createTool<TSchema extends z.ZodTypeAny, TOutput>(config: {
 export function createTool<TInput, TOutput>(config: {
 	name: string;
 	resultPolicy?: AgentTool["resultPolicy"];
+	waiting?: AgentTool["waiting"];
 	description: string;
 	inputSchema: Record<string, unknown> | z.ZodTypeAny;
 	execute: (input: TInput, context: AgentToolContext) => Promise<TOutput>;
@@ -126,6 +129,7 @@ export function createTool<TInput, TOutput>(config: {
 	return {
 		name: config.name,
 		resultPolicy: config.resultPolicy,
+		waiting: config.waiting,
 		description: config.description,
 		inputSchema,
 		lifecycle: config.lifecycle,

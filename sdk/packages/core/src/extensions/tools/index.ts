@@ -72,6 +72,15 @@ export {
 	ToolPresets,
 } from "./presets";
 export {
+	createProcessWaitExecutor,
+	createWaitForProcessTool,
+	type ProcessWaitExecutor,
+	ProcessWaiter,
+	type ProcessWaitInput,
+	type ProcessWaitOptions,
+	type ProcessWaitResult,
+} from "./process-wait";
+export {
 	type BuiltinToolAvailabilityContext,
 	getCoreAcpToolNames,
 	getCoreBuiltinToolCatalog,
@@ -136,7 +145,7 @@ export type {
 // Convenience: Create Tools with Built-in Executors
 // =============================================================================
 
-import { type AgentTool, getDefaultShell } from "@cline/shared";
+import { type AgentTool, getDefaultShell, getShellKind } from "@cline/shared";
 import { createDefaultTools } from "./definitions";
 import {
 	createDefaultExecutors,
@@ -214,11 +223,16 @@ export function createBuiltinTools(
 		},
 	};
 
-	const executors = {
+	const executors: ToolExecutors = {
 		...createDefaultExecutors(resolvedExecutorOptions),
 		...(executorOverrides ?? {}),
 	};
 
+	if (
+		(executorOverrides?.bash || getShellKind(shell) === "wsl") &&
+		!executorOverrides?.processWait
+	)
+		delete executors.processWait;
 	return createDefaultTools({
 		...toolsConfig,
 		shell,

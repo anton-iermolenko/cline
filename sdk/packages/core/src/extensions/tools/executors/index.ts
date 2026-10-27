@@ -6,6 +6,7 @@
  * for custom implementations.
  */
 
+import { createProcessWaitExecutor } from "../process-wait";
 import type { ToolExecutors } from "../types";
 import {
 	type ApplyPatchExecutorOptions,
@@ -101,6 +102,7 @@ export function createDefaultExecutors(
 		readFile: createFileReadExecutor(options.fileRead),
 		search: createSearchExecutor(options.search),
 		bash: createDefaultShellExecutor(options.bash),
+		processWait: createProcessWaitExecutor(),
 		webFetch: createWebFetchExecutor(options.webFetch),
 		applyPatch: createApplyPatchExecutor(options.applyPatch),
 		editor: createEditorExecutor(options.editor),

@@ -33,6 +33,7 @@ import {
 	TimeoutError,
 	withTimeout,
 } from "./helpers";
+import { createWaitForProcessTool } from "./process-wait";
 import {
 	type ApplyPatchInput,
 	ApplyPatchInputSchema,
@@ -421,7 +422,7 @@ export function createSearchTool(
 }
 
 const RUN_COMMANDS_SHARED_INSTRUCTIONS =
-	"Use for listing files, checking git status, running builds, executing tests, etc. " +
+	"Use for listing files, checking git status, running builds, executing tests, etc. Capture the PID of long-running background work and use wait_for_process when available. " +
 	"Commands must be non-interactive. Commands that require follow-up input like pagers should be skipped or used with supported flags/env (e.g. git --no-pager, --non-interactive) to bypass the interaction steps. ";
 
 /**
@@ -476,7 +477,7 @@ export function buildRunCommandsDescription(
 		environmentNote +
 		"Commands should be properly shell-escaped and targeted to avoid error or timeout. Include multiple commands in the same call when they are independent complete shell commands and safe to run concurrently; multiline scripts and heredocs must be a single command string. When independent reads, searches, or edits are also needed, call those tools in the same response. " +
 		`Output beyond ~${Math.round(MAX_COMMAND_OUTPUT_CHARS / 1000)}k characters is middle-truncated (start and end preserved); pipe through grep/head/tail when you need specific sections of large output. ` +
-		"For long-running commands, run them in background and redirect output to a tmp file that you can read from later."
+		"For long-running work, launch in the background, capture the actual long-lived process PID, and redirect output to a log. When available, use wait_for_process with that PID and log_path instead of repeated sleep/tail/ps commands. Otherwise use a bounded shell wait with an explicit completion condition."
 	);
 }
 
@@ -922,6 +923,7 @@ export function createDefaultTools(
 		enableReadFiles = true,
 		enableSearch = true,
 		enableBash = true,
+		enableProcessWait = true,
 		enableWebFetch = true,
 		enableApplyPatch = false,
 		enableEditor = true,
@@ -946,6 +948,10 @@ export function createDefaultTools(
 	// Add run_commands tool if enabled and executor provided
 	if (enableBash && executors.bash) {
 		tools.push(createShellTool(executors.bash, config));
+		if (enableProcessWait && executors.processWait)
+			tools.push(
+				createWaitForProcessTool(executors.processWait, { cwd: config.cwd }),
+			);
 	}
 
 	// Add fetch_web_content tool if enabled and executor provided
