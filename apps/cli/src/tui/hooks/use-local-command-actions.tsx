@@ -78,10 +78,9 @@ export function useLocalCommandActions(input: {
 					const { messages } = result;
 					const entries = hydrateSessionMessages(messages);
 					if (entries.length === 0) {
-						session.appendEntry({
-							kind: "error",
-							text: `Session ${sessionId} has no messages to resume.`,
-						});
+						throw new Error(
+							"This conversation has no saved messages to resume.",
+						);
 					} else {
 						session.clearEntries();
 						// replaceEntries rather than appendEntry: appendEntry
@@ -99,6 +98,10 @@ export function useLocalCommandActions(input: {
 					}
 				});
 			} catch (error) {
+				// Errors appended while the welcome screen is visible are hidden
+				// unless the app also transitions to the chat view.
+				session.setHasSubmitted(true);
+				setAppView("chat");
 				session.appendEntry({
 					kind: "error",
 					text: `Failed to resume session: ${error instanceof Error ? error.message : String(error)}`,

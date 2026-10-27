@@ -46,4 +46,6 @@ export interface SessionHistoryMetadata extends Record<string, unknown> {
 
 export interface SessionHistoryRecord extends Omit<SessionRecord, "metadata"> {
 	metadata?: SessionHistoryMetadata;
+	/** Display-only text from the latest user or assistant message. */
+	messagePreview?: string;
 }

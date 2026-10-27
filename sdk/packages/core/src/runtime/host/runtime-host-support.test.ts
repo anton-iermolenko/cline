@@ -13,6 +13,38 @@ afterEach(async () => {
 });
 
 describe("readPersistedMessagesFile", () => {
+	it.each([
+		'{"messages":[',
+		'{"messages":[]} trailing-private-content',
+	])("reports damaged JSON without exposing saved content", async (raw) => {
+		const dir = await mkdtemp(join(tmpdir(), "runtime-host-support-"));
+		tempDirs.push(dir);
+		const messagesPath = join(dir, "messages.json");
+		await writeFile(messagesPath, raw);
+		await expect(readPersistedMessagesFile(messagesPath)).rejects.toThrow(
+			/^The saved conversation transcript contains invalid JSON\.$/,
+		);
+	});
+
+	it("distinguishes unsupported formats from empty or missing history", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "runtime-host-support-"));
+		tempDirs.push(dir);
+		const messagesPath = join(dir, "messages.json");
+		await writeFile(messagesPath, JSON.stringify({ messages: null }));
+		await expect(readPersistedMessagesFile(messagesPath)).rejects.toThrow(
+			"unsupported format",
+		);
+		await writeFile(messagesPath, JSON.stringify({ messages: [] }));
+		await expect(readPersistedMessagesFile(messagesPath)).resolves.toEqual([]);
+		await expect(
+			readPersistedMessagesFile(join(dir, "missing.json")),
+		).resolves.toEqual([]);
+		await expect(readPersistedMessagesFile()).resolves.toEqual([]);
+		await expect(readPersistedMessagesFile(dir)).rejects.toThrow(
+			"could not be read",
+		);
+	});
+
 	it("returns persisted messages verbatim, wrappers included", async () => {
 		// The user_input wrapper records which mode each message was sent in
 		// and session restarts re-seed through this read path, so stripping

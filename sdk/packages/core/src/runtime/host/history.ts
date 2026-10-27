@@ -20,6 +20,7 @@ export interface SessionHistoryListOptions {
 	limit?: number;
 	includeManifestFallback?: boolean;
 	hydrate?: boolean;
+	includeMessagePreview?: boolean;
 	includeSubagents?: boolean;
 }
 
@@ -275,6 +276,21 @@ function inferTitleFromMessages(
 	return undefined;
 }
 
+function inferMessagePreview(
+	messages: LlmsProviders.Message[],
+): string | undefined {
+	for (let i = messages.length - 1; i >= 0; i -= 1) {
+		const message = messages[i];
+		if (message.role !== "user" && message.role !== "assistant") continue;
+		const text = extractTextFromContent(message.content);
+		const formatted =
+			message.role === "user" ? formatDisplayUserInput(text) : text;
+		const preview = toSingleLine(formatted);
+		if (preview) return truncateText(preview, 200);
+	}
+	return undefined;
+}
+
 function summarizeCostFromMessages(messages: LlmsProviders.Message[]): number {
 	let total = 0;
 	for (const message of messages as StoredSessionMessage[]) {
@@ -407,7 +423,9 @@ async function projectLegacyRunningRowsAsIdle(
 			if (row.status !== "running" || row.interactive !== true) {
 				return row;
 			}
-			const messages = await host.readSessionMessages(row.sessionId);
+			const messages = await host
+				.readSessionMessages(row.sessionId)
+				.catch(() => []);
 			return shouldProjectLegacyRunningSessionAsIdle(row, messages)
 				? { ...row, status: "idle" }
 				: row;
@@ -418,6 +436,7 @@ async function projectLegacyRunningRowsAsIdle(
 export async function hydrateSessionHistory(
 	host: Pick<RuntimeHost, "readSessionMessages">,
 	rows: SessionRecord[],
+	options: Pick<SessionHistoryListOptions, "includeMessagePreview"> = {},
 ): Promise<SessionHistoryRecord[]> {
 	return await Promise.all(
 		rows.map(async (row) => {
@@ -427,21 +446,34 @@ export async function hydrateSessionHistory(
 			const hasModel = Boolean(asKnownString(initial.model));
 			const knownCost = asFiniteNumber(initial.metadata?.totalCost);
 			const hasCost = knownCost !== undefined && knownCost > 0;
-			if (hasTitle && hasProvider && hasModel && hasCost) {
+			if (
+				hasTitle &&
+				hasProvider &&
+				hasModel &&
+				hasCost &&
+				!options.includeMessagePreview
+			) {
 				return initial;
 			}
-			const messages = await host.readSessionMessages(row.sessionId);
+			// A damaged row remains selectable so resume can report its error;
+			// it must not prevent all other conversations from being listed.
+			const messages = await host
+				.readSessionMessages(row.sessionId)
+				.catch(() => []);
 			if (messages.length === 0) {
 				return initial;
 			}
 			const inferredProviderModel = inferProviderAndModelFromMessages(messages);
 			const inferredCost = summarizeCostFromMessages(messages);
-			return normalizeHistoryRow(row, {
+			const hydrated = normalizeHistoryRow(row, {
 				title: hasTitle ? undefined : inferTitleFromMessages(messages),
 				provider: hasProvider ? undefined : inferredProviderModel.provider,
 				model: hasModel ? undefined : inferredProviderModel.model,
 				totalCost: hasCost || inferredCost <= 0 ? undefined : inferredCost,
 			});
+			return options.includeMessagePreview
+				? { ...hydrated, messagePreview: inferMessagePreview(messages) }
+				: hydrated;
 		}),
 	);
 }
@@ -476,7 +508,7 @@ export async function listSessionHistory(
 	if (options.hydrate === false) {
 		return projectedRows.map((row) => normalizeHistoryRow(row));
 	}
-	return await hydrateSessionHistory(host, projectedRows);
+	return await hydrateSessionHistory(host, projectedRows, options);
 }
 
 async function readManifestMessagesPath(
