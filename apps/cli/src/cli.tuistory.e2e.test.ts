@@ -12,7 +12,14 @@
 // Run with: bun run test:e2e:tuistory
 // ---------------------------------------------------------------------------
 
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { launchTerminal, type Session } from "tuistory";
@@ -101,6 +108,52 @@ async function waitForChatView(session: Session): Promise<void> {
 	});
 }
 
+function seedHistory(
+	env: Record<string, string | undefined>,
+	id: string,
+	raw: string,
+	startedAt = "2026-01-01T12:00:00.000Z",
+) {
+	const sessionsDir = env.CLINE_SESSION_DATA_DIR;
+	if (!sessionsDir) throw new Error("Missing isolated session directory");
+	const dir = path.join(sessionsDir, id);
+	mkdirSync(dir, { recursive: true });
+	const messagesPath = path.join(dir, `${id}.messages.json`);
+	writeFileSync(messagesPath, raw);
+	writeFileSync(
+		path.join(dir, `${id}.json`),
+		JSON.stringify({
+			version: 1,
+			session_id: id,
+			source: "cli",
+			pid: 0,
+			started_at: startedAt,
+			status: "failed",
+			interactive: true,
+			provider: "anthropic",
+			model: "claude-sonnet-4-6",
+			cwd: cliRoot,
+			workspace_root: cliRoot,
+			enable_tools: true,
+			enable_spawn: false,
+			enable_teams: false,
+			prompt: "Matching conversation title",
+			metadata: { title: "Matching conversation title" },
+			messages_path: messagesPath,
+		}),
+	);
+	return messagesPath;
+}
+
+async function openHistory(session: Session) {
+	await session.type("/history");
+	await session.waitForText("View session history", { timeout: UI_TIMEOUT_MS });
+	await session.press("enter");
+	await session.waitForText("Matching conversation title", {
+		timeout: UI_TIMEOUT_MS,
+	});
+}
+
 describe("cli tuistory e2e", () => {
 	afterEach(async () => {
 		for (const session of sessions.splice(0)) {
@@ -118,6 +171,62 @@ describe("cli tuistory e2e", () => {
 		for (const dir of tempDirs.splice(0)) {
 			rmSync(dir, { recursive: true, force: true });
 		}
+	});
+
+	it.each([
+		['{"messages":[]} private-trailing-content', "contains invalid JSON"],
+		['{"messages":[]}', "has no saved messages"],
+	])("shows history restore failures from the welcome screen", async (raw, expectedError) => {
+		const env = createCliEnv();
+		const messagesPath = seedHistory(env, "broken-history", raw);
+		// Yolo keeps this regression test entirely local; no provider turn is sent.
+		const session = await launchCli(["--yolo"], env);
+		await waitForChatView(session);
+		await openHistory(session);
+		await session.press("enter");
+		await session.waitForText(expectedError, { timeout: UI_TIMEOUT_MS });
+		const screen = await session.text();
+		expect(screen).toContain("Failed to resume session");
+		expect(screen).not.toContain("What can I do for you?");
+		expect(screen).not.toContain("private-trailing-content");
+		expect(readFileSync(messagesPath, "utf8")).toBe(raw);
+	});
+
+	it("distinguishes matching titles with workspace, activity, and latest text", async () => {
+		const env = createCliEnv();
+		seedHistory(
+			env,
+			"older-hidden-id",
+			JSON.stringify({
+				messages: [{ role: "assistant", content: "Older continuation" }],
+			}),
+		);
+		seedHistory(
+			env,
+			"newer-hidden-id",
+			JSON.stringify({
+				messages: [{ role: "assistant", content: "Fresh continuation" }],
+			}),
+			"2026-01-02T12:00:00.000Z",
+		);
+		const session = await launchCli(["--yolo"], env);
+		await waitForChatView(session);
+		await openHistory(session);
+		await session.waitForText("Latest: Fresh continuation", {
+			timeout: UI_TIMEOUT_MS,
+		});
+		const screen = await session.text();
+		expect(screen).toContain("Workspace:");
+		expect(screen).toContain("Last active:");
+		expect(screen).not.toContain("newer-hidden-id");
+		expect(screen).not.toContain("older-hidden-id");
+		await session.press("down");
+		await session.waitForText("Latest: Older continuation", {
+			timeout: UI_TIMEOUT_MS,
+		});
+		await session.press("enter");
+		await session.waitForText("Older continuation", { timeout: UI_TIMEOUT_MS });
+		expect(await session.text()).not.toContain("What can I do for you?");
 	});
 
 	it("shows the interactive chat view on launch", async () => {

@@ -130,6 +130,83 @@ describe("session history", () => {
 		}
 	});
 
+	it("hydrates a latest text preview without showing tool results or input wrappers", async () => {
+		const readSessionMessages = vi.fn().mockResolvedValue([
+			{ role: "assistant", content: "Earlier answer" },
+			{
+				role: "user",
+				content: [
+					{
+						type: "text",
+						text: '<user_input mode="act">Latest question</user_input>',
+					},
+				],
+			},
+			{
+				role: "assistant",
+				content: [
+					{
+						type: "tool-call",
+						toolCallId: "call",
+						toolName: "run_commands",
+						input: {},
+					},
+				],
+			},
+			{
+				role: "user",
+				content: [
+					{
+						type: "tool-result",
+						toolCallId: "call",
+						toolName: "run_commands",
+						output: "Private command output",
+					},
+				],
+			},
+		]);
+		const [row] = await hydrateSessionHistory(
+			{ readSessionMessages },
+			[
+				createRow({
+					sessionId: "preview",
+					provider: "cline",
+					model: "test",
+					metadata: { title: "Same title", totalCost: 1 },
+				}),
+			],
+			{ includeMessagePreview: true },
+		);
+		expect(row.messagePreview).toBe("Latest question");
+		expect(readSessionMessages).toHaveBeenCalledOnce();
+	});
+
+	it("keeps damaged running history alongside readable conversations", async () => {
+		const readSessionMessages = vi
+			.fn()
+			.mockImplementation(async (id: string) => {
+				if (id === "damaged") throw new Error("invalid JSON");
+				return [{ role: "assistant", content: "Readable latest reply" }];
+			});
+		const rows = await listSessionHistory(
+			{
+				listSessions: vi.fn().mockResolvedValue([
+					createRow({
+						sessionId: "damaged",
+						status: "running",
+						interactive: true,
+					}),
+					createRow({ sessionId: "readable" }),
+				]),
+				readSessionMessages,
+			},
+			{ includeMessagePreview: true },
+		);
+		expect(rows.map((row) => row.sessionId)).toEqual(["damaged", "readable"]);
+		expect(rows[0].messagePreview).toBeUndefined();
+		expect(rows[1].messagePreview).toBe("Readable latest reply");
+	});
+
 	it("preserves rows that already have history display metadata", async () => {
 		const readSessionMessages = vi.fn();
 		const rows = await hydrateSessionHistory({ readSessionMessages }, [

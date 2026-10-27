@@ -119,7 +119,8 @@ function HistoryListContent({
 	};
 
 	useEffect(() => {
-		const loadInitialRows = () => listSessions(50, { hydrate: true });
+		const loadInitialRows = () =>
+			listSessions(50, { hydrate: true, includeMessagePreview: true });
 		const loadRefreshRows =
 			refreshRows ?? (() => listSessions(50, { hydrate: false }));
 		let disposed = false;
@@ -424,7 +425,7 @@ function HistoryListContent({
 					const cost = row.metadata?.totalCost;
 					const showCost = shouldShowCliUsageCost(row.provider);
 					const title = formatTitle(row, titleMaxLen);
-					const date = formatRelativeDate(row.startedAt);
+					const date = formatRelativeDate(row.updatedAt || row.startedAt);
 
 					return (
 						<box
@@ -475,6 +476,27 @@ function HistoryListContent({
 					</text>
 				)}
 			</box>
+
+			{rows[safeSelected] && (
+				<box flexDirection="column" marginTop={1}>
+					<text fg="gray" truncate>
+						Workspace:{" "}
+						{rows[safeSelected].workspaceRoot ||
+							rows[safeSelected].cwd ||
+							"Unknown"}
+					</text>
+					<text fg="gray" truncate>
+						Last active:{" "}
+						{new Date(
+							rows[safeSelected].updatedAt || rows[safeSelected].startedAt,
+						).toLocaleString()}
+					</text>
+					<text fg="gray" truncate>
+						Latest:{" "}
+						{rows[safeSelected].messagePreview || "No text preview available"}
+					</text>
+				</box>
+			)}
 
 			{statusMessage && (
 				<text

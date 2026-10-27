@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import type * as LlmsProviders from "@cline/llms";
 import type { HookEventPayload } from "../../hooks";
@@ -54,24 +53,35 @@ export async function readPersistedMessagesFile(
 	messagesPath?: string | null,
 ): Promise<LlmsProviders.MessageWithMetadata[]> {
 	const path = messagesPath?.trim();
-	if (!path || !existsSync(path)) return [];
+	if (!path) return [];
+	let raw: string;
 	try {
-		const raw = (await readFile(path, "utf8")).trim();
-		if (!raw) return [];
-		const parsed = JSON.parse(raw) as unknown;
-		if (Array.isArray(parsed)) {
-			return parsed as LlmsProviders.MessageWithMetadata[];
-		}
-		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-			const messages = (parsed as { messages?: unknown }).messages;
-			if (Array.isArray(messages)) {
-				return messages as LlmsProviders.MessageWithMetadata[];
-			}
-		}
-		return [];
-	} catch {
-		return [];
+		raw = (await readFile(path, "utf8")).trim();
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+		throw new Error("The saved conversation transcript could not be read.");
 	}
+	if (!raw) return [];
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(raw);
+	} catch {
+		// JSON parser errors can include private transcript text. Keep the
+		// actionable failure, without echoing saved content into UI or logs.
+		throw new Error("The saved conversation transcript contains invalid JSON.");
+	}
+	if (Array.isArray(parsed)) {
+		return parsed as LlmsProviders.MessageWithMetadata[];
+	}
+	if (parsed && typeof parsed === "object") {
+		const messages = (parsed as { messages?: unknown }).messages;
+		if (Array.isArray(messages)) {
+			return messages as LlmsProviders.MessageWithMetadata[];
+		}
+	}
+	throw new Error(
+		"The saved conversation transcript has an unsupported format.",
+	);
 }
 
 export function cloneAccumulatedUsage(

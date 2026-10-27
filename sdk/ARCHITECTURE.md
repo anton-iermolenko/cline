@@ -291,6 +291,13 @@ image input and the current user message has no explicit image, only an image on
 the immediately preceding assistant message is reused. Older images are not
 implicitly attached across intervening turns.
 
+Canonical transcript reads distinguish unreadable or malformed saved content from
+an empty conversation and report a content-free diagnostic. History listing catches
+those failures per row so a damaged conversation does not hide the rest of history.
+Callers can opt into a display-only latest-message preview during history hydration;
+lightweight status refreshes do not reread transcripts. The CLI shows resume errors
+in its chat view even when the request began on the welcome screen.
+
 Session history provenance keeps the client surface and initiation mode separate.
 `StartSessionInput.source` identifies the client (`vscode`, `desktop`, `cli`,
 `core`, and so on), while top-level `StartSessionInput.mode` identifies how the

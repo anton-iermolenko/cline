@@ -689,7 +689,7 @@ export function createInteractiveSessionRuntime(input: {
 		}
 		const messages = await loadInteractiveResumeMessages(manager, sessionId);
 		if (!messages || messages.length === 0) {
-			throw new Error(`Session ${sessionId} has no messages to resume.`);
+			throw new Error("This conversation has no saved messages to resume.");
 		}
 		await stopCurrentSession();
 		await startResumedSession(sessionId, messages);
