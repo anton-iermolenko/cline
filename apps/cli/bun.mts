@@ -151,6 +151,10 @@ const cliBootstrapPath = join(
 );
 mkdirSync(dirname(cliBootstrapPath), { recursive: true });
 copyFileSync(coreBootstrapPath, cliBootstrapPath);
+copyFileSync(
+	join(dirname(coreBootstrapPath), "web-page-worker.cjs"),
+	join(dirname(cliBootstrapPath), "web-page-worker.cjs"),
+);
 
 if (existsSync(hubWebviewDistPath)) {
 	mkdirSync(dirname(cliHubWebviewDistPath), { recursive: true });

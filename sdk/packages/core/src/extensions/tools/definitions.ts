@@ -42,8 +42,6 @@ import {
 	AskQuestionInputSchema,
 	type EditFileInput,
 	EditFileInputSchema,
-	type FetchWebContentInput,
-	FetchWebContentInputSchema,
 	type ReadFileRequest,
 	type ReadFilesInput,
 	ReadFilesInputSchema,
@@ -70,8 +68,9 @@ import type {
 	SkillsExecutorWithMetadata,
 	ToolOperationResult,
 	VerifySubmitExecutor,
-	WebFetchExecutor,
 } from "./types";
+import { createWebPageTools } from "./web-pages";
+import { readWebPageProvider } from "./web-provider";
 
 // =============================================================================
 // Helper Functions
@@ -551,61 +550,6 @@ export function createShellTool(
 	return tool;
 }
 
-/**
- * Create the fetch_web_content tool
- *
- * Fetches content from URLs and analyzes them using provided prompts.
- */
-export function createWebFetchTool(
-	executor: WebFetchExecutor,
-	config: Pick<DefaultToolsConfig, "webFetchTimeoutMs"> = {},
-): AgentTool<FetchWebContentInput, ToolOperationResult[]> {
-	const timeoutMs = config.webFetchTimeoutMs ?? 30000;
-
-	return createTool<FetchWebContentInput, ToolOperationResult[]>({
-		name: "fetch_web_content",
-		description:
-			"Fetch content from URLs and analyze them using the provided prompts. " +
-			"Use for retrieving documentation, API references, or any web content. " +
-			"Each request includes a URL and a prompt describing what information to extract. Fetch independent URLs together in one call, and call this tool in the same response as other independent tool calls.",
-		inputSchema: zodToJsonSchema(FetchWebContentInputSchema),
-		timeoutMs: timeoutMs * 2,
-		retryable: true,
-		maxRetries: 2,
-		execute: async (input, context) => {
-			// Validate input with Zod schema
-			const validatedInput = validateWithZod(FetchWebContentInputSchema, input);
-
-			return Promise.all(
-				validatedInput.requests.map(
-					async (request): Promise<ToolOperationResult> => {
-						try {
-							const content = await withTimeout(
-								executor(request.url, request.prompt, context),
-								timeoutMs,
-								`Web fetch timed out after ${timeoutMs}ms`,
-							);
-							return {
-								query: request.url,
-								result: content,
-								success: true,
-							};
-						} catch (error) {
-							const msg = formatError(error);
-							return {
-								query: request.url,
-								result: "",
-								error: `Error fetching web content: ${msg}`,
-								success: false,
-							};
-						}
-					},
-				),
-			);
-		},
-	});
-}
-
 const APPLY_PATCH_TOOL_DESC = `Use \`apply_patch\` to edit files with the canonical freeform patch grammar. Pass the patch text directly as the \`input\` string. Prefer the exact format below:
 
 *** Begin Patch
@@ -905,7 +849,7 @@ export function createSubmitAndExitTool(
  *   enableReadFiles: true,
  *   enableBash: true,
  *   enableSearch: false, // Disabled
- *   enableWebFetch: false, // Disabled
+ *   enableWebPages: false, // Disabled
  *   cwd: "/path/to/project",
  * })
  *
@@ -924,7 +868,7 @@ export function createDefaultTools(
 		enableSearch = true,
 		enableBash = true,
 		enableProcessWait = true,
-		enableWebFetch = true,
+		enableWebPages = true,
 		enableApplyPatch = false,
 		enableEditor = true,
 		enableSkills = true,
@@ -954,9 +898,14 @@ export function createDefaultTools(
 			);
 	}
 
-	// Add fetch_web_content tool if enabled and executor provided
-	if (enableWebFetch && executors.webFetch) {
-		tools.push(createWebFetchTool(executors.webFetch, config));
+	// Add bounded document tools independently of the selected search provider.
+	if (enableWebPages && executors.webPages) {
+		tools.push(
+			...createWebPageTools(executors.webPages, config.cwd).filter(
+				(tool) =>
+					tool.name !== "load_web_page" || readWebPageProvider() === "http",
+			),
+		);
 	}
 
 	// Add editor tool if enabled and executor provided,

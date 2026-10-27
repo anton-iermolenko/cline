@@ -177,6 +177,7 @@ function formatToolParams(
 			if (!info?.queries.length) return fallback;
 			return info.queries.join(", ");
 		}
+		case "load_web_page":
 		case "fetch_web_content": {
 			const info = parseWebFetchInput(rawInput);
 			if (!info?.urls.length) return fallback;

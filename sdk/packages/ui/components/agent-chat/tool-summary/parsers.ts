@@ -164,6 +164,7 @@ export interface WebFetchInfo {
 export function parseWebFetchInput(input: unknown): WebFetchInfo | undefined {
 	const normalized = normalizeValue(input);
 	if (!isRecord(normalized)) return undefined;
+	if (typeof normalized.url === "string") return { urls: [normalized.url] };
 	if (!Array.isArray(normalized.requests)) return undefined;
 	const urls = normalized.requests
 		.filter((r): r is Record<string, unknown> => isRecord(r))

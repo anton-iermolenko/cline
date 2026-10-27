@@ -25,7 +25,7 @@ export function buildToolPolicies(
 	set(["read_files", "read_file", "list_files", "list_code_definition_names", "search_codebase", "search_files"])
 	set(["editor", "replace_in_file", "write_to_file", "apply_patch", "delete_file"])
 	set(["run_commands", "execute_command"])
-	set(["fetch_web_content", "web_fetch", "web_search"])
+	set(["load_web_page", "search_web_page", "read_web_page_content", "fetch_web_content", "web_fetch", "web_search"])
 
 	if (mcpHub) {
 		for (const server of mcpHub.getServers()) {
@@ -82,7 +82,9 @@ function isCommandTool(toolName: string): boolean {
 }
 
 function isBrowserTool(toolName: string): boolean {
-	return toolName === "fetch_web_content" || toolName === "web_fetch" || toolName === "web_search"
+	return ["load_web_page", "search_web_page", "read_web_page_content", "fetch_web_content", "web_fetch", "web_search"].includes(
+		toolName,
+	)
 }
 
 /** MCP tools are registered by `createMcpTools` under `serverName__toolName`. */

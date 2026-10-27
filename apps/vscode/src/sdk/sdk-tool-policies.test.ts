@@ -38,3 +38,18 @@ describe("isToolAutoApproved", () => {
 		expect(isToolAutoApproved("firecrawl__scrape", settings)).toBe(false)
 	})
 })
+
+describe("bounded web tool approval", () => {
+	for (const tool of ["load_web_page", "search_web_page", "read_web_page_content", "web_search"]) {
+		it(`${tool} follows the browser approval toggle`, () => {
+			for (const enabled of [true, false]) {
+				expect(
+					isToolAutoApproved(tool, {
+						...DEFAULT_AUTO_APPROVAL_SETTINGS,
+						actions: { ...DEFAULT_AUTO_APPROVAL_SETTINGS.actions, useBrowser: enabled },
+					}),
+				).toBe(enabled)
+			}
+		})
+	}
+})

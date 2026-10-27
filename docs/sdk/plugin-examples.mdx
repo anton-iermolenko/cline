@@ -54,7 +54,7 @@ See [Installing Plugins](/sdk/plugin-install) for more install options.
 
 ## Add Web Search
 
-The `web-search.ts` plugin registers a `web_search` tool backed by Exa. Use `web_search` to discover relevant URLs, then use `fetch_web_content` when the agent needs to inspect a specific page.
+The `web-search.ts` plugin registers a `web_search` tool backed by Exa. Use `web_search` to discover relevant URLs, then use `load_web_page` when the agent needs to inspect a specific page.
 
 ```sh
 cline plugin install https://github.com/cline/cline/blob/main/sdk/examples/plugins/web-search.ts --cwd .

@@ -98,6 +98,18 @@ const builds: Parameters<typeof Bun.build>[0][] = [
 	},
 ];
 
+builds.push({
+	entrypoints: ["./src/extensions/tools/web-page-worker.ts"],
+	outdir: "./dist/extensions",
+	target: "node",
+	format: "cjs",
+	naming: "[name].cjs",
+	packages: "bundle",
+	external: [],
+	minify,
+	sourcemap,
+});
+
 for (const config of builds) {
 	const result = await Bun.build(config as Parameters<typeof Bun.build>[0]);
 

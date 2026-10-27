@@ -206,6 +206,7 @@ const main = async () => {
 	await $`mkdir -p ${BIN_DIR}/desktop-backend ${REMOTE_CLI_DIR} ${BIN_DIR}/extensions`;
 	// Plugin workers load this bootstrap from disk in the backend and Hub.
 	await $`cp ../../../sdk/packages/core/dist/extensions/plugin-sandbox-bootstrap.js ${BIN_DIR}/extensions/plugin-sandbox-bootstrap.js`;
+	await $`cp ../../../sdk/packages/core/dist/extensions/web-page-worker.cjs ${BIN_DIR}/extensions/web-page-worker.cjs`;
 	await bundlePluginSdkPackages();
 	// Every build cross-compiles the Linux SSH copies (and macOS builds both
 	// architectures), which needs the target platforms' OpenTUI native

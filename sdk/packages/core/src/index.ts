@@ -1030,6 +1030,28 @@ export {
 	ToolPresets,
 	truncateCommandOutput,
 } from "./extensions/tools";
+export type {
+	WebPageAcquirer,
+	WebPageSource,
+} from "./extensions/tools/web-pages";
+export {
+	createWebPageExecutor,
+	createWebPageTools,
+	LoadWebPageSchema,
+	ReadWebPageSchema,
+	SearchWebPageSchema,
+	type WebPageExecutor,
+	type WebPageOptions,
+} from "./extensions/tools/web-pages";
+export {
+	createWebProviderPlugin,
+	readWebPageProvider,
+	readWebSearchProvider,
+	type WebProviderOptions,
+	type WebSearchInput,
+	WebSearchInputSchema,
+	type WebSearchResponse,
+} from "./extensions/tools/web-provider";
 export * from "./remote/remote-environments";
 export { ensureLoginShellPath } from "./remote/shell-path";
 export type {

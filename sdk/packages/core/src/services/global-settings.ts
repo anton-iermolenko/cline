@@ -82,6 +82,14 @@ export const GlobalSettingsSchema = z
 		toolAutoApprove: z.boolean().optional().catch(undefined),
 		tuiTheme: z.string().optional().catch(undefined),
 		disabledTools: GlobalSettingsStringListSchema.optional(),
+		webSearchProvider: z
+			.string()
+			.regex(/^[a-z][a-z0-9-]*$/)
+			.optional(),
+		webPageProvider: z
+			.string()
+			.regex(/^[a-z][a-z0-9-]*$/)
+			.optional(),
 		tools: ModelToolSettingsSchema,
 		disabledPlugins: GlobalSettingsStringListSchema.optional(),
 		disabledAgentPlugins: GlobalSettingsStringListSchema.optional(),
@@ -98,6 +106,8 @@ export const GlobalSettingsSchema = z
 			toolAutoApprove?: boolean;
 			tuiTheme?: string;
 			disabledTools?: string[];
+			webSearchProvider?: string;
+			webPageProvider?: string;
 			tools?: ModelToolSettings;
 			disabledPlugins?: string[];
 			disabledAgentPlugins?: string[];
@@ -105,6 +115,10 @@ export const GlobalSettingsSchema = z
 			autoUpdateEnabled: settings.autoUpdateEnabled,
 			telemetryOptOut: settings.telemetryOptOut,
 		};
+		if (settings.webSearchProvider)
+			normalized.webSearchProvider = settings.webSearchProvider;
+		if (settings.webPageProvider)
+			normalized.webPageProvider = settings.webPageProvider;
 		if (settings.compactionStrategy) {
 			normalized.compactionStrategy = settings.compactionStrategy;
 		}
@@ -353,7 +367,17 @@ export function setToolAutoApproveGlobally(toolAutoApprove: boolean): void {
 export function resolveDisabledToolNames(
 	disabledToolNames?: ReadonlyArray<string>,
 ): Set<string> {
-	return new Set(disabledToolNames ?? readGlobalSettings().disabledTools ?? []);
+	const disabled = new Set(
+		disabledToolNames ?? readGlobalSettings().disabledTools ?? [],
+	);
+	if (disabled.has("web_pages"))
+		for (const name of [
+			"load_web_page",
+			"search_web_page",
+			"read_web_page_content",
+		])
+			disabled.add(name);
+	return disabled;
 }
 
 export function resolveDisabledPluginPaths(

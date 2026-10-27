@@ -3,6 +3,7 @@
  *
  * Registers a `web_search` tool backed by Exa.
  *
+ * Select webSearchProvider: "exa" in Cline global settings.
  * CLI usage:
  *   cline plugin install https://github.com/cline/cline/blob/main/sdk/examples/plugins/web-search.ts --cwd .
  *   EXA_API_KEY=... cline "Search the web for recent TypeScript 6 updates"
@@ -12,7 +13,7 @@
  *                            is still required for CLI inference.
  */
 
-import { type AgentPlugin, createTool } from "@cline/core";
+import { createWebProviderPlugin } from "@cline/core";
 
 export interface WebSearchInput {
 	query: string;
@@ -119,46 +120,10 @@ function extractErrorMessage(body: unknown): string | undefined {
 	return undefined;
 }
 
-function asString(value: unknown): string | undefined {
-	return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function asNumber(value: unknown): number | undefined {
-	return typeof value === "number" && Number.isFinite(value)
-		? value
-		: undefined;
-}
-
 function hasResultUrl(
 	result: ExaSearchResult,
 ): result is ExaSearchResult & { url: string } {
 	return typeof result.url === "string" && result.url.trim().length > 0;
-}
-
-function parseWebSearchInput(input: unknown): WebSearchInput {
-	if (!input || typeof input !== "object") {
-		throw new Error("web_search input must be an object");
-	}
-	const record = input as Record<string, unknown>;
-	const query = asString(record.query);
-	if (!query) {
-		throw new Error("query is required");
-	}
-
-	const domains = Array.isArray(record.domains)
-		? record.domains.flatMap((domain) => {
-				const value = asString(domain);
-				return value ? [value] : [];
-			})
-		: undefined;
-
-	return {
-		query,
-		limit: asNumber(record.limit),
-		domains,
-		recencyDays: asNumber(record.recencyDays),
-		country: asString(record.country),
-	};
 }
 
 async function readJsonResponse<T>(response: Response): Promise<T> {
@@ -196,6 +161,7 @@ async function searchExa(
 	apiKey: string,
 	limit: number,
 	domains: string[] | undefined,
+	signal?: AbortSignal,
 ): Promise<WebSearchOutput> {
 	const body: Record<string, unknown> = {
 		query: input.query,
@@ -222,6 +188,9 @@ async function searchExa(
 			"Content-Type": "application/json",
 		},
 		body: JSON.stringify(body),
+		signal: signal
+			? AbortSignal.any([signal, AbortSignal.timeout(25_000)])
+			: AbortSignal.timeout(25_000),
 	});
 	const json = await readJsonResponse<ExaSearchResponse>(response);
 
@@ -252,6 +221,7 @@ async function searchExa(
 
 export async function searchWeb(
 	input: WebSearchInput,
+	signal?: AbortSignal,
 ): Promise<WebSearchOutput> {
 	if (!input.query || !input.query.trim()) {
 		throw new Error("query is required");
@@ -261,64 +231,27 @@ export async function searchWeb(
 	const domains = normalizeDomains(input.domains);
 	const apiKey = resolveExaApiKey();
 
-	return searchExa(input, apiKey, limit, domains);
+	return searchExa(input, apiKey, limit, domains, signal);
 }
 
-const plugin: AgentPlugin = {
-	name: "web-search",
-	manifest: {
-		capabilities: ["tools"],
-	},
+const plugin = createWebProviderPlugin({
+	id: "exa",
+	isConfigured: () => !!env("EXA_API_KEY"),
+	search: async (input, context) =>
+		searchWeb(
+			{
+				query: input.query,
+				limit: input.limit,
+				domains: input.domains,
+				recencyDays: input.recencyDays,
+				country: input.country,
+			},
+			context.signal,
+		),
+});
 
-	setup(api) {
-		api.registerTool(
-			createTool({
-				name: "web_search",
-				description:
-					"Search the web for current public information using Exa. " +
-					"Use this to discover relevant URLs, news, docs, and recent facts; use fetch_web_content afterward when a page needs deeper inspection. " +
-					"Requires EXA_API_KEY in the plugin host environment.",
-				inputSchema: {
-					type: "object",
-					properties: {
-						query: {
-							type: "string",
-							description:
-								"Search query. Use precise terms and include dates when recency matters.",
-						},
-						limit: {
-							type: "number",
-							description: `Number of results to return, from 1 to ${MAX_RESULT_LIMIT}. Defaults to ${DEFAULT_RESULT_LIMIT}.`,
-						},
-						domains: {
-							type: "array",
-							items: { type: "string" },
-							description:
-								"Optional domains to restrict results to, such as github.com or docs.exa.ai.",
-						},
-						recencyDays: {
-							type: "number",
-							description:
-								"Optional freshness window in days. Maps to Exa startPublishedDate.",
-						},
-						country: {
-							type: "string",
-							description:
-								"Optional lowercase two-letter country code for localized results, such as us.",
-						},
-					},
-					required: ["query"],
-					additionalProperties: false,
-				},
-				timeoutMs: 30_000,
-				retryable: true,
-				maxRetries: 1,
-				execute: async (input: unknown) =>
-					searchWeb(parseWebSearchInput(input)),
-			}),
-		);
-	},
-};
+// Keep the existing installed plugin identity and its policy preferences.
+plugin.name = "web-search";
 
 export { plugin };
 export default plugin;

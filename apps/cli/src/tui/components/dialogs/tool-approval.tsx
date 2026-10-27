@@ -80,6 +80,7 @@ export function formatApprovalParams(
 				</text>
 			);
 		}
+		case "load_web_page":
 		case "fetch_web_content": {
 			const info = parseWebFetchInput(rawInput);
 			if (!info?.urls.length) break;

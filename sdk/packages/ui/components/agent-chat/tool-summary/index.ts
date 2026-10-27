@@ -548,7 +548,7 @@ export function buildToolSummary(
 		}
 	}
 
-	if (toolName === "fetch_web_content") {
+	if (toolName === "fetch_web_content" || toolName === "load_web_page") {
 		const info = parseWebFetchInput(input);
 		if (info) {
 			return {

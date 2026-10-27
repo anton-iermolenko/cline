@@ -172,23 +172,6 @@ export const RunCommandsInputUnionSchema = z.union([
 ]);
 
 /**
- * Schema for a single web fetch request
- */
-export const WebFetchRequestSchema = z.object({
-	url: z.string().describe("The URL to fetch"),
-	prompt: z.string().min(2).describe("Analysis prompt for the fetched content"),
-});
-
-/**
- * Schema for fetch_web_content tool input
- */
-export const FetchWebContentInputSchema = z.object({
-	requests: z
-		.array(WebFetchRequestSchema)
-		.describe("Array of the URLs for the web fetch requests"),
-});
-
-/**
  * Schema for editor tool input
  */
 export const EditFileInputSchema = z
@@ -319,16 +302,6 @@ export type RunCommandsInput = z.infer<typeof RunCommandsInputSchema>;
 export type StructuredCommandInput = z.infer<
 	typeof StructuredCommandInputSchema
 >;
-
-/**
- * Web fetch request parameters
- */
-export type WebFetchRequest = z.infer<typeof WebFetchRequestSchema>;
-
-/**
- * Input for the fetch_web_content tool
- */
-export type FetchWebContentInput = z.infer<typeof FetchWebContentInputSchema>;
 
 /**
  * Input for the editor tool

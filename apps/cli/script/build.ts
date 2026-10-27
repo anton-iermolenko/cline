@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import {
+	copyFileSync,
 	cpSync,
 	existsSync,
 	mkdirSync,
@@ -229,6 +230,11 @@ for (const item of targets) {
 		),
 		outputDirectory: join(cliDir, `dist/${dirName}/extensions`),
 	});
+
+	copyFileSync(
+		join(rootDir, "sdk/packages/core/dist/extensions/web-page-worker.cjs"),
+		join(cliDir, `dist/${dirName}/extensions/web-page-worker.cjs`),
+	);
 
 	if (existsSync(hubWebviewDist)) {
 		const hubWebviewDest = join(cliDir, `dist/${dirName}/cline-hub/webview`);

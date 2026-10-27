@@ -22,9 +22,9 @@ describe("default tool presets", () => {
 		expect(ToolPresets.yolo.enableSubmitAndExit).toBe(true);
 	});
 
-	it("disables search and web fetch in yolo mode", () => {
+	it("keeps bounded page navigation available in yolo mode", () => {
 		expect(ToolPresets.yolo.enableSearch).toBe(false);
-		expect(ToolPresets.yolo.enableWebFetch).toBe(false);
+		expect(ToolPresets.yolo.enableWebPages).toBe(true);
 	});
 
 	it("keeps shell access enabled in plan mode", () => {
@@ -41,7 +41,7 @@ describe("default tool presets", () => {
 				readFile: async () => "ok",
 				search: async () => "ok",
 				bash: async () => "ok",
-				webFetch: async () => "ok",
+				webPages: async () => "ok",
 				applyPatch: async () => "ok",
 				editor: async () => "ok",
 				skills: async () => "ok",
@@ -52,6 +52,9 @@ describe("default tool presets", () => {
 		expect(tools.map((tool) => tool.name)).toEqual([
 			"read_files",
 			"run_commands",
+			"load_web_page",
+			"search_web_page",
+			"read_web_page_content",
 			"editor",
 		]);
 	});

@@ -1348,3 +1348,23 @@ work into PID waits rather than repeated shell polling.
 
 See [the API reference](DOC.md#pid-based-process-waiting) for inputs, states,
 limits, cancellation, and registration lifetime.
+
+## Shared web research
+
+`fetch_web_content` is replaced in default toolsets by `load_web_page`,
+`search_web_page` and `read_web_page_content` (`web_pages` in the tool catalog).
+`enableWebPages` and `ToolExecutors.webPages` replace the old fetch flag and
+executor. A self-contained `web-page-worker.cjs` performs bounded download, PDF
+extraction, regex execution and file-backed document operations. CLI, extension
+and desktop packaging ship the worker; a custom bundler can set
+`CLINE_WEB_PAGE_WORKER_PATH`. Persistent handles are scoped to the data directory
+and workspace, with shared source provenance, TTL, eviction and output limits.
+
+Search discovery is independent of page research. `webSearchProvider` selects
+native model search or a configured plugin; `webPageProvider` selects the built-in
+HTTP acquisition path or a plugin callback. `createWebProviderPlugin` supplies
+stable public names and common search result bounds; providers implement only
+search or byte acquisition. Missing configuration registers no provider tool and
+never triggers silent fallback. External search suppresses provider-native
+`web_search`, avoiding duplicate names. Rebuild the session after switching
+providers. See `docs/sdk/web-research.mdx` for configuration and adapter examples.

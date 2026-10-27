@@ -17,6 +17,7 @@ import type {
 	ReadFileRequest,
 	StructuredCommandInput,
 } from "./schemas";
+import type { WebPageExecutor } from "./web-pages";
 
 // =============================================================================
 // Tool Result Types
@@ -81,20 +82,6 @@ export type SearchExecutor = (
 export type ShellExecutor = (
 	command: string | StructuredCommandInput,
 	cwd: string,
-	context: AgentToolContext,
-) => Promise<string>;
-
-/**
- * Executor for fetching web content
- *
- * @param url - URL to fetch
- * @param prompt - Analysis prompt for the content
- * @param context - Tool execution context
- * @returns Analyzed/extracted content
- */
-export type WebFetchExecutor = (
-	url: string,
-	prompt: string,
 	context: AgentToolContext,
 ) => Promise<string>;
 
@@ -207,8 +194,8 @@ export interface ToolExecutors {
 	bash?: ShellExecutor;
 	/** Process inspection in the command executor's OS namespace. */
 	processWait?: ProcessWaitExecutor;
-	/** Web content fetching implementation */
-	webFetch?: WebFetchExecutor;
+	/** File-backed public web document operations. */
+	webPages?: WebPageExecutor;
 	/** Filesystem editor implementation */
 	editor?: EditorExecutor;
 	/** Apply patch implementation */
@@ -233,7 +220,9 @@ export type DefaultToolName =
 	| "search_codebase"
 	| "run_commands"
 	| "wait_for_process"
-	| "fetch_web_content"
+	| "load_web_page"
+	| "search_web_page"
+	| "read_web_page_content"
 	| "apply_patch"
 	| "editor"
 	| "skills"
@@ -273,10 +262,10 @@ export interface DefaultToolsConfig {
 	enableProcessWait?: boolean;
 
 	/**
-	 * Enable the fetch_web_content tool
+	 * Enable the bounded web document tools
 	 * @default true
 	 */
-	enableWebFetch?: boolean;
+	enableWebPages?: boolean;
 
 	/**
 	 * Enable the apply_patch tool
@@ -332,12 +321,6 @@ export interface DefaultToolsConfig {
 	 * @default 30000
 	 */
 	bashTimeoutMs?: number;
-
-	/**
-	 * Timeout for web fetch operations in milliseconds
-	 * @default 30000
-	 */
-	webFetchTimeoutMs?: number;
 
 	/**
 	 * Timeout for search operations in milliseconds

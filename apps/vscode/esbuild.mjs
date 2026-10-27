@@ -205,6 +205,10 @@ function copyPluginBootstrap() {
 	}
 	fs.mkdirSync(destDir, { recursive: true })
 	fs.copyFileSync(source, path.join(destDir, "plugin-sandbox-bootstrap.mjs"))
+	fs.copyFileSync(
+		path.resolve(__dirname, "../../sdk/packages/core/dist/extensions/web-page-worker.cjs"),
+		path.join(destDir, "web-page-worker.cjs"),
+	)
 }
 
 async function main() {

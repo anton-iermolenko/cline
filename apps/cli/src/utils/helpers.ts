@@ -193,6 +193,20 @@ export function formatToolInput(toolName: string, input: unknown): string {
 				return truncate(obj.queries.join(", "), 120);
 			}
 			break;
+		case "load_web_page":
+			return truncate(obj.url, 120);
+		case "web_search":
+			return truncate(obj.query, 120);
+		case "search_web_page":
+			return truncate(
+				`${toDisplayString(obj.document_id)}: ${toDisplayString(obj.query)}`,
+				120,
+			);
+		case "read_web_page_content":
+			return truncate(
+				`${toDisplayString(obj.document_id)}: line ${toDisplayString(obj.start_line ?? 1)}`,
+				120,
+			);
 		case "fetch_web_content":
 			if (Array.isArray(obj.requests)) {
 				return truncate(
