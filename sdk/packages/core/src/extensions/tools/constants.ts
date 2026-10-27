@@ -4,6 +4,7 @@
  * Tool name constants and utility arrays.
  */
 
+import { FILE_EDITOR_TOOL_NAMES } from "./file-editor";
 import type { DefaultToolName } from "./types";
 
 /**
@@ -32,7 +33,7 @@ export const ALL_DEFAULT_TOOL_NAMES: DefaultToolName[] = [
 	DefaultToolNames.WAIT_FOR_PROCESS,
 	DefaultToolNames.FETCH_WEB_CONTENT,
 	DefaultToolNames.APPLY_PATCH,
-	DefaultToolNames.EDITOR,
+	...FILE_EDITOR_TOOL_NAMES,
 	DefaultToolNames.SKILLS,
 	DefaultToolNames.ASK,
 	DefaultToolNames.SUBMIT_AND_EXIT,

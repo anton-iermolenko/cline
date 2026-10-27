@@ -1348,3 +1348,19 @@ work into PID waits rather than repeated shell polling.
 
 See [the API reference](DOC.md#pid-based-process-waiting) for inputs, states,
 limits, cancellation, and registration lifetime.
+
+## Native file editor family
+
+Default toolsets use the shared file-editor engine through
+`ToolExecutors.fileEditor` (also a hub client capability). One `editor` catalog
+entry expands to inline editing, hash reads, draft lifecycle tools and guarded
+draft application/creation. The engine is transport-independent and bundled
+into SDK consumers; it does not require an MCP process. Draft stores are scoped
+to conversation/agent/workspace and do not survive runtime recreation.
+
+VS Code uses the same executor for preview and commit, including staged content,
+with a preview-snapshot hash guard. Native approval, run checkpoint and activity
+tracking paths handle the write tools. The former low-level `EditorExecutor`
+API remains available to explicit SDK overrides; default clients use the native
+family. See `docs/sdk/native-file-editor.mdx` for contracts, limits, configuration
+and migration.

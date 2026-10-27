@@ -29,6 +29,7 @@ import {
 import {
 	createBuiltinTools,
 	DEFAULT_MODEL_TOOL_ROUTING_RULES,
+	FILE_EDITOR_TOOL_NAMES,
 	type RunCommandExecutionController,
 	resolveToolPresetName,
 	resolveToolRoutingConfig,
@@ -128,6 +129,8 @@ function filterToolsForConfiguredAgent(
 	const allowedToolNames = new Set(
 		agent.tools.map(resolveConfiguredAgentToolName),
 	);
+	if (allowedToolNames.has("editor"))
+		for (const name of FILE_EDITOR_TOOL_NAMES) allowedToolNames.add(name);
 	if (agent.skills !== undefined) {
 		allowedToolNames.add("skills");
 	}

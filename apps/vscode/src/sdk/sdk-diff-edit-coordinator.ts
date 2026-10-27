@@ -4,8 +4,12 @@ import {
 	computePatchChanges,
 	createApplyPatchExecutor,
 	createEditorExecutor,
+	createFileEditorExecutor,
 	type EditFileInput,
 	type EditorExecutor,
+	type FileEditorExecutor,
+	type FileEditorPreview,
+	type FileEditorToolName,
 	PatchActionType,
 } from "@cline/core"
 import type { AgentToolContext } from "@cline/shared"
@@ -38,6 +42,8 @@ export interface SdkDiffEditCoordinatorOptions {
 	createEditPreview?: () => EditPreview
 	/** Injectable for tests. Defaults to the SDK's disk-writing editor executor. */
 	fallbackEditorExecutor?: EditorExecutor
+	/** Shared native editor engine, including previews and draft state. */
+	fileEditorExecutor?: FileEditorExecutor
 	/** Injectable for tests. Defaults to the SDK's disk-writing apply_patch executor. */
 	fallbackApplyPatchExecutor?: ApplyPatchExecutor
 	/** Test seam: overrides the auto-approve preview linger. */
@@ -54,6 +60,8 @@ interface DiffEditSession {
 	absolutePath: string
 	/** File to show after the write; differs from absolutePath for apply_patch moves. */
 	revealPath: string
+	/** Snapshot shown for a native editor approval. */
+	expectedSha256?: string
 }
 
 /**
@@ -78,12 +86,14 @@ interface DiffEditSession {
 export class SdkDiffEditCoordinator {
 	private readonly sessions = new Map<string, DiffEditSession>()
 	private readonly fallbackEditorExecutor: EditorExecutor
+	private readonly fileEditorExecutor: FileEditorExecutor
 	private readonly fallbackApplyPatchExecutor: ApplyPatchExecutor
 	private readonly autoApprovePreviewLingerMs: number
 	private readonly previewOpenTimeoutMs: number
 
 	constructor(private readonly options: SdkDiffEditCoordinatorOptions) {
 		this.fallbackEditorExecutor = options.fallbackEditorExecutor ?? createEditorExecutor()
+		this.fileEditorExecutor = options.fileEditorExecutor ?? createFileEditorExecutor()
 		this.fallbackApplyPatchExecutor = options.fallbackApplyPatchExecutor ?? createApplyPatchExecutor()
 		this.autoApprovePreviewLingerMs = options.autoApprovePreviewLingerMs ?? AUTO_APPROVE_PREVIEW_LINGER_MS
 		this.previewOpenTimeoutMs = options.previewOpenTimeoutMs ?? PREVIEW_OPEN_TIMEOUT_MS
@@ -94,12 +104,20 @@ export class SdkDiffEditCoordinator {
 	 * user decides while looking at the actual change. Never throws; on any failure the
 	 * approval flow proceeds without a preview and the executor still applies the edit.
 	 */
-	async openForApproval(toolCallId: string, toolName: string, input: unknown): Promise<void> {
+	async openForApproval(toolCallId: string, toolName: string, input: unknown, context?: AgentToolContext): Promise<void> {
 		if (this.options.isBackgroundEditEnabled() || this.sessions.has(toolCallId)) {
 			return
 		}
 		try {
-			if (toolName === "editor") {
+			if (context && ["editor", "apply_draft", "create_from_draft"].includes(toolName)) {
+				await this.openNativeEditorPreview(
+					toolCallId,
+					toolName as FileEditorToolName,
+					input as Record<string, unknown>,
+					context,
+					await this.options.getCwd(),
+				)
+			} else if (toolName === "editor") {
 				await this.openEditorPreview(toolCallId, input as EditFileInput)
 			} else if (toolName === "apply_patch") {
 				await this.openPatchPreview(toolCallId, input as ApplyPatchInput)
@@ -141,6 +159,64 @@ export class SdkDiffEditCoordinator {
 		} finally {
 			await this.discardPreview(toolCallId)
 		}
+	}
+
+	/** All native editor operations use one engine and one session-scoped draft store. */
+	async executeFileEditorTool(
+		tool: FileEditorToolName | "preview",
+		input: Record<string, unknown>,
+		cwd: string,
+		context: AgentToolContext,
+	): Promise<Record<string, unknown>> {
+		if (tool === "preview" || !["editor", "apply_draft", "create_from_draft"].includes(tool))
+			return this.fileEditorExecutor(tool, input, cwd, context)
+		const id = context.toolCallId ?? ""
+		const hadPreview = this.sessions.has(id)
+		try {
+			if (!hadPreview && !this.options.isBackgroundEditEnabled()) {
+				try {
+					await this.openNativeEditorPreview(id, tool, input, context, cwd)
+				} catch (error) {
+					Logger.warn(`[SdkDiffEditCoordinator] Native editor preview unavailable: ${error}`)
+				}
+			}
+			const expected = this.sessions.get(id)?.expectedSha256
+			const result = await this.fileEditorExecutor(
+				tool,
+				expected ? { ...input, expected_sha256: expected } : input,
+				cwd,
+				context,
+			)
+			if (!hadPreview && this.sessions.get(id)?.preview) await lingerDelay(this.autoApprovePreviewLingerMs, context.signal)
+			if (!context.signal?.aborted) await this.showEditedFile(this.livePreviewRevealPath(id))
+			return result
+		} finally {
+			await this.discardPreview(id)
+		}
+	}
+
+	private async openNativeEditorPreview(
+		id: string,
+		tool: FileEditorToolName,
+		input: Record<string, unknown>,
+		context: AgentToolContext,
+		cwd: string,
+	): Promise<void> {
+		const plan = (await this.fileEditorExecutor(
+			"preview",
+			{ tool, arguments: input },
+			cwd,
+			context,
+		)) as unknown as FileEditorPreview
+		await this.openPreview(id, {
+			absolutePath: plan.path,
+			displayPath: String(input.path),
+			editType: plan.operation === "create" ? "create" : "modify",
+			leftContent: plan.original_text,
+			rightContent: plan.new_text,
+		})
+		const session = this.sessions.get(id)
+		if (session) session.expectedSha256 = plan.original_sha256
 	}
 
 	/**

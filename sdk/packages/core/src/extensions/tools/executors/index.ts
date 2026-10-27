@@ -6,6 +6,10 @@
  * for custom implementations.
  */
 
+import {
+	createFileEditorExecutor,
+	type FileEditorOptions,
+} from "../file-editor";
 import { createProcessWaitExecutor } from "../process-wait";
 import type { ToolExecutors } from "../types";
 import {
@@ -64,6 +68,7 @@ export interface DefaultExecutorsOptions {
 	webFetch?: WebFetchExecutorOptions;
 	applyPatch?: ApplyPatchExecutorOptions;
 	editor?: EditorExecutorOptions;
+	fileEditor?: FileEditorOptions;
 }
 
 /**
@@ -106,5 +111,6 @@ export function createDefaultExecutors(
 		webFetch: createWebFetchExecutor(options.webFetch),
 		applyPatch: createApplyPatchExecutor(options.applyPatch),
 		editor: createEditorExecutor(options.editor),
+		fileEditor: createFileEditorExecutor(options.fileEditor),
 	};
 }

@@ -549,4 +549,11 @@ export async function loginOpenAICodex(): Promise<OAuthCredentials> {
 	return {}
 }
 
+export type {
+	FileEditorExecutor,
+	FileEditorPreview,
+	FileEditorToolName,
+} from "../../../../sdk/packages/core/src/extensions/tools/file-editor"
+
+export { createFileEditorExecutor } from "../../../../sdk/packages/core/src/extensions/tools/file-editor"
 export { resolveMessageDisplayRole } from "../../../../sdk/packages/core/src/session/user-run-messages"

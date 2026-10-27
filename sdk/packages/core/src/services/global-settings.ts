@@ -82,6 +82,18 @@ export const GlobalSettingsSchema = z
 		toolAutoApprove: z.boolean().optional().catch(undefined),
 		tuiTheme: z.string().optional().catch(undefined),
 		disabledTools: GlobalSettingsStringListSchema.optional(),
+		fileEditor: z
+			.object({
+				maxChars: z
+					.number()
+					.int()
+					.positive()
+					.max(16 * 1024 * 1024)
+					.optional(),
+				advertiseLengthBounds: z.boolean().optional(),
+				lockTimeoutMs: z.number().int().positive().max(30000).optional(),
+			})
+			.optional(),
 		tools: ModelToolSettingsSchema,
 		disabledPlugins: GlobalSettingsStringListSchema.optional(),
 		disabledAgentPlugins: GlobalSettingsStringListSchema.optional(),
@@ -98,6 +110,11 @@ export const GlobalSettingsSchema = z
 			toolAutoApprove?: boolean;
 			tuiTheme?: string;
 			disabledTools?: string[];
+			fileEditor?: {
+				maxChars?: number;
+				advertiseLengthBounds?: boolean;
+				lockTimeoutMs?: number;
+			};
 			tools?: ModelToolSettings;
 			disabledPlugins?: string[];
 			disabledAgentPlugins?: string[];
@@ -105,6 +122,7 @@ export const GlobalSettingsSchema = z
 			autoUpdateEnabled: settings.autoUpdateEnabled,
 			telemetryOptOut: settings.telemetryOptOut,
 		};
+		if (settings.fileEditor) normalized.fileEditor = settings.fileEditor;
 		if (settings.compactionStrategy) {
 			normalized.compactionStrategy = settings.compactionStrategy;
 		}
@@ -162,6 +180,7 @@ function invalidateSettingsCache(): void {
 
 function freezeSettings(value: GlobalSettings): GlobalSettings {
 	if (value.compaction) Object.freeze(value.compaction);
+	if (value.fileEditor) Object.freeze(value.fileEditor);
 	if (value.disabledTools) {
 		Object.freeze(value.disabledTools);
 	}
@@ -353,7 +372,21 @@ export function setToolAutoApproveGlobally(toolAutoApprove: boolean): void {
 export function resolveDisabledToolNames(
 	disabledToolNames?: ReadonlyArray<string>,
 ): Set<string> {
-	return new Set(disabledToolNames ?? readGlobalSettings().disabledTools ?? []);
+	const disabled = new Set(
+		disabledToolNames ?? readGlobalSettings().disabledTools ?? [],
+	);
+	if (disabled.has("editor"))
+		for (const name of [
+			"read_file",
+			"apply_draft",
+			"create_from_draft",
+			"draft_create",
+			"draft_append",
+			"draft_finalize",
+			"draft_discard",
+		])
+			disabled.add(name);
+	return disabled;
 }
 
 export function resolveDisabledPluginPaths(
@@ -438,7 +471,7 @@ export function setDisabledTools(
 	}
 
 	const settings = readGlobalSettings();
-	const disabled = resolveDisabledToolNames(settings.disabledTools);
+	const disabled = new Set(settings.disabledTools ?? []);
 	const tools: ModelToolSettings = { ...settings.tools };
 	for (const name of names) {
 		if (isModelToolName(name)) {

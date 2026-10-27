@@ -676,3 +676,78 @@ describe("SdkDiffEditCoordinator", () => {
 		expect(showEditedFile).not.toHaveBeenCalled()
 	})
 })
+
+describe("native file editor previews", () => {
+	const folders: string[] = []
+	afterEach(async () => {
+		for (const folder of folders.splice(0)) await fs.rm(folder, { recursive: true, force: true })
+	})
+	async function setup(background = false) {
+		const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "native-editor-preview-"))
+		folders.push(cwd)
+		const previews: FakeEditPreview[] = []
+		const coordinator = new SdkDiffEditCoordinator({
+			getCwd: async () => cwd,
+			isBackgroundEditEnabled: () => background,
+			createEditPreview: () => {
+				const preview = new FakeEditPreview()
+				previews.push(preview)
+				return preview
+			},
+			showEditedFile: async () => {},
+			autoApprovePreviewLingerMs: 0,
+		})
+		return { cwd, coordinator, previews }
+	}
+	it("previews staged contents through the actual engine before approval and commits those exact bytes", async () => {
+		const { cwd, coordinator, previews } = await setup(),
+			file = path.join(cwd, "file.txt"),
+			ctx = makeContext("staged-write")
+		await fs.writeFile(file, "old\ntail\n")
+		const read = await coordinator.executeFileEditorTool("read_file", { path: file }, cwd, ctx)
+		const draft = await coordinator.executeFileEditorTool("draft_create", {}, cwd, ctx)
+		const ack = await coordinator.executeFileEditorTool(
+			"draft_append",
+			{ id: draft.id, chunk_index: 0, content: 'new "quoted" content\n' },
+			cwd,
+			ctx,
+		)
+		await coordinator.executeFileEditorTool(
+			"draft_finalize",
+			{ id: draft.id, chunk_count: ack.next_chunk_index, expected_sha256: ack.sha256 },
+			cwd,
+			ctx,
+		)
+		const input = { path: file, new_text_ref: draft.id, start_line: 1, end_line: 1, expected_sha256: read.sha256 }
+		await coordinator.openForApproval(ctx.toolCallId!, "apply_draft", input, ctx)
+		expect(await fs.readFile(file, "utf8")).toBe("old\ntail\n")
+		expect(previews[0].opened?.rightContent).toBe('new "quoted" content\ntail\n')
+		await coordinator.executeFileEditorTool("apply_draft", input, cwd, ctx)
+		expect(await fs.readFile(file, "utf8")).toBe(previews[0].opened?.rightContent)
+		expect(previews[0].closed).toBe(1)
+	})
+	it("rejects an inline edit when the file changes after its approval preview", async () => {
+		const { cwd, coordinator } = await setup(),
+			file = path.join(cwd, "file.txt"),
+			ctx = makeContext("inline-write"),
+			input = { path: file, old_text: "old", new_text: "new" }
+		await fs.writeFile(file, "old\n")
+		await coordinator.openForApproval(ctx.toolCallId!, "editor", input, ctx)
+		await fs.writeFile(file, "old\nuser change\n")
+		await expect(coordinator.executeFileEditorTool("editor", input, cwd, ctx)).rejects.toThrow("hash changed")
+		expect(await fs.readFile(file, "utf8")).toBe("old\nuser change\n")
+	})
+	it("accepts large native inline edits in background mode without opening previews", async () => {
+		const { cwd, coordinator, previews } = await setup(true),
+			text = "x".repeat(37500)
+		const result = await coordinator.executeFileEditorTool(
+			"editor",
+			{ path: "large.txt", new_text: text },
+			cwd,
+			makeContext("large-write"),
+		)
+		expect(result.success).toBe(true)
+		expect(await fs.readFile(path.join(cwd, "large.txt"), "utf8")).toBe(text)
+		expect(previews).toHaveLength(0)
+	})
+})

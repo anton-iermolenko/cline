@@ -726,6 +726,8 @@ function sdkToolToClineSayTool(toolName: string, input?: unknown): ClineSayTool 
 			}
 		}
 
+		case "apply_draft":
+		case "create_from_draft":
 		case "editor":
 		case "replace_in_file": {
 			const filePath = getStringField(parsedInput, "path") ?? ""

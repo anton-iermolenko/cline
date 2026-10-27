@@ -22,6 +22,7 @@ import {
 	MAX_READ_LINES,
 	MAX_SEARCH_OUTPUT_CHARS,
 } from "./executors/output-limits";
+import { createFileEditorTools } from "./file-editor";
 import {
 	coalesceOrphanReadRanges,
 	formatError,
@@ -962,7 +963,15 @@ export function createDefaultTools(
 	// Add editor tool if enabled and executor provided,
 	// else check if apply_patch tool is enabled and executor provided
 	// NOTE: Do not enable two similar tools at the same time.
-	if (enableEditor && executors.editor) {
+	if (enableEditor && executors.fileEditor) {
+		tools.push(
+			...createFileEditorTools(executors.fileEditor, {
+				cwd: config.cwd,
+				timeoutMs: config.editorTimeoutMs,
+				options: config.fileEditorOptions,
+			}),
+		);
+	} else if (enableEditor && executors.editor) {
 		tools.push(createEditorTool(executors.editor, config));
 	} else if (enableApplyPatch && executors.applyPatch) {
 		tools.push(createApplyPatchTool(executors.applyPatch, config));

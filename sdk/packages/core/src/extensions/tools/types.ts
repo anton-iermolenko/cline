@@ -10,6 +10,7 @@ import type {
 	ITelemetryService,
 	TextContent,
 } from "@cline/shared";
+import type { FileEditorExecutor, FileEditorOptions } from "./file-editor";
 import type { ProcessWaitExecutor } from "./process-wait";
 import type {
 	ApplyPatchInput,
@@ -209,7 +210,9 @@ export interface ToolExecutors {
 	processWait?: ProcessWaitExecutor;
 	/** Web content fetching implementation */
 	webFetch?: WebFetchExecutor;
-	/** Filesystem editor implementation */
+	/** Native file editor family, including hash reads and staged content. */
+	fileEditor?: FileEditorExecutor;
+	/** Explicit legacy SDK editor override. */
 	editor?: EditorExecutor;
 	/** Apply patch implementation */
 	applyPatch?: ApplyPatchExecutor;
@@ -236,6 +239,13 @@ export type DefaultToolName =
 	| "fetch_web_content"
 	| "apply_patch"
 	| "editor"
+	| "read_file"
+	| "apply_draft"
+	| "create_from_draft"
+	| "draft_create"
+	| "draft_append"
+	| "draft_finalize"
+	| "draft_discard"
 	| "skills"
 	| "ask_question"
 	| "submit_and_exit";
@@ -356,6 +366,8 @@ export interface DefaultToolsConfig {
 	 * @default 30000
 	 */
 	editorTimeoutMs?: number;
+	/** Native file editor limits and schema advertisement. */
+	fileEditorOptions?: FileEditorOptions;
 
 	/**
 	 * Timeout for skills operations in milliseconds

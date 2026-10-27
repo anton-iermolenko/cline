@@ -23,7 +23,7 @@ export function buildToolPolicies(
 	}
 
 	set(["read_files", "read_file", "list_files", "list_code_definition_names", "search_codebase", "search_files"])
-	set(["editor", "replace_in_file", "write_to_file", "apply_patch", "delete_file"])
+	set(["editor", "apply_draft", "create_from_draft", "replace_in_file", "write_to_file", "apply_patch", "delete_file"])
 	set(["run_commands", "execute_command"])
 	set(["fetch_web_content", "web_fetch", "web_search"])
 
@@ -74,7 +74,15 @@ function isReadTool(toolName: string): boolean {
 }
 
 export function isEditTool(toolName: string): boolean {
-	return ["editor", "replace_in_file", "write_to_file", "apply_patch", "delete_file"].includes(toolName)
+	return [
+		"editor",
+		"apply_draft",
+		"create_from_draft",
+		"replace_in_file",
+		"write_to_file",
+		"apply_patch",
+		"delete_file",
+	].includes(toolName)
 }
 
 function isCommandTool(toolName: string): boolean {

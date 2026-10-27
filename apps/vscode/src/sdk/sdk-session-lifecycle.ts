@@ -29,6 +29,7 @@ export interface SdkSessionLifecycleOptions {
 	askQuestion: AskQuestionHandler
 	/** Custom `editor` executor (diff-view edit pipeline); replaces the SDK's disk writer. */
 	editorExecutor?: EditorExecutorHandler
+	fileEditorExecutor?: import("@cline/core").FileEditorExecutor
 	/** Custom `apply_patch` executor (reverts the diff preview, then applies via the SDK default). */
 	applyPatchExecutor?: ApplyPatchExecutorHandler
 	/** Custom `read_files` executor (resolves relative paths against the workspace root). */
@@ -427,6 +428,7 @@ export class SdkSessionLifecycle {
 				requestToolApproval: this.options.requestToolApproval,
 				askQuestion: this.options.askQuestion,
 				editorExecutor: this.options.editorExecutor,
+				fileEditorExecutor: this.options.fileEditorExecutor,
 				applyPatchExecutor: this.options.applyPatchExecutor,
 				readFileExecutor: this.options.readFileExecutor,
 				getTerminalManager: this.options.getTerminalManager,

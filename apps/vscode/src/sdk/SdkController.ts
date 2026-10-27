@@ -404,7 +404,13 @@ export class Controller {
 			getMinter: () => this.messageTranslatorState.getMinter(),
 			setTurnPhase: (phase, anchorTs) => this.turnStateTracker.set(phase, anchorTs),
 			// Open the diff editor preview before the approval buttons render.
-			onToolApprovalAsk: (request) => this.diffEdits.openForApproval(request.toolCallId, request.toolName, request.input),
+			onToolApprovalAsk: (request) =>
+				this.diffEdits.openForApproval(request.toolCallId, request.toolName, request.input, {
+					agentId: request.agentId,
+					conversationId: request.conversationId,
+					iteration: request.iteration,
+					toolCallId: request.toolCallId,
+				}),
 			recordApprovedToolMessage: (toolCallId, messageTs) =>
 				this.messageTranslatorState.recordApprovedToolMessageTs(toolCallId, messageTs),
 			recordDeniedToolApproval: (toolCallId, toolName, reason) => {
@@ -424,7 +430,7 @@ export class Controller {
 			telemetry: this.sdkTelemetry.telemetry,
 			requestToolApproval: (request) => this.interactions.handleRequestToolApproval(request),
 			askQuestion: (question, options, context) => this.interactions.handleAskQuestion(question, options, context),
-			editorExecutor: (input, cwd, context) => this.diffEdits.executeEditorTool(input, cwd, context),
+			fileEditorExecutor: (tool, input, cwd, context) => this.diffEdits.executeFileEditorTool(tool, input, cwd, context),
 			applyPatchExecutor: (input, cwd, context) => this.diffEdits.executeApplyPatchTool(input, cwd, context),
 			// The SDK's built-in reader resolves relative paths against the extension
 			// host's process.cwd() (usually "/"); resolve them against the workspace instead.

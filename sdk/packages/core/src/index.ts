@@ -1030,6 +1030,17 @@ export {
 	ToolPresets,
 	truncateCommandOutput,
 } from "./extensions/tools";
+export {
+	createFileEditorExecutor,
+	createFileEditorTools,
+	FILE_EDITOR_TOOL_NAMES,
+	FILE_EDITOR_WRITE_TOOLS,
+	type FileEditorExecutor,
+	type FileEditorOptions,
+	type FileEditorPreview,
+	type FileEditorToolName,
+	resolveFileEditorPath,
+} from "./extensions/tools/file-editor";
 export * from "./remote/remote-environments";
 export { ensureLoginShellPath } from "./remote/shell-path";
 export type {
