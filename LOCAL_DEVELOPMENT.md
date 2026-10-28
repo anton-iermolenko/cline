@@ -25,6 +25,22 @@ git worktree remove ../cline-topic
 
 Retain the feature branch for review and possible upstream submission. Do not force-remove a worktree containing uncommitted or needed ignored files. Preserve that material before cleanup. Avoid committing per-machine release metadata, helper configuration, credentials, binaries or generated dependencies.
 
+## Fork GitHub Actions
+
+Keep `sdk-test`, `ext-vscode-test`, `ext-vscode-test-e2e`, and `desktop-test`
+enabled. Their existing `main` triggers also accept `local-main`; PR change
+filters and manual test runs remain available. SDK checks include CLI, Hub and
+root dependency changes. These workflows build and test without publishing.
+Qlty coverage uploads are restricted to the upstream repository because forks
+do not have its service token. Test coverage artifacts remain available on GitHub.
+
+Disable all publishing workflows (including `ext-vscode-ab-package` and any
+older `ui-publish` entry) and `ext-jb-test-integration` in the fork's GitHub
+Actions settings. Retain the upstream workflow files for future merges; disabling
+a workflow is a repository setting, not a source-code deletion. Recheck this
+policy when upstream adds or renames a workflow. Accessible issue/PR maintenance
+workflows remain enabled independently of CI.
+
 ## Build the clients from one source
 
 At the clean primary checkout, use the shared fork release helper:
