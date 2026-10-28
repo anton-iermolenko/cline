@@ -69,7 +69,8 @@ jobs:
         steps:
             - id: set-matrix
               run: |
-                  echo 'matrix=[{"runner":"ubuntu"},{"runner":"windows"},{"runner":"macos"}]' >> $GITHUB_OUTPUT
+                  # Use Intel macOS to avoid the constrained macOS arm64 runner pool.
+                  echo 'matrix=[{"runner":"ubuntu","os":"ubuntu-latest"},{"runner":"windows","os":"windows-latest"},{"runner":"macos","os":"macos-15-intel"}]' >> $GITHUB_OUTPUT
 
     e2e:
         needs: [detect-changes, matrix_prep]
@@ -78,7 +79,7 @@ jobs:
             fail-fast: false
             matrix:
                 include: ${{ fromJson(needs.matrix_prep.outputs.matrix) }}
-        runs-on: ${{ matrix.runner }}-latest
+        runs-on: ${{ matrix.os }}
         timeout-minutes: 20
         # Nothing in this job uses OIDC, so it does not need an id-token
         # permission.

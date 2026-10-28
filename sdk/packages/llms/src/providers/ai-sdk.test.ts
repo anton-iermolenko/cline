@@ -238,6 +238,14 @@ describe("ai-sdk usage normalization", () => {
 	});
 
 	describe("cost extraction with pricing fallback", () => {
+		it("calculates custom model costs from per-million-token prices", () => {
+			const normalized = normalizeUsage(
+				{ inputTokens: 1000000, outputTokens: 1000000 },
+				undefined,
+				{ input: 0.02, output: 0.35 },
+			);
+			expect(normalized.totalCost).toBeCloseTo(0.37);
+		});
 		it.each([
 			["cline-pass", "included-model", { input: 3, output: 15 }],
 			["cline", "cline-pass/included-model", undefined],
