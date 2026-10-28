@@ -7,7 +7,6 @@ import fcntl
 import hashlib
 import json
 import mmap
-import os
 from pathlib import Path
 import platform
 import re
@@ -116,9 +115,9 @@ def verify_artifacts(root, record, package, vsix):
         runtime = record["coreRuntimeBuildId"].encode()
         if runtime not in archive.read("extension/dist/extension.js"):
             raise ValueError("Extension runtime identity does not match provenance")
-    node_version = subprocess.check_output(["node", str(root / "apps/cli/dist/index.js"), "--version"], cwd=root, text=True).strip()
-    if node_version != expected:
-        raise ValueError("Node CLI version does not match the fork release")
+    bundle_version = subprocess.check_output(["bun", str(root / "apps/cli/dist/index.js"), "--version"], cwd=root, text=True).strip()
+    if bundle_version != expected:
+        raise ValueError("CLI bundle version does not match the fork release")
     for path in [package / "bin/cline", root / "apps/cli/dist/index.js"]:
         with path.open("rb") as stream, mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as content:
             if content.find(runtime) < 0:
