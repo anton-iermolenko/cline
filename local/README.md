@@ -26,12 +26,12 @@ Build from a clean, committed primary `local-main`:
 bash local/build-wsl.sh
 ```
 
-The helper installs locked dependencies before stamping, builds the SDK once, type-checks both clients, compiles and smoke-tests the native CLI with isolated Hub state, builds the Node CLI and extension, writes provenance, then packages the VSIX. It checks the installed version fields inside the artifacts, preserved extension identity, fork README/banner and shared runtime fingerprint, and records SHA-256 hashes.
+The helper installs locked dependencies before stamping, builds the SDK once, type-checks both clients, compiles and smoke-tests the native CLI with isolated Hub state, builds the CLI bundle and extension, writes provenance, then packages the VSIX. It checks the installed version fields inside the artifacts, preserved extension identity, fork README/banner and shared runtime fingerprint, and records SHA-256 hashes.
 
 Artifacts:
 
 - Native CLI: `apps/cli/dist/cli-linux-<architecture>/`.
-- Node CLI: `apps/cli/dist/index.js`, with its copied plugin runtime.
+- CLI bundle: `apps/cli/dist/index.js`, with its copied plugin runtime; smoke-tested with Bun, matching the repository CLI runner.
 - Extension: `apps/vscode/dist/cline-ai-local-<version>.vsix`.
 - Build receipt: `apps/vscode/dist/release-artifacts.json`.
 
