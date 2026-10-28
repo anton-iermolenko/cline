@@ -347,6 +347,7 @@ export function useAgentEventHandlers(deps: AgentEventDeps) {
 			activeInlineStreamRef,
 			setIsRunning,
 			setIsStreaming,
+			setPreparedInputTokens,
 			addUsageDelta,
 			onTurnErrorReported,
 			verbose,

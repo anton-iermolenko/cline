@@ -5,11 +5,12 @@ import type {
 	CoreCompactionContext,
 	ProviderSettingsManager,
 } from "@cline/core";
-import { applyLocalModelLimits } from "@cline/core";
+import {
+	applyLocalModelLimits,
+	createContextCompactionPrepareTurn,
+} from "@cline/core";
 import { estimateRequestInputTokens } from "@cline/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createContextCompactionPrepareTurn } from "../../../../sdk/packages/core/src/extensions/context/compaction";
-import { normalizeUsage } from "../../../../sdk/packages/llms/src/providers/ai-sdk";
 import type { Config } from "./types";
 
 const roots: string[] = [];
@@ -34,7 +35,7 @@ afterEach(() => {
 });
 
 describe("local model limits", () => {
-	it("calculates custom model costs from stored per-million-token prices", () => {
+	it("maps stored per-million-token prices into model pricing", () => {
 		const config = {
 			providerId: "openai-compatible",
 			modelId: "qwen-27b",
@@ -43,12 +44,10 @@ describe("local model limits", () => {
 			config,
 			fixture({ "qwen-27b": { inputPrice: 0.02, outputPrice: 0.35 } }),
 		);
-		const usage = normalizeUsage(
-			{ inputTokens: 1000000, outputTokens: 1000000 },
-			undefined,
-			config.knownModels?.["qwen-27b"].pricing,
-		);
-		expect(usage.totalCost).toBeCloseTo(0.37);
+		expect(config.knownModels?.["qwen-27b"].pricing).toMatchObject({
+			input: 0.02,
+			output: 0.35,
+		});
 	});
 	it("preserves catalog rates for partial overrides and accepts zero cache prices", () => {
 		const config = {

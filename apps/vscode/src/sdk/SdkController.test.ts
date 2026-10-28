@@ -549,7 +549,7 @@ describe("edit/regenerate compaction", () => {
 			startResult: { sessionId: "replacement" },
 			sdkHost,
 		}))
-		const controller = {
+		const controller = Object.assign(Object.create(SdkController.prototype), {
 			task: {
 				taskId: "original",
 				messageStateHandler: {
@@ -561,6 +561,7 @@ describe("edit/regenerate compaction", () => {
 				},
 			},
 			sessions: {
+				trackSessionStart: (operation: () => Promise<unknown>) => operation(),
 				getActiveSession: () => (active ? { sessionId: "original", sdkHost, isRunning: false } : undefined),
 				startNewSession,
 				fireAndForgetSend: vi.fn(),
@@ -576,7 +577,7 @@ describe("edit/regenerate compaction", () => {
 			messageTranslatorState: { clearTurnOutcome: vi.fn() },
 			resetMessageTranslatorAndFence: vi.fn(),
 			postStateToWebview: vi.fn(),
-		}
+		})
 		const edit = (messageTs = 5) =>
 			SdkController.prototype.editMessageAndRegenerate.call(controller as never, { messageTs, text: "edited newest" })
 		return { controller, sdkHost, startNewSession, edit }
