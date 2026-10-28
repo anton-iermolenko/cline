@@ -762,3 +762,21 @@ tracking paths handle the write tools. The former low-level `EditorExecutor`
 API remains available to explicit SDK overrides; default clients use the native
 family. See `docs/sdk/native-file-editor.mdx` for contracts, limits, configuration
 and migration.
+
+
+## Native local inference profiles
+
+The `vllm` and `llamacpp` builtins share OpenAI-compatible chat transport and
+encode native model controls in the final serialized request. Their preflight
+counters normalize native responses into `RequestInputTokenCount`; failures of
+declared counting remain errors. Unmeasured requests use the shared image-aware
+estimator, reserving 2,048 tokens per image.
+
+`ProviderSettingsManager` retains one active `localInference` configuration per
+provider and saves model profiles scoped to provider/server/model. Connection
+credentials stay outside those profiles. Model selection saves/restores profiles
+atomically with the active selection. VS Code edits carry a server/model scope
+guard and queue session rebuilds; CLI consumes the same stored active settings.
+Native profiles carry model-specific compaction policy so a prior model's global
+limits do not leak into a newly selected model. See the local-inference provider
+guide for UI and endpoint contracts.

@@ -70,6 +70,7 @@ function toGatewayModelDefinition(
 		capabilities: toGatewayModelCapabilities(model.capabilities),
 		reasoningOptions: model.reasoningOptions,
 		metadata: {
+			...model.metadata,
 			...(typeof model.metadata?.inputTokenCountUrl === "string"
 				? { inputTokenCountUrl: model.metadata.inputTokenCountUrl }
 				: {}),
@@ -505,6 +506,7 @@ function buildGatewayConfig(config: ProviderConfig) {
 		defaultModelId: config.modelId,
 		models: buildGatewayModels(providerId, config),
 		options: {
+			localInference: config.localInference,
 			region: config.region ?? config.gcp?.region,
 			project: config.gcp?.projectId,
 			projectId: config.gcp?.projectId,

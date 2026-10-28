@@ -55,6 +55,10 @@ import {
 } from "./error-classification";
 import { extractErrorMessage } from "./format";
 import { createInputTokenCountFetch } from "./input-token-count";
+import {
+	createLocalInferenceFetch,
+	nativeCountingEnabled,
+} from "./local-inference";
 import { createRetryEmptyResponseMiddleware } from "./middleware/retry-empty-response";
 import {
 	isAnthropicCompatibleModel,
@@ -2175,7 +2179,30 @@ function createAiSdkProvider(
 			// Multi-protocol HTTP gateways declare model adapters in models.dev.
 			// Keep native and local CLI transports authoritative for their models.
 			const kind = resolveModelProviderKind(defaultKind, context);
-			const countEndpoint = context.model.metadata?.inputTokenCountUrl;
+			const nativeEngine = context.provider.metadata?.localInferenceEngine;
+			const nativeSettings = {
+				...((config.options?.localInference ??
+					context.model.metadata?.localInference ??
+					{}) as import("@cline/shared").LocalInferenceSettings),
+				...(request.reasoning?.enabled !== undefined
+					? { thinking: request.reasoning.enabled }
+					: {}),
+				...(request.reasoning?.budgetTokens !== undefined
+					? { thinkingBudgetTokens: request.reasoning.budgetTokens }
+					: {}),
+			};
+			const native = nativeEngine
+				? {
+						engine: nativeEngine,
+						settings: nativeSettings,
+						baseUrl: config.baseUrl ?? "",
+						timeoutMs: config.timeoutMs,
+					}
+				: undefined;
+			const countEndpoint =
+				native && nativeCountingEnabled(native)
+					? config.baseUrl
+					: context.model.metadata?.inputTokenCountUrl;
 			if (request.inputTokenCountOnly && typeof countEndpoint !== "string") {
 				yield { type: "finish", reason: "stop" };
 				return;
@@ -2190,8 +2217,14 @@ function createAiSdkProvider(
 							(count) => {
 								measuredInput = count;
 							},
+							native,
 						)
-					: config.fetch;
+					: native
+						? createLocalInferenceFetch(
+								config.fetch ?? globalThis.fetch,
+								native,
+							)
+						: config.fetch;
 			const log = request.inputTokenCountOnly ? undefined : context.logger;
 			let stream: AiSdkStreamResult | undefined;
 			const capturedError: { current: CapturedStreamError | undefined } = {

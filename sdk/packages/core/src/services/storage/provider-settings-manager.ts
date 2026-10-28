@@ -8,6 +8,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { basename, dirname } from "node:path";
+import { localInferenceEngine } from "@cline/shared";
 import { resolveProviderSettingsPath } from "@cline/shared/storage";
 import { getProviderAuthHandler } from "../../auth/provider-auth-registry";
 import { hashSecret, sdkDebug } from "../../logging/early-logger";
@@ -25,6 +26,11 @@ import {
 	VoiceInputSettingsSchema,
 } from "../../types/provider-settings";
 import { getLiveModelsCatalog } from "../llms/provider-defaults";
+import {
+	getLocalModelDefaults,
+	localInferenceModelInfo,
+	localModelProfileKey,
+} from "../providers/local-inference-discovery";
 import {
 	applyLocalModelLimits,
 	ensureCustomProvidersLoadedSync,
@@ -225,6 +231,48 @@ export class ProviderSettingsManager {
 		const providerId = validatedSettings.provider;
 		const shouldSetLastUsed = options.setLastUsed !== false;
 		const previousEntry = previous.providers[providerId];
+		const localModelProfiles = { ...previousEntry?.localModelProfiles };
+		if (localInferenceEngine(providerId)) {
+			const old = previousEntry?.settings;
+			if (old?.model)
+				localModelProfiles[localModelProfileKey(old.baseUrl, old.model)] =
+					old.localInference ?? {};
+			if (validatedSettings.model) {
+				const key = localModelProfileKey(
+					validatedSettings.baseUrl,
+					validatedSettings.model,
+				);
+				if (
+					old &&
+					(old.model !== validatedSettings.model ||
+						old.baseUrl !== validatedSettings.baseUrl)
+				) {
+					validatedSettings.localInference =
+						localModelProfiles[key] ??
+						getLocalModelDefaults(
+							validatedSettings.baseUrl,
+							validatedSettings.model,
+							providerId,
+						) ??
+						{};
+					delete validatedSettings.reasoning;
+					delete validatedSettings.maxTokens;
+					delete validatedSettings.contextWindow;
+				} else if (!validatedSettings.localInference) {
+					validatedSettings.localInference =
+						localModelProfiles[key] ??
+						getLocalModelDefaults(
+							validatedSettings.baseUrl,
+							validatedSettings.model,
+							providerId,
+						) ??
+						{};
+				}
+				localModelProfiles[key] = validatedSettings.localInference;
+			} else if (old?.baseUrl !== validatedSettings.baseUrl) {
+				delete validatedSettings.localInference;
+			}
+		}
 		const tokenSource =
 			options.tokenSource ?? previousEntry?.tokenSource ?? "manual";
 		const next: StoredProviderSettings = {
@@ -233,6 +281,7 @@ export class ProviderSettingsManager {
 				...previous.providers,
 				[providerId]: {
 					settings: validatedSettings,
+					...(localInferenceEngine(providerId) ? { localModelProfiles } : {}),
 					updatedAt: nowIso(),
 					tokenSource,
 				},
@@ -328,6 +377,29 @@ export class ProviderSettingsManager {
 		return this.resolveProviderSettings(state, providerId);
 	}
 
+	hasLocalModelProfile(providerId: string, modelId: string): boolean {
+		const entry = this.read().providers[providerId];
+		return Boolean(
+			entry?.localModelProfiles?.[
+				localModelProfileKey(entry.settings.baseUrl, modelId)
+			],
+		);
+	}
+
+	getLocalModelSettings(
+		providerId: string,
+		modelId: string,
+	): import("@cline/shared").LocalInferenceSettings | undefined {
+		const entry = this.read().providers[providerId];
+		if (!entry || !localInferenceEngine(providerId)) return undefined;
+		return entry.settings.model === modelId
+			? entry.settings.localInference
+			: (entry.localModelProfiles?.[
+					localModelProfileKey(entry.settings.baseUrl, modelId)
+				] ??
+					getLocalModelDefaults(entry.settings.baseUrl, modelId, providerId));
+	}
+
 	getProviderConfig(
 		providerId: string,
 		options?: ToProviderConfigOptions,
@@ -338,6 +410,19 @@ export class ProviderSettingsManager {
 		}
 		const config = toProviderConfig(settings, options);
 		applyLocalModelLimits(config, this);
+		if (localInferenceEngine(providerId) && settings.model) {
+			const local = settings.localInference ?? {};
+			const previousModel = config.knownModels?.[settings.model];
+			config.knownModels = {
+				...config.knownModels,
+				[settings.model]: localInferenceModelInfo(
+					settings.model,
+					local,
+					previousModel,
+				),
+			};
+		}
+		if (options?.includeKnownModels === false) delete config.knownModels;
 		return config;
 	}
 
@@ -349,9 +434,7 @@ export class ProviderSettingsManager {
 		if (!settings) {
 			return undefined;
 		}
-		const config = toProviderConfig(settings, options);
-		applyLocalModelLimits(config, this);
-		return config;
+		return this.getProviderConfig(settings.provider, options);
 	}
 
 	async refreshCatalog(): Promise<void> {

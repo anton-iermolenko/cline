@@ -1188,6 +1188,12 @@ export type {
 } from "./services/llms/runtime-types";
 export { SKILLS_CLI_PACKAGE, SKILLS_CLI_VERSION } from "./services/skills-cli";
 export {
+	discoverLocalInferenceModels,
+	getLocalModelDefaults,
+	localModelProfileKey,
+	refreshLocalModelDefaults,
+} from "./services/providers/local-inference-discovery";
+export {
 	TelemetryService,
 	type TelemetryServiceOptions,
 } from "./services/telemetry/TelemetryService";

@@ -1,5 +1,8 @@
 import * as Llms from "@cline/llms";
-import { ReasoningLevelSchema } from "@cline/shared";
+import {
+	LocalInferenceSettingsSchema,
+	ReasoningLevelSchema,
+} from "@cline/shared";
 import { z } from "zod";
 import {
 	DEFAULT_EXTERNAL_OCA_BASE_URL,
@@ -140,6 +143,7 @@ export type ModelCatalogSettings = z.infer<typeof ModelCatalogSettingsSchema>;
 export type ModelCatalogConfig = ModelCatalogSettings;
 
 export const ProviderSettingsSchema = z.object({
+	localInference: LocalInferenceSettingsSchema.optional(),
 	provider: ProviderIdSchema,
 	apiKey: z.string().optional(),
 	auth: AuthSettingsSchema.optional(),
@@ -246,6 +250,7 @@ export function toProviderConfig(
 		: undefined;
 
 	const config: ProviderConfig = {
+		localInference: settings.localInference,
 		providerId,
 		clientType: settings.client,
 		routingProviderId,
@@ -262,11 +267,16 @@ export function toProviderConfig(
 		baseUrl: resolvedBaseUrl,
 		headers: settings.headers,
 		timeoutMs: settings.timeout,
-		maxOutputTokens: settings.maxTokens,
-		maxInputTokens: settings.contextWindow,
-		thinking: settings.reasoning?.enabled,
+		maxOutputTokens:
+			settings.localInference?.maxOutputTokens ?? settings.maxTokens,
+		maxInputTokens:
+			settings.localInference?.maxInputTokens ?? settings.contextWindow,
+		thinking: settings.localInference?.thinking ?? settings.reasoning?.enabled,
 		reasoningEffort,
-		thinkingBudgetTokens: settings.reasoning?.budgetTokens,
+		thinkingBudgetTokens:
+			settings.localInference?.thinkingBudgetTokens ??
+			settings.reasoning?.budgetTokens,
+		temperature: settings.localInference?.temperature,
 		region: settings.region ?? settings.aws?.region ?? settings.gcp?.region,
 		apiLine: settings.apiLine,
 		useCrossRegionInference: settings.aws?.useCrossRegionInference,

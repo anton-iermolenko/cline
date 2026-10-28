@@ -58,6 +58,80 @@ describe("prepareLocalRuntimeBootstrap", () => {
 		}
 	});
 
+	it("loads the selected native model profile instead of another model's active or global settings", async () => {
+		const { prepareLocalRuntimeBootstrap } = await import(
+			"./local-runtime-bootstrap"
+		);
+		const { ProviderSettingsManager } = await import(
+			"./storage/provider-settings-manager"
+		);
+		const dir = mkdtempSync(join(tmpdir(), "native-bootstrap-"));
+		try {
+			const manager = new ProviderSettingsManager({
+				filePath: join(dir, "providers.json"),
+			});
+			const localInference = {
+				contextWindow: 10000,
+				maxOutputTokens: 2000,
+				thinking: false,
+				temperature: 0.5,
+				compaction: { bufferTokens: 100, targetTokens: 4000 },
+			};
+			manager.saveProviderSettings({
+				provider: "vllm",
+				model: "A",
+				baseUrl: "http://server/v1",
+				localInference,
+			});
+			manager.saveProviderSettings({
+				...manager.getProviderSettings("vllm"),
+				model: "B",
+			});
+			manager.saveProviderSettings({
+				...manager.getProviderSettings("vllm"),
+				localInference: { maxOutputTokens: 3000, thinking: true },
+			});
+			const input = createStartInput();
+			const bootstrap = await prepareLocalRuntimeBootstrap({
+				input: {
+					...input,
+					config: {
+						...input.config,
+						providerId: "vllm",
+						modelId: "A",
+						maxTokensPerTurn: 9999,
+						thinking: true,
+						compaction: { targetTokens: 9999, maxTargetTokens: 99999 },
+						providerConfig: manager.getProviderConfig("vllm"),
+					},
+				},
+				sessionId: "native-profile-session",
+				localRuntime: { configExtensions: [] },
+				providerSettingsManager: manager,
+				onPluginEvent: () => {},
+				onTeamEvent: () => {},
+				createSpawnTool,
+				readSessionMetadata: async () => undefined,
+				writeSessionMetadata: async () => {},
+			});
+			expect(bootstrap.providerConfig.modelId).toBe("A");
+			expect(bootstrap.providerConfig.localInference).toEqual(localInference);
+			expect(bootstrap.providerConfig.knownModels?.A).toMatchObject({
+				contextWindow: 10000,
+				maxTokens: 2000,
+			});
+			expect(bootstrap.config).toMatchObject({
+				maxTokensPerTurn: 2000,
+				thinking: false,
+				temperature: 0.5,
+				compaction: { bufferTokens: 100, targetTokens: 4000 },
+			});
+			expect(bootstrap.config.compaction?.maxTargetTokens).toBeUndefined();
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
 	it("applies hub model catalog defaults during local runtime bootstrap", async () => {
 		const { prepareLocalRuntimeBootstrap } = await import(
 			"./local-runtime-bootstrap"

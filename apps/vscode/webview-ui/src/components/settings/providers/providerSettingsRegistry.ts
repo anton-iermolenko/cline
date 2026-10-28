@@ -36,6 +36,8 @@ const CUSTOM_PROVIDER_SETTINGS_IDS = new Set([
 ])
 
 const GENERIC_PROVIDER_PRESENTATION_OVERRIDES: Record<string, GenericProviderPresentationOverride> = {
+	vllm: { allowsCustomIds: true, baseUrlField: { label: "Server URL", placeholder: "http://localhost:8000/v1" } },
+	llamacpp: { allowsCustomIds: true, baseUrlField: { label: "Server URL", placeholder: "http://localhost:8080/v1" } },
 	baseten: {
 		signupUrl: "https://app.baseten.co/settings/api_keys",
 	},

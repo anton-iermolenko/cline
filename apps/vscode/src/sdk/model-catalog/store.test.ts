@@ -93,6 +93,8 @@ vi.mock("../provider-migration", () => ({
 }))
 
 vi.mock("@cline/core", () => ({
+	getLocalModelDefaults: () => undefined,
+	localModelProfileKey: (url: string | undefined, model: string) => JSON.stringify([url, model]),
 	isPrivateModelCatalogProvider: (providerId: string) => ["baseten", "hicap", "litellm", "poolside"].includes(providerId),
 	syncStoredProviderRegistration: vi.fn(),
 	readModelsFileSync: vi.fn(() => mocks.getModelsFile()),
@@ -1238,5 +1240,45 @@ describe("createProviderConfigStore", () => {
 		// The entry written by the extension must satisfy the real schema that
 		// the SDK's writeModelsFileSync enforces.
 		expect(() => StoredModelEntrySchema.parse(entry)).not.toThrow()
+	})
+})
+
+describe("native local model settings", () => {
+	it("saves native settings only for the current provider/server/model", async () => {
+		mocks.reset()
+		mocks.setProviderSettings({
+			vllm: { provider: "vllm", baseUrl: "http://fixture/v1", model: "A", localInference: { maxOutputTokens: 7000 } },
+		})
+		const { createProviderConfigStore } = await import("./store")
+		const store = createProviderConfigStore()
+		store.write(parseProviderId("vllm"), {
+			localInference: { maxOutputTokens: 6000 },
+			localInferenceModelId: "A",
+			localInferenceScope: JSON.stringify(["http://fixture/v1", "A"]),
+		})
+		expect(mocks.getSavedProviderSettings("vllm")?.localInference).toEqual({ maxOutputTokens: 6000 })
+	})
+	it("rejects delayed settings for the previous model or URL without modifying active controls", async () => {
+		mocks.reset()
+		mocks.setProviderSettings({
+			vllm: { provider: "vllm", baseUrl: "http://new/v1", model: "B", localInference: { maxOutputTokens: 7000 } },
+		})
+		const { createProviderConfigStore } = await import("./store")
+		const store = createProviderConfigStore()
+		expect(() =>
+			store.write(parseProviderId("vllm"), {
+				localInference: { maxOutputTokens: 6000 },
+				localInferenceModelId: "A",
+				localInferenceScope: JSON.stringify(["http://new/v1", "A"]),
+			}),
+		).toThrow("Selected model changed")
+		expect(() =>
+			store.write(parseProviderId("vllm"), {
+				localInference: { maxOutputTokens: 6000 },
+				localInferenceModelId: "B",
+				localInferenceScope: JSON.stringify(["http://old/v1", "B"]),
+			}),
+		).toThrow("Provider URL changed")
+		expect(mocks.getSavedProviderSettings("vllm")?.localInference).toEqual({ maxOutputTokens: 7000 })
 	})
 })

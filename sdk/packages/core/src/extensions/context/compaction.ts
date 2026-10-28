@@ -300,6 +300,11 @@ export function createContextCompactionPrepareTurn(
 	| undefined {
 	const userCompaction: CoreCompactionConfig = {
 		...config.compaction,
+		...(
+			config.providerConfig as
+				| { localInference?: import("@cline/shared").LocalInferenceSettings }
+				| undefined
+		)?.localInference?.compaction,
 		...options.compaction,
 	};
 	if (userCompaction.enabled !== true) {
@@ -322,7 +327,10 @@ export function createContextCompactionPrepareTurn(
 			: mode;
 		const countRequest =
 			context.countRequestInputTokens ??
-			(typeof context.model.info?.metadata?.inputTokenCountUrl !== "string"
+			(typeof context.model.info?.metadata?.inputTokenCountUrl !== "string" &&
+			!["vllm", "llamacpp"].includes(
+				context.model.provider ?? config.providerId ?? "",
+			)
 				? async () => undefined
 				: async (
 						messages: CoreCompactionContext["messages"],

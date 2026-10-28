@@ -6,6 +6,7 @@ import type {
 import type { BasicLogger } from "../logging/logger";
 import type { ProviderCapability, ProviderConfigField } from "../rpc/runtime";
 import type { ITelemetryService } from "../services/telemetry";
+import type { LocalInferenceEngine } from "./local-inference";
 import type {
 	ModelModalities,
 	ModelModality,
@@ -124,6 +125,8 @@ export interface GatewayStickySessionMetadata {
 }
 
 export interface GatewayProviderMetadata {
+	/** Native request codec and preflight count protocol for local inference. */
+	localInferenceEngine?: LocalInferenceEngine;
 	promptCacheStrategy?: GatewayPromptCacheStrategy;
 	usageCostDisplay?: GatewayUsageCostDisplay;
 	routing?: GatewayProviderRouting;

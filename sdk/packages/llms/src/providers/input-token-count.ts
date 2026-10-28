@@ -1,4 +1,9 @@
 import type { RequestInputTokenCount } from "@cline/shared";
+import {
+	countLocalInferenceRequest,
+	type NativeCountOptions,
+	normalizeLocalInferenceRequest,
+} from "./local-inference";
 
 export function parseInputTokenCount(value: unknown): RequestInputTokenCount {
 	if (!value || typeof value !== "object")
@@ -43,6 +48,7 @@ export function createInputTokenCountFetch(
 	endpoint: string,
 	countOnly: boolean,
 	onMeasurement: (count: RequestInputTokenCount) => void,
+	native?: NativeCountOptions,
 ): typeof fetch {
 	const countUrl = new URL(endpoint);
 	return (async (input, init) => {
@@ -50,7 +56,7 @@ export function createInputTokenCountFetch(
 			input instanceof Request
 				? new Request(input, init)
 				: new Request(String(input), init);
-		if (countOnly) {
+		if (countOnly || native) {
 			const url = new URL(request.url);
 			if (
 				url.origin !== countUrl.origin ||
@@ -59,12 +65,35 @@ export function createInputTokenCountFetch(
 				throw new Error(
 					"Count-only transport refused an unexpected inference endpoint",
 				);
-			const response = await delegate(countUrl, {
-				method: "POST",
-				headers: request.headers,
-				body: await request.text(),
-				signal: request.signal,
-			});
+		}
+		const normalized = native
+			? normalizeLocalInferenceRequest(
+					JSON.parse(await request.clone().text()),
+					native.engine,
+					native.settings,
+				)
+			: undefined;
+		const nativeCount = native
+			? await countLocalInferenceRequest(
+					delegate,
+					normalized!,
+					request.headers,
+					request.signal,
+					native,
+				)
+			: undefined;
+		if (nativeCount && !countOnly) onMeasurement(nativeCount);
+		if (countOnly) {
+			const response = nativeCount
+				? new Response(JSON.stringify(nativeCount), {
+						headers: { "Content-Type": "application/json" },
+					})
+				: await delegate(countUrl, {
+						method: "POST",
+						headers: request.headers,
+						body: await request.text(),
+						signal: request.signal,
+					});
 			if (!response.ok)
 				throw new Error(
 					`Input token counting unavailable (${response.status}): ${(await response.text()).slice(0, 1500)}`,
@@ -90,9 +119,19 @@ export function createInputTokenCountFetch(
 				{ headers: { "Content-Type": "text/event-stream" } },
 			);
 		}
-		const response = await delegate(input, init);
+		request.signal.throwIfAborted();
+		if (nativeCount && nativeCount.inputTokens > nativeCount.maxInputTokens)
+			throw new Error(
+				`Context window exceeded: measured input ${nativeCount.inputTokens} exceeds allowance ${nativeCount.maxInputTokens}`,
+			);
+		const response = normalized
+			? await delegate(
+					new Request(request, { body: JSON.stringify(normalized) }),
+				)
+			: await delegate(input, init);
 		const count = response.headers.get("X-Cline-Input-Token-Count");
-		if (count) onMeasurement(parseInputTokenCount(JSON.parse(count)));
+		if (count && !nativeCount)
+			onMeasurement(parseInputTokenCount(JSON.parse(count)));
 		return response;
 	}) as typeof fetch;
 }

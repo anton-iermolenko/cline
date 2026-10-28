@@ -76,6 +76,7 @@ import {
 	type ProviderFailureTelemetry,
 	ProviderFailureTelemetryTurnGate,
 } from "./provider-failure-telemetry"
+import { getProviderSettingsManager } from "./provider-migration"
 import { RemoteConfigRefreshCoordinator } from "./remote-config-refresh-coordinator"
 import {
 	findVisibleCheckpointUserMessageByRun,
@@ -831,6 +832,13 @@ export class Controller {
 
 	private handleProviderConfigChange(event: ProviderConfigChange): void {
 		this.scheduleProviderConfigStatePost()
+		if (["vllm", "llamacpp"].includes(event.providerId.toString())) {
+			const api = this.stateManager.getApiConfiguration()
+			const mode = this.stateManager.getGlobalSettingsKey("mode") === "plan" ? "plan" : "act"
+			if ((mode === "plan" ? api.planModeApiProvider : api.actModeApiProvider) === event.providerId.toString())
+				this.providerChanges.handleNativeProviderSettingsChanged()
+			return
+		}
 
 		if (event.kind === "selection" && this.isSelectionForActiveModeProvider(event)) {
 			this.sessions
@@ -840,6 +848,13 @@ export class Controller {
 	}
 
 	handleApiConfigurationChanged(previous: ApiConfiguration, next: ApiConfiguration): void {
+		const mode = this.stateManager.getGlobalSettingsKey("mode") === "plan" ? "plan" : "act"
+		const selectedProvider = (mode === "plan" ? next.planModeApiProvider : next.actModeApiProvider)?.toString()
+		if (selectedProvider === "vllm" || selectedProvider === "llamacpp") {
+			const manager = getProviderSettingsManager(resolveDataDirFromEnv())
+			const settings = manager.getProviderSettings(selectedProvider)
+			if (settings?.model) manager.saveProviderSettings(settings, { setLastUsed: true })
+		}
 		this.providerChanges.handleApiConfigurationChanged(previous, next)
 	}
 

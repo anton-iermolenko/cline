@@ -560,4 +560,10 @@ export type {
 } from "../../../../sdk/packages/core/src/extensions/tools/file-editor"
 
 export { createFileEditorExecutor } from "../../../../sdk/packages/core/src/extensions/tools/file-editor"
+
+export {
+	getLocalModelDefaults,
+	localModelProfileKey,
+	refreshLocalModelDefaults,
+} from "../../../../sdk/packages/core/src/services/providers/local-inference-discovery"
 export { resolveMessageDisplayRole } from "../../../../sdk/packages/core/src/session/user-run-messages"

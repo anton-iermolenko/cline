@@ -383,9 +383,17 @@ export class DefaultGateway implements Gateway {
 		const maxTokens = resolveGatewayRequestMaxTokens({
 			requestedMaxTokens: request.maxTokens,
 			model: resolved.model,
-			estimatedInputTokens: resolved.model.metadata?.inputTokenCountUrl
-				? 0
-				: estimateRequestInputTokens(request),
+			estimatedInputTokens:
+				resolved.model.metadata?.inputTokenCountUrl ||
+				(resolved.provider.metadata?.localInferenceEngine &&
+					(
+						(providerRecord.config.options?.localInference ??
+							resolved.model.metadata?.localInference) as
+							| { inputTokenCounting?: boolean }
+							| undefined
+					)?.inputTokenCounting !== false)
+					? 0
+					: estimateRequestInputTokens(request),
 			reasoningBudgetTokens: request.reasoning?.budgetTokens,
 			onContextOverflow: (details) => {
 				this.logger?.log(

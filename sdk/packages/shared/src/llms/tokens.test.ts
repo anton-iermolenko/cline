@@ -22,7 +22,7 @@ describe("estimateRequestInputTokens", () => {
 			estimateRequestInputTokens({ messages: [plain] }),
 		);
 		expect(estimateRequestInputTokens({ messages: [internal] })).toBeLessThan(
-			2000,
+			ESTIMATED_TOKENS_PER_IMAGE + 256,
 		);
 	});
 	it("estimates text-only messages by char count", () => {
@@ -58,7 +58,7 @@ describe("estimateRequestInputTokens", () => {
 			base64Data.length / CHARS_PER_TOKEN,
 		);
 		expect(tokens).toBeLessThan(naiveCharBasedEstimate / 10);
-		expect(tokens).toBeLessThan(2_000);
+		expect(tokens).toBeLessThan(ESTIMATED_TOKENS_PER_IMAGE + 256);
 	});
 
 	it("scales with image count, not with one large image's byte size", () => {
@@ -132,7 +132,7 @@ describe("estimateRequestInputTokens", () => {
 			base64Data.length / CHARS_PER_TOKEN,
 		);
 		expect(tokens).toBeLessThan(naiveCharBasedEstimate / 10);
-		expect(tokens).toBeLessThan(2_000);
+		expect(tokens).toBeLessThan(ESTIMATED_TOKENS_PER_IMAGE + 256);
 	});
 
 	it("does not add a duplicate per-image bonus after JSON.stringify falls back", () => {
@@ -173,3 +173,6 @@ describe("estimateRequestInputTokens", () => {
 		expect(twoImages - oneImage).toBeLessThan(rawCharCostOfOneImage + 50);
 	});
 });
+
+it("uses the agreed 2048-token image estimate", () =>
+	expect(ESTIMATED_TOKENS_PER_IMAGE).toBe(2048));

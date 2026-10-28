@@ -1,3 +1,4 @@
+import { discoverLocalInferenceModels } from "../providers/local-inference-discovery";
 /** biome-ignore-all lint/style/noNonNullAssertion: static */
 
 import * as Llms from "@cline/llms";
@@ -694,6 +695,8 @@ async function getPublicProviderModels(
 	modelCatalog: ModelCatalogConfig | undefined,
 	config: ProviderConfig,
 ): Promise<Record<string, ModelInfo>> {
+	if (providerId === "vllm" || providerId === "llamacpp")
+		return discoverLocalInferenceModels(config);
 	const collection = Llms.MODEL_COLLECTIONS_BY_PROVIDER_ID[providerId];
 	const sourceUrl = resolveModelsSourceUrl(
 		config.baseUrl,

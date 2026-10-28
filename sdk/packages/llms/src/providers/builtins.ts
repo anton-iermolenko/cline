@@ -767,6 +767,27 @@ const clinePass = createClineLikeSpec({
  * be duplicated here.
  */
 const OPENAI_COMPATIBLE_SPEC_OVERRIDES: BuiltinSpecOverride[] = [
+	...(
+		[
+			["vllm", "vLLM", "vllm"],
+			["llamacpp", "llama.cpp", "llama.cpp"],
+		] as const
+	).map(([id, name, engine]) => ({
+		id,
+		name,
+		family: "openai-compatible" as const,
+		protocol: "openai-chat" as const,
+		client: "openai-compatible" as const,
+		description: `${name} native local inference server`,
+		modelsSourceUrl: "/v1/models",
+		allowsCustomModelIds: true,
+		defaults: {
+			baseUrl:
+				id === "vllm" ? "http://localhost:8000/v1" : "http://localhost:8080/v1",
+			timeoutMs: 900000,
+		},
+		metadata: { apiKeyOptional: true, localInferenceEngine: engine },
+	})),
 	{
 		// Keep the persisted provider ID and credentials compatible while the
 		// upstream catalog adopts the CoreWeave display name.

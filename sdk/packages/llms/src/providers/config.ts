@@ -120,6 +120,7 @@ export interface ModelConfig {
  * Token limits configuration
  */
 export interface TokenConfig {
+	localInference?: import("@cline/shared").LocalInferenceSettings;
 	/** Maximum input tokens (overrides model default) */
 	maxInputTokens?: number;
 	/** Maximum output tokens (overrides model default) */
