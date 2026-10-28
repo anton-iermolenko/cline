@@ -1,0 +1,23 @@
+alias: Cline CLI completion and errors
+description: Generic CLI status only; no task or workspace data.
+triggers:
+  - trigger: webhook
+    webhook_id: !secret cline_webhook_id
+    allowed_methods:
+      - POST
+    local_only: true
+conditions:
+  - condition: template
+    value_template: >-
+      {{ trigger.json is defined and
+         trigger.json.get('source') == 'cline-cli' and
+         trigger.json.get('status') in ['completed', 'error'] }}
+actions:
+  - action: persistent_notification.create
+    data:
+      title: Cline CLI
+      message: >-
+        {{ 'Cline work completed.' if trigger.json.status == 'completed'
+           else 'Cline encountered an error.' }}
+mode: queued
+max: 10

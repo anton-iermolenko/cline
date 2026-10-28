@@ -1,0 +1,6 @@
+{
+  "codex_path": "~/.local/share/consult-expert/codex-runtime/node_modules/.bin/codex",
+  "state_directory": "~/.local/state/consult-expert",
+  "workspace_roots": ["/absolute/path/to/your/projects"],
+  "timeout_seconds": 1800
+}
