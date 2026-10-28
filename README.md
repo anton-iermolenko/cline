@@ -28,7 +28,7 @@ The scope grew from that repair into the local-inference and context-management 
 
 CLI and extension releases share one fork version, **`year.month.release`** (for example, `2026.10.1`). Each build records the exact fork commit, merged upstream commit, original upstream package versions and shared runtime fingerprint. See [local builds and releases](local/README.md) and the [development workflow](LOCAL_DEVELOPMENT.md).
 
-The original Cline README follows, with its opening logo removed. Its installation commands and product links describe **upstream Cline**; they do not install this fork. Cline's original authorship and license are preserved.
+The original Cline README follows. Its installation commands and product links describe **upstream Cline**; they do not install this fork. Cline's original authorship and license are preserved.
 
 ---
 
