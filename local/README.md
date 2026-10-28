@@ -43,6 +43,12 @@ After verification, tag the exact built commit, for example:
 git tag -a fork/2026.10.1 -m "Cline / AI Local 2026.10.1"
 ```
 
+For an explicitly requested local testing iteration at the current version, use
+`bash local/build-wsl.sh --development`. This permits new committed source after
+the version was tagged, records `developmentBuild: true` with the exact source
+commit and fresh artifact hashes, and leaves the existing tag untouched. Do not
+tag these testing iterations; increment the version for the next release.
+
 Tags and branches are only published when explicitly pushed. The CLI launcher remains `cline`.
 
 ## Verify and deploy

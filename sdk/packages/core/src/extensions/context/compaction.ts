@@ -1,6 +1,8 @@
 import {
+	DEFAULT_COMPACTION_BUFFER_TOKENS,
 	estimateRequestInputTokens,
 	type RequestInputTokenCount,
+	resolveAutoCompactionTargetTokens,
 } from "@cline/shared";
 import { messagesToAgentMessages } from "../../runtime/config/agent-message-codec";
 import {
@@ -38,7 +40,6 @@ import {
 	COMPACTION_TRIGGER_RATIO,
 	createTokenEstimator,
 	DEFAULT_MAX_INPUT_TOKENS,
-	DEFAULT_TARGET_RATIO,
 	findLatestSummaryIndex,
 	isTurnStartMessage,
 	MAX_INPUT_UNDERESTIMATE_FACTOR,
@@ -113,8 +114,6 @@ export interface ContextCompactionPrepareTurnOptions {
 	/** Overrides layered over `config.compaction`. */
 	compaction?: Partial<CoreCompactionConfig>;
 }
-
-const LONG_CONVERSATION_TARGET_RATIO = 0.5;
 
 function isCompactionCancellation(
 	error: unknown,
@@ -218,26 +217,6 @@ function resolveManualMessageTargetTokens(input: {
 				input.messageInputTokens * targetRatio,
 			),
 		),
-	);
-}
-
-function resolveAutoRequestTargetTokens(input: {
-	maxInputTokens: number;
-	modelMaxTokens?: number;
-	triggerTokens: number;
-	messagePairCount: number;
-}): number {
-	const targetTokens =
-		input.messagePairCount >= 5 &&
-		typeof input.modelMaxTokens === "number" &&
-		Number.isFinite(input.modelMaxTokens) &&
-		input.modelMaxTokens < input.maxInputTokens
-			? Math.floor(input.maxInputTokens * LONG_CONVERSATION_TARGET_RATIO)
-			: Math.floor(input.triggerTokens * DEFAULT_TARGET_RATIO);
-	const triggerCeiling = Math.max(1, input.triggerTokens - 1);
-	return Math.max(
-		1,
-		Math.min(targetTokens, input.maxInputTokens, triggerCeiling),
 	);
 }
 
@@ -375,7 +354,7 @@ export function createContextCompactionPrepareTurn(
 		const buffer =
 			userCompaction.bufferTokens ??
 			beforeMeasurement?.compactionBufferTokens ??
-			2048;
+			DEFAULT_COMPACTION_BUFFER_TOKENS;
 		if (!Number.isSafeInteger(buffer) || buffer < 0)
 			throw new Error("Compaction bufferTokens must be a nonnegative integer");
 		const countScale = beforeMeasurement
@@ -527,7 +506,7 @@ export function createContextCompactionPrepareTurn(
 		let requestTargetTokens: number;
 		let messageTargetTokens: number;
 		if (effectiveMode === "auto") {
-			requestTargetTokens = resolveAutoRequestTargetTokens({
+			requestTargetTokens = resolveAutoCompactionTargetTokens({
 				maxInputTokens,
 				modelMaxTokens: context.model.info?.maxTokens,
 				triggerTokens: requestTriggerTokens,

@@ -25,7 +25,12 @@ export function getLocalModelDefaults(
 	provider = "",
 ): LocalInferenceSettings | undefined {
 	const value = defaults.get(provider + localModelProfileKey(baseUrl, model));
-	return value ? structuredClone(value) : undefined;
+	return value
+		? {
+				...structuredClone(value),
+				...(Object.keys(value).length ? { userOverrides: [] } : {}),
+			}
+		: undefined;
 }
 const positive = (value: unknown): number | undefined =>
 	typeof value === "number" && Number.isSafeInteger(value) && value > 0

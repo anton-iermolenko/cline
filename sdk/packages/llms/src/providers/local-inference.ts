@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import {
+	DEFAULT_COMPACTION_BUFFER_TOKENS,
 	type LocalInferenceEngine,
 	type LocalInferenceSettings,
 	localInferenceUrl,
 	type RequestInputTokenCount,
+	resolveLocalInferenceInputTokens,
 } from "@cline/shared";
 
 export interface NativeCountOptions {
@@ -229,11 +231,15 @@ export async function countLocalInferenceRequest(
 	);
 	const maxOutputTokens = integer(body.max_tokens, "output allowance");
 	const serverBoundaryTokens = 1;
-	const maxInputTokens = Math.min(
-		settings.maxInputTokens ?? Infinity,
-		contextWindow - maxOutputTokens - serverBoundaryTokens,
+	const maxInputTokens = integer(
+		resolveLocalInferenceInputTokens({
+			contextWindow,
+			maxOutputTokens,
+			maxInputTokens: settings.maxInputTokens,
+			nativeCounting: true,
+		}),
+		"input allowance",
 	);
-	integer(maxInputTokens, "input allowance");
 	const digest = (value: unknown) =>
 		createHash("sha256").update(JSON.stringify(value)).digest("hex");
 	return {
@@ -251,7 +257,8 @@ export async function countLocalInferenceRequest(
 		contextWindow,
 		maxInputTokens,
 		maxOutputTokens,
-		compactionBufferTokens: settings.compaction?.bufferTokens ?? 2048,
+		compactionBufferTokens:
+			settings.compaction?.bufferTokens ?? DEFAULT_COMPACTION_BUFFER_TOKENS,
 		serverBoundaryTokens,
 	};
 }

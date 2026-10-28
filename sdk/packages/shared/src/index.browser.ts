@@ -131,11 +131,20 @@ export {
 export * from "./llms/gateway";
 export {
 	type LocalInferenceEngine,
+	type LocalInferenceOverrideField,
 	type LocalInferenceSettings,
 	LocalInferenceSettingsSchema,
 	localInferenceEngine,
 	localInferenceUrl,
+	localInferenceUserOverrides,
 } from "./llms/local-inference";
+export {
+	COMPACTION_TRIGGER_RATIO,
+	DEFAULT_COMPACTION_BUFFER_TOKENS,
+	DEFAULT_TARGET_RATIO,
+	resolveAutoCompactionTargetTokens,
+	resolveLocalInferenceInputTokens,
+} from "./llms/local-model-budget";
 export {
 	type Base64MediaValidationFailure,
 	type Base64MediaValidationResult,
