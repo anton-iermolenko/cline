@@ -3,12 +3,10 @@
 Portable, opt-in setup material for this fork's CLI and VS Code extension.
 Checking out or building Cline does not install or activate anything here.
 
-- [`rules/`](rules/): the six global rule files in use when this kit was created.
-  Personal paths and execution-environment assumptions were generalized for
-  use on hosts, in containers, virtual machines or subsystems, and on remote
-  systems. Other wording and policy are preserved. Built-in prompt overlaps
-  and conflicts are deliberately left for
-  the later harmonization pass. These are instructions, not provider settings.
+- [`rules/`](rules/README.md): six global supplements paired with Cline's
+  non-YOLO defaults. The rules README maps default coverage to its source files
+  and explains which local policies remain. Environment guidance is portable
+  across hosts, containers, virtual machines, subsystems and remote systems.
 - [`consult-expert/`](consult-expert/): the working stdio MCP implementation,
   regression tests, installation instructions and configuration templates.
   No credentials, task records, local installation scripts or private reports
@@ -16,12 +14,14 @@ Checking out or building Cline does not install or activate anything here.
 - [`notifications/`](notifications/): CLI completion/error hook and a Home
   Assistant webhook automation example. No YOLO support; YOLO skips CLI hooks.
 
-## Install the rule snapshot
+## Install the rule supplements
 
-Review existing global rules first. Copy the desired files from `bootstrap/rules/`
-to `~/.cline/rules/` in the environment where Cline runs. Both clients use the
-global rule loader; Windows and WSL have separate homes unless configured to
-share them. Preserve unrelated rules and resolve same-name files deliberately.
+Review existing global rules and [default coverage](rules/README.md) first.
+Copy only the desired numbered `0[1-6]-*.md` files to `~/.cline/rules/` in Cline's
+execution environment; do not install the rules README as instructions. Use a
+client build containing the matching Act-prompt changes. Both clients use the
+global rule loader, but separate hosts/containers/subsystems may have separate
+homes. Preserve unrelated rules and resolve same-name files deliberately.
 Avoid installing duplicate copies in the other global rule directories or in
 `~/.agents/AGENTS.md`. Reload/restart the client after changing configuration.
 
