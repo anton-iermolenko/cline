@@ -4,14 +4,23 @@ on:
     push:
         branches:
             - main
+            - local-main
         paths:
             - "sdk/**"
+            - "apps/cli/**"
+            - "apps/cline-hub/**"
+            - "package.json"
+            - "bun.lock"
             - "apps/examples/desktop-app/**"
             - ".github/workflows/sdk-test.yml"
     workflow_dispatch:
     pull_request:
         paths:
             - "sdk/**"
+            - "apps/cli/**"
+            - "apps/cline-hub/**"
+            - "package.json"
+            - "bun.lock"
             - "apps/examples/desktop-app/**"
             - ".github/workflows/sdk-test.yml"
     workflow_call:

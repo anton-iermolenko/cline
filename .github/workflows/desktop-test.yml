@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - local-main
       - desktop-experimental
     paths:
       - "apps/examples/desktop-app/package.json"
@@ -19,6 +20,7 @@ on:
   pull_request:
     branches:
       - main
+      - local-main
       - desktop-experimental
     paths:
       - "apps/examples/desktop-app/package.json"
