@@ -21,7 +21,7 @@
   </g>
   <text x="290" y="98" fill="#8faac1" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700" letter-spacing="4">YOUR GPU. YOUR MODELS.</text>
   <text x="285" y="177" font-family="Arial, Helvetica, sans-serif" font-size="66" font-weight="700" letter-spacing="-2"><tspan fill="#f1f7ff">Cline</tspan><tspan dx="14" fill="#526f8b" font-weight="400">/</tspan><tspan dx="14" fill="url(#accent)">AI Local</tspan></text>
-  <text x="290" y="215" fill="#b1c3d6" font-family="Arial, Helvetica, sans-serif" font-size="20">More useful context. More room to think.</text>
+  <text x="290" y="215" fill="#b1c3d6" font-family="Arial, Helvetica, sans-serif" font-size="20">More context. More room to act.</text>
   <g transform="translate(291 253)">
     <rect width="391" height="8" rx="4" fill="#1d344a"/>
     <rect width="253" height="8" rx="4" fill="url(#meter)"/>
