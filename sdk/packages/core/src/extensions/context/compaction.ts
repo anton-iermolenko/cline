@@ -34,7 +34,6 @@ import type {
 import type { ProviderConfig } from "../../types/provider-settings";
 import { runAgenticCompaction } from "./agentic-compaction";
 import { runBasicCompaction } from "./basic-compaction";
-import { createMeasuredImageTokenEstimator } from "./image-token-accounting";
 import {
 	COMPACTION_TRIGGER_RATIO,
 	createTokenEstimator,
@@ -45,6 +44,7 @@ import {
 	MAX_INPUT_UNDERESTIMATE_FACTOR,
 	resolveEffectiveMaxInputTokens,
 } from "./compaction-shared";
+import { createMeasuredImageTokenEstimator } from "./image-token-accounting";
 
 export interface ContextPipelinePrepareTurnInput {
 	agentId: string;
@@ -410,14 +410,18 @@ export function createContextCompactionPrepareTurn(
 			0,
 			requestInputTokens - apiMessageTokens,
 		);
-		const rawMaxInputTokens =
+		const modelMaxInputTokens =
 			beforeMeasurement?.maxInputTokens ??
 			resolveEffectiveMaxInputTokens({
 				maxInputTokens: context.model.info?.maxInputTokens,
 				contextWindow: context.model.info?.contextWindow,
 				maxOutputTokens: config.providerConfig?.maxOutputTokens,
-			}) ??
-			DEFAULT_MAX_INPUT_TOKENS;
+			});
+		// Unknown limits do not justify automatic compaction. Manual/overflow
+		// recovery retains its conservative working budget.
+		if (effectiveMode === "auto" && modelMaxInputTokens === undefined)
+			return undefined;
+		const rawMaxInputTokens = modelMaxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS;
 		// The char-based estimate under-counts dense content (disassembly, image
 		// dumps, minified sources). When the provider's actual count for the
 		// PREVIOUS request already exceeds our estimate for the (larger) current
@@ -1190,6 +1194,15 @@ export function createCompactionStateAwarePrepareTurn(input: {
 	compact?: ContextPipelinePrepareTurn;
 	getState?: () => SessionCompactionState | undefined;
 	/**
+	 * The runtime's provider-request transform (extension message builders +
+	 * `MessageBuilder.buildForApi`), i.e. what produced `context.apiMessages`
+	 * from `context.messages`. Re-compaction swaps in a projected transcript
+	 * and must estimate against its API-safe form, not the raw projection.
+	 */
+	prepareApiMessages: (
+		messages: CoreCompactionContext["messages"],
+	) => Promise<CoreCompactionContext["messages"]>;
+	/**
 	 * Persist a freshly-computed compaction state. `sourceMessages` are the
 	 * exact canonical messages the state's source-prefix hash was computed
 	 * over; hosts must validate projection against these rather than a
@@ -1215,7 +1228,7 @@ export function createCompactionStateAwarePrepareTurn(input: {
 				? await input.compact({
 						...context,
 						messages: projectedMessages,
-						apiMessages: projectedMessages,
+						apiMessages: await input.prepareApiMessages(projectedMessages),
 					})
 				: undefined;
 			if (result?.messages) {

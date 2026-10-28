@@ -1,4 +1,3 @@
-import { createHandlerAsync } from "@cline/llms";
 import type { BasicLogger } from "@cline/shared";
 import { createAgentModelFromConfig } from "../../services/llms/handler-factory";
 import { countUserRunMessages } from "../../session/user-run-messages";
@@ -24,30 +23,13 @@ import {
 	findLatestSummaryIndex,
 	getCompactionSummaryMetadata,
 	isTurnStartMessage,
-	resolveEffectiveMaxInputTokens,
+	resolveProviderMaxInputTokens,
 	resolveSummarizerConfig,
 	serializeConversation,
 } from "./compaction-shared";
+import { generateSummary as generateSummaryOnce } from "./summary-generation";
 
 const MIN_AGENTIC_SUMMARY_INPUT_TOKENS = 1_024;
-
-function resolveProviderMaxInputTokens(
-	providerConfig: ProviderConfig,
-): number | undefined {
-	const modelInfoLimit = resolveEffectiveMaxInputTokens({
-		maxInputTokens:
-			providerConfig.maxInputTokens ?? providerConfig.modelInfo?.maxInputTokens,
-		contextWindow: providerConfig.modelInfo?.contextWindow,
-	});
-	if (modelInfoLimit !== undefined) {
-		return modelInfoLimit;
-	}
-	const knownModelInfo = providerConfig.knownModels?.[providerConfig.modelId];
-	return resolveEffectiveMaxInputTokens({
-		maxInputTokens: knownModelInfo?.maxInputTokens,
-		contextWindow: knownModelInfo?.contextWindow,
-	});
-}
 
 export function buildAgenticSummaryInputBudget(options: {
 	messages: CoreCompactionContext["messages"];
@@ -62,57 +44,19 @@ export function buildAgenticSummaryInputBudget(options: {
 	});
 }
 
-interface SummaryGenerationResult {
-	text: string;
-	/** Reasoning/thinking output length; discarded from the summary itself. */
-	reasoningChars: number;
-	/** Provider-reported reason the response is incomplete (e.g. "max_output_tokens"). */
-	incompleteReason?: string;
-}
-
-async function generateSummaryOnce(options: {
-	providerConfig: ProviderConfig;
-	request: string;
-	logger?: BasicLogger;
-}): Promise<SummaryGenerationResult> {
-	const handler = await createHandlerAsync(options.providerConfig);
-	let text = "";
-	let reasoningChars = 0;
-	let incompleteReason: string | undefined;
-	for await (const chunk of handler.createMessage(
-		"Summarize the provided coding session into a concise continuation note with detailed next steps.",
-		[{ role: "user", content: options.request }],
-	)) {
-		if (chunk.type === "text") {
-			text += chunk.text;
-			continue;
-		}
-		if (chunk.type === "reasoning") {
-			reasoningChars += chunk.reasoning?.length ?? 0;
-			continue;
-		}
-		if (chunk.type === "done") {
-			if (!chunk.success && chunk.error) {
-				throw new Error(chunk.error);
-			}
-			incompleteReason = chunk.incompleteReason ?? incompleteReason;
-		}
-	}
-	options.logger?.debug("Generated compaction summary", {
-		outputChars: text.length,
-		reasoningChars,
-		incompleteReason,
-		modelId: options.providerConfig.modelId,
-		providerId: options.providerConfig.providerId,
-	});
-	return { text: text.trim(), reasoningChars, incompleteReason };
-}
-
+/** Retry one complete empty compaction response using the exact same request. */
 async function generateSummary(
-	options: Parameters<typeof generateSummaryOnce>[0],
-): Promise<SummaryGenerationResult> {
+	options: Parameters<typeof generateSummaryOnce>[0] & { logger?: BasicLogger },
+) {
 	const result = await generateSummaryOnce(options);
-	if (result.text || result.incompleteReason) return result;
+	if (
+		result.text.trim() ||
+		result.incompleteReason ||
+		result.failed ||
+		result.usedTools
+	)
+		return result;
+	options.signal?.throwIfAborted();
 	options.providerConfig.abortSignal?.throwIfAborted();
 	options.logger?.log("Retrying empty compaction summary", {
 		severity: "warn",
@@ -122,9 +66,6 @@ async function generateSummary(
 		reasoningChars: result.reasoningChars,
 		modelId: options.providerConfig.modelId,
 	});
-	// Reuse the exact chunk and prior checkpoint. Only a complete empty response
-	// gets one retry; transport errors, truncation and cancellation keep their
-	// existing recovery behavior.
 	return generateSummaryOnce(options);
 }
 
@@ -194,10 +135,17 @@ async function summarizeMeasuredChunks(options: {
 				...options.providerConfig,
 				abortSignal: options.signal,
 			},
+			systemPrompt: instruction,
+			signal: options.signal,
 			request,
 			logger: options.logger,
 		});
-		if (!generated.text || generated.incompleteReason)
+		if (
+			!generated.text.trim() ||
+			generated.incompleteReason ||
+			generated.failed ||
+			generated.usedTools
+		)
 			throw new Error(
 				"Summarizer returned an empty or incomplete checkpoint; original context was preserved",
 			);
@@ -431,11 +379,26 @@ export async function runAgenticCompaction(options: {
 	});
 	const summaryResult = await generateSummary({
 		providerConfig: summarizerProviderConfig,
+		systemPrompt:
+			"Summarize the provided coding session into a concise continuation note with detailed next steps.",
 		request: summaryRequest,
 		logger: options.logger,
+		signal: options.context.abortSignal,
 	});
-	const rawSummary = summaryResult.text;
-	if (!rawSummary || summaryResult.incompleteReason) {
+	options.logger?.debug("Generated compaction summary", {
+		outputChars: summaryResult.text.length,
+		reasoningChars: summaryResult.reasoningChars,
+		incompleteReason: summaryResult.incompleteReason,
+		modelId: summarizerProviderConfig.modelId,
+		providerId: summarizerProviderConfig.providerId,
+	});
+	const rawSummary = summaryResult.text.trim();
+	if (
+		!rawSummary ||
+		summaryResult.incompleteReason ||
+		summaryResult.failed ||
+		summaryResult.usedTools
+	) {
 		options.logger?.log(
 			"Skipped agentic compaction: summarizer returned no summary text",
 			{
