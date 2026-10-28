@@ -52,6 +52,8 @@ export const GenericProviderSettings = ({
 		commitSelection,
 	})
 
+	const isLocalInference = ["vllm", "llamacpp"].includes(providerId.toString())
+
 	const handleModelSelect = (selection: ModelPickerSelection) => {
 		void commitModelSelection(selection).catch((err) =>
 			console.error(`Failed to commit ${providerName} model selection:`, err),
@@ -107,29 +109,30 @@ export const GenericProviderSettings = ({
 						selectedModel={selectedModel}
 					/>
 
-					{["vllm", "llamacpp"].includes(providerId.toString()) && (
+					{isLocalInference && (
 						<LocalInferenceSettingsForm config={config} selectedModelId={selectedModel.modelId} write={write} />
 					)}
-					{!["vllm", "llamacpp"].includes(providerId.toString()) &&
-						selectedModel.modelInfo.supportsReasoning === true && (
-							<ReasoningEffortSelector
-								currentMode={currentMode}
-								onEffortChange={(effort) => {
-									void write({
-										reasoning: {
-											enabled: effort !== "none",
-											effort: effort !== "none" ? effort : undefined,
-										},
-									}).catch((err) => console.error(`Failed to update ${providerName} reasoning effort:`, err))
-								}}
-							/>
-						)}
+					{!isLocalInference && selectedModel.modelInfo.supportsReasoning === true && (
+						<ReasoningEffortSelector
+							currentMode={currentMode}
+							onEffortChange={(effort) => {
+								void write({
+									reasoning: {
+										enabled: effort !== "none",
+										effort: effort !== "none" ? effort : undefined,
+									},
+								}).catch((err) => console.error(`Failed to update ${providerName} reasoning effort:`, err))
+							}}
+						/>
+					)}
 
-					<ModelInfoView
-						isPopup={isPopup}
-						modelInfo={selectedModel.modelInfo}
-						selectedModelId={selectedModel.modelId}
-					/>
+					{!isLocalInference && (
+						<ModelInfoView
+							isPopup={isPopup}
+							modelInfo={selectedModel.modelInfo}
+							selectedModelId={selectedModel.modelId}
+						/>
+					)}
 				</>
 			)}
 		</div>

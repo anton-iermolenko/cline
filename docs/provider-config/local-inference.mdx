@@ -14,6 +14,30 @@ reported server metadata initializes the profile; unknown settings remain unset.
 Set maximum output tokens before use. Context, output, thinking, sampling,
 capabilities and compaction controls are saved separately for each provider,
 server and model. Clearing a control restores a reported default where available.
+The settings page groups context/output and thinking controls, with sampling,
+penalties and capability overrides under **Advanced settings**. Local providers
+show token allowances rather than the catalog's zero-cost input/output pricing.
+Reported server values and calculated defaults appear in grey italic text;
+explicit user edits appear in the normal input color. Field provenance is saved
+with each model, even when an edit equals its reported default. Clearing a field
+returns it to the server default. Older profiles without provenance retain
+differing or unknown values as overrides; values matching rediscovered defaults
+are treated as defaults because their original edit history is unavailable.
+Input and compaction controls show calculated values until their override
+checkbox is enabled. Clearing an override returns to automatic calculation;
+existing saved overrides remain enabled when reopened or switching models.
+
+Native input allowance is total context minus total output minus one server
+boundary token. Thinking is part of total output, not another reservation. The
+live native counter can further reduce the allowance to the server's capacity.
+The default native compaction trigger is input allowance minus 2,048 tokens;
+without native counting it remains 90% of input allowance. Automatic targets
+start at 70% of the trigger and adapt to 50% of input allowance after five
+user/assistant pairs when output is smaller than input. The displayed recent
+history ceiling is before live prompt/tool overhead and summary space are
+applied; retention remains conversation-dependent. Only explicit override
+values are saved, so calculated defaults keep following budget changes.
+
 Discovery reads catalog metadata and already-loaded model properties; it does not
 load every model to fill a settings page.
 

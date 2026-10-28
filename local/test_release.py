@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
+from types import SimpleNamespace
 
 spec = importlib.util.spec_from_file_location("release", Path(__file__).with_name("release.py"))
 release = importlib.util.module_from_spec(spec)
@@ -38,6 +40,25 @@ class ReleaseTests(unittest.TestCase):
             for path, expected in originals.items():
                 self.assertEqual(path.read_bytes(), expected)
             self.assertFalse((root / "apps/vscode/assets/branding/ai-local-banner.png").exists())
+
+    def test_only_explicit_development_build_can_reuse_a_tagged_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "local").mkdir()
+            (root / "local/release.json").write_text(json.dumps({"version": "2026.10.2", "displayName": "Cline / AI Local", "description": "Local models"}))
+            for name in [*release.MANIFESTS.values(), "sdk/packages/core/package.json"]:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('{"version":"1.0.0"}')
+            def fake_git(_root, *args):
+                return {("merge-base", "HEAD", "refs/remotes/origin/main"): "upstream", ("rev-parse", "HEAD"): "new-source", ("rev-parse", "HEAD^{tree}"): "new-tree", ("branch", "--show-current"): "local-main"}[args]
+            with patch.object(release, "git", side_effect=fake_git), patch.object(release.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout="tagged-source")) as command:
+                with self.assertRaisesRegex(ValueError, "already identifies another commit"):
+                    release.provenance(root)
+                record = release.provenance(root, development=True)
+                self.assertEqual(record["forkVersion"], "2026.10.2")
+                self.assertEqual(record["sourceCommit"], "new-source")
+                self.assertTrue(all(call.args[0][1:3] == ["rev-parse", "--verify"] for call in command.call_args_list))
 
     def test_version_rejects_invalid_month_leading_zero_and_suffix(self):
         with tempfile.TemporaryDirectory() as directory:

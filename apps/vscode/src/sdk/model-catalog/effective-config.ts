@@ -1,4 +1,5 @@
-import { localModelProfileKey } from "@cline/core"
+import { getLocalModelDefaults, localModelProfileKey } from "@cline/core"
+import { type LocalInferenceSettings, localInferenceUserOverrides } from "@cline/shared"
 import type { ApiConfiguration } from "@shared/api"
 import { StateManager } from "@/core/storage/StateManager"
 import { getProviderSettingsManager } from "../provider-migration"
@@ -210,9 +211,17 @@ function readProviderSettings(providerId: ProviderId): ConfigParts {
 			return {}
 		}
 
+		const localInference = settings.localInference as LocalInferenceSettings | undefined
+		const localDefaults = getLocalModelDefaults(
+			readString(settings, "baseUrl"),
+			readString(settings, "model") ?? "",
+			providerId.toString(),
+		)
 		return {
 			apiKey: readString(settings, "apiKey"),
-			localInference: settings.localInference as import("@cline/shared").LocalInferenceSettings | undefined,
+			localInference: localInference
+				? { ...localInference, userOverrides: localInferenceUserOverrides(localInference, localDefaults) }
+				: undefined,
 			localInferenceModelId: readString(settings, "model"),
 			localInferenceScope: ["vllm", "llamacpp"].includes(providerId.toString())
 				? localModelProfileKey(readString(settings, "baseUrl"), readString(settings, "model") ?? "")

@@ -36,7 +36,7 @@ def read_release(root):
     return release
 
 
-def provenance(root):
+def provenance(root, *, development=False):
     release = read_release(root)
     versions = {name: json.loads((root / path).read_text())["version"] for name, path in MANIFESTS.items()}
     versions["core"] = json.loads((root / "sdk/packages/core/package.json").read_text())["version"]
@@ -44,7 +44,7 @@ def provenance(root):
     source = git(root, "rev-parse", "HEAD")
     tag = "fork/" + release["version"]
     tagged = subprocess.run(["git", "rev-parse", "--verify", "refs/tags/" + tag + "^{commit}"], cwd=root, capture_output=True, text=True)
-    if tagged.returncode == 0 and tagged.stdout.strip() != source:
+    if not development and tagged.returncode == 0 and tagged.stdout.strip() != source:
         raise ValueError(f"{tag} already identifies another commit; increment local/release.json")
     return {
         "forkVersion": release["version"],
@@ -133,8 +133,10 @@ def verify_artifacts(root, record, package, vsix):
     return receipt
 
 
-def build(root):
-    record = provenance(root)
+def build(root, *, development=False):
+    record = provenance(root, development=development)
+    if development:
+        record["developmentBuild"] = True
     if record["sourceBranch"] != "local-main" or git(root, "status", "--porcelain"):
         raise ValueError("Build releases from a clean, committed local-main checkout")
     if subprocess.check_output(["bun", "--version"], text=True).strip() != "1.4.2":
@@ -169,18 +171,19 @@ def build(root):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=["check", "build"])
+    parser.add_argument("--development", action="store_true", help="Build unpublished test artifacts at the current version without moving its release tag")
     args = parser.parse_args()
     lock_path = Path(git(ROOT, "rev-parse", "--path-format=absolute", "--git-path", "ai-local-build.lock"))
     with lock_path.open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         if args.command == "check":
-            print(json.dumps(provenance(ROOT), indent=2))
+            print(json.dumps(provenance(ROOT, development=args.development), indent=2))
         else:
             def interrupted(signum, _frame):
                 raise KeyboardInterrupt(f"Release interrupted by signal {signum}")
             for signum in [signal.SIGTERM, signal.SIGHUP]:
                 signal.signal(signum, interrupted)
-            build(ROOT)
+            build(ROOT, development=args.development)
 
 
 if __name__ == "__main__":

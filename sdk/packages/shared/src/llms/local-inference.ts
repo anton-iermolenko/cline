@@ -1,8 +1,38 @@
 import { z } from "zod";
 
+export const LOCAL_INFERENCE_OVERRIDE_FIELDS = [
+	"supportsVision",
+	"supportsTools",
+	"supportsReasoning",
+	"contextWindow",
+	"maxInputTokens",
+	"maxOutputTokens",
+	"temperature",
+	"topP",
+	"topK",
+	"minP",
+	"presencePenalty",
+	"frequencyPenalty",
+	"repeatPenalty",
+	"thinking",
+	"reasoningEffort",
+	"thinkingBudgetTokens",
+	"compaction.bufferTokens",
+	"compaction.targetTokens",
+	"compaction.maxTargetTokens",
+	"compaction.preserveRecentTokens",
+] as const;
+export type LocalInferenceOverrideField =
+	(typeof LOCAL_INFERENCE_OVERRIDE_FIELDS)[number];
+
 /** Model controls only. Connection credentials belong to the provider. */
 export const LocalInferenceSettingsSchema = z
 	.object({
+		/** Explicit user edits; absent only on profiles saved before provenance tracking. */
+		userOverrides: z
+			.array(z.enum(LOCAL_INFERENCE_OVERRIDE_FIELDS))
+			.max(32)
+			.optional(),
 		supportsVision: z.boolean().optional(),
 		supportsTools: z.boolean().optional(),
 		supportsReasoning: z.boolean().optional(),
@@ -53,4 +83,28 @@ export function localInferenceUrl(baseUrl: string, route: string): string {
 	base.search = "";
 	base.hash = "";
 	return base.toString();
+}
+
+/** Legacy equal-to-default values cannot prove an edit; preserve every differing or unknown value as an override. */
+export function localInferenceUserOverrides(
+	settings: LocalInferenceSettings,
+	defaults: LocalInferenceSettings = {},
+): LocalInferenceOverrideField[] {
+	if (settings.userOverrides) return settings.userOverrides;
+	const value = (
+		source: LocalInferenceSettings,
+		key: LocalInferenceOverrideField,
+	) =>
+		key.startsWith("compaction.")
+			? source.compaction?.[
+					key.slice(11) as keyof NonNullable<
+						LocalInferenceSettings["compaction"]
+					>
+				]
+			: source[key as keyof LocalInferenceSettings];
+	return LOCAL_INFERENCE_OVERRIDE_FIELDS.filter(
+		(key) =>
+			value(settings, key) !== undefined &&
+			!Object.is(value(settings, key), value(defaults, key)),
+	);
 }
