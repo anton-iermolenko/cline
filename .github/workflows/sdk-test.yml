@@ -25,6 +25,10 @@ on:
             - ".github/workflows/sdk-test.yml"
     workflow_call:
 
+concurrency:
+    group: ci-sdk-test-${{ github.event.pull_request.number || github.ref }}
+    cancel-in-progress: true
+
 permissions:
     contents: read
 
@@ -34,6 +38,9 @@ defaults:
 
 jobs:
     quality-checks:
+        environment:
+            name: ci-quiet-period
+            deployment: false
         runs-on: ubuntu-latest
         name: Quality Checks
         steps:

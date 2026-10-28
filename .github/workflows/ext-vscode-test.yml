@@ -12,6 +12,10 @@ on:
             - local-main
     workflow_call:
 
+concurrency:
+    group: ci-ext-vscode-test-${{ github.event.pull_request.number || github.ref }}
+    cancel-in-progress: true
+
 # Set default permissions for all jobs
 permissions:
     contents: read # Needed to check out code
@@ -19,6 +23,9 @@ permissions:
 
 jobs:
     detect-changes:
+        environment:
+            name: ci-quiet-period
+            deployment: false
         runs-on: ubuntu-latest
         name: Detect Changes
         outputs:

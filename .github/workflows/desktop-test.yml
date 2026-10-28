@@ -35,11 +35,18 @@ on:
       - ".github/workflows/desktop-test.yml"
   workflow_dispatch:
 
+concurrency:
+  group: ci-desktop-test-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
   dmg-background:
+    environment:
+      name: ci-quiet-period
+      deployment: false
     name: Test DMG background tooling
     runs-on: ubuntu-latest
     defaults:
@@ -60,6 +67,9 @@ jobs:
         run: bun run test:dmg-background
 
   windows-installer:
+    environment:
+      name: ci-quiet-period
+      deployment: false
     name: Test x86 installer against x64 app executables
     runs-on: windows-latest
     timeout-minutes: 10
