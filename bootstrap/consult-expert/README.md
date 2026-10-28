@@ -4,7 +4,7 @@ Linux/WSL stdio MCP server for explicitly requested expert assignments through
 the official, ChatGPT-authenticated Codex runtime. This is a shareable copy of
 the existing implementation, including its durable supervisor and tests.
 It is Linux-only (`fcntl`, Unix sockets and peer credentials); run it inside WSL
-for a Windows client. It does not contain the original machine's configuration.
+for a Windows client.
 
 ## Install (opt-in, Linux/WSL)
 
