@@ -104,3 +104,7 @@ webview-ui/.vite-port
 *storybook.log
 storybook-static
 **/StorybookDecorator.tsx
+
+# AI Local release outputs are not extension runtime assets.
+**/*.vsix
+dist/release-artifacts.json

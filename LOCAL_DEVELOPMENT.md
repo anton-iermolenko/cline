@@ -27,25 +27,24 @@ Retain the feature branch for review and possible upstream submission. Do not fo
 
 ## Build the clients from one source
 
-At the clean primary checkout, record `git rev-parse HEAD` with both artifacts. Install locked dependencies, build the SDK once, and build the CLI:
+At the clean primary checkout, use the shared fork release helper:
 
 ```sh
-bun install --frozen-lockfile
-bun run build:sdk
-bun -F @cline/cli build
-bun apps/cli/script/build.ts --single --skip-install --skip-sdk-build
+python3 local/release.py check
+bash local/build-wsl.sh
 ```
 
-Build the extension from the same checkout:
+`local/release.json` owns the shared CLI/extension fork version and branding.
+Upstream package versions remain unchanged in committed source; the helper stamps
+both clients during the build and restores the original manifests afterwards.
+It records source/upstream commits, original upstream versions, runtime identity
+and artifact hashes, and includes the fork introduction in the VSIX. See
+[`local/README.md`](local/README.md) for release numbering, tagging and deployment.
 
-```sh
-cd apps/vscode
-bun run build:webview
-bun esbuild.mjs --production
-bunx vsce package --no-dependencies
-```
-
-The extension's build script regenerates protocol bindings as needed. Keep source provenance in release artifacts without embedding workstation paths in tracked package metadata. Use the existing host-specific deployment procedure to activate verified packages; keep the previous installed release available for rollback and avoid interrupting active sessions.
+Do not edit source concurrently with a release build. Build and verify before
+tagging `fork/<version>`. Keep runtime configuration and per-machine state outside
+source commits. Deploy verified packages without interrupting active sessions,
+and retain the prior installed release for rollback.
 
 ## Remotes
 
