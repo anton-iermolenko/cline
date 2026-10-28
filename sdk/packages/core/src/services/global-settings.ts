@@ -90,6 +90,18 @@ export const GlobalSettingsSchema = z
 			.string()
 			.regex(/^[a-z][a-z0-9-]*$/)
 			.optional(),
+		fileEditor: z
+			.object({
+				maxChars: z
+					.number()
+					.int()
+					.positive()
+					.max(16 * 1024 * 1024)
+					.optional(),
+				advertiseLengthBounds: z.boolean().optional(),
+				lockTimeoutMs: z.number().int().positive().max(30000).optional(),
+			})
+			.optional(),
 		tools: ModelToolSettingsSchema,
 		disabledPlugins: GlobalSettingsStringListSchema.optional(),
 		disabledAgentPlugins: GlobalSettingsStringListSchema.optional(),
@@ -108,6 +120,12 @@ export const GlobalSettingsSchema = z
 			disabledTools?: string[];
 			webSearchProvider?: string;
 			webPageProvider?: string;
+
+			fileEditor?: {
+				maxChars?: number;
+				advertiseLengthBounds?: boolean;
+				lockTimeoutMs?: number;
+			};
 			tools?: ModelToolSettings;
 			disabledPlugins?: string[];
 			disabledAgentPlugins?: string[];
@@ -119,6 +137,8 @@ export const GlobalSettingsSchema = z
 			normalized.webSearchProvider = settings.webSearchProvider;
 		if (settings.webPageProvider)
 			normalized.webPageProvider = settings.webPageProvider;
+
+		if (settings.fileEditor) normalized.fileEditor = settings.fileEditor;
 		if (settings.compactionStrategy) {
 			normalized.compactionStrategy = settings.compactionStrategy;
 		}
@@ -176,6 +196,7 @@ function invalidateSettingsCache(): void {
 
 function freezeSettings(value: GlobalSettings): GlobalSettings {
 	if (value.compaction) Object.freeze(value.compaction);
+	if (value.fileEditor) Object.freeze(value.fileEditor);
 	if (value.disabledTools) {
 		Object.freeze(value.disabledTools);
 	}
@@ -377,6 +398,17 @@ export function resolveDisabledToolNames(
 			"read_web_page_content",
 		])
 			disabled.add(name);
+	if (disabled.has("editor"))
+		for (const name of [
+			"read_file",
+			"apply_draft",
+			"create_from_draft",
+			"draft_create",
+			"draft_append",
+			"draft_finalize",
+			"draft_discard",
+		])
+			disabled.add(name);
 	return disabled;
 }
 
@@ -462,7 +494,7 @@ export function setDisabledTools(
 	}
 
 	const settings = readGlobalSettings();
-	const disabled = resolveDisabledToolNames(settings.disabledTools);
+	const disabled = new Set(settings.disabledTools ?? []);
 	const tools: ModelToolSettings = { ...settings.tools };
 	for (const name of names) {
 		if (isModelToolName(name)) {

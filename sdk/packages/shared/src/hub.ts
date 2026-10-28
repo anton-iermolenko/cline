@@ -868,6 +868,7 @@ export type HubToolExecutorName =
 	| "bash"
 	| "webPages"
 	| "editor"
+	| "fileEditor"
 	| "applyPatch"
 	| "skills"
 	| "askQuestion"
@@ -879,6 +880,7 @@ export const HUB_TOOL_EXECUTOR_NAMES = [
 	"bash",
 	"webPages",
 	"editor",
+	"fileEditor",
 	"applyPatch",
 	"skills",
 	"askQuestion",

@@ -704,7 +704,7 @@ export function summarizeToolActivity(
 				const input = (block.input ?? {}) as Record<string, unknown>;
 				const name = block.name.split("__").at(-1) ?? block.name;
 				callsById.set(block.id, { name: block.name, input });
-				if (name === "read_files") {
+				if (name === "read_files" || name === "read_file") {
 					if (Array.isArray(input.files)) {
 						for (const file of input.files) {
 							if (file && typeof file === "object") {
@@ -723,7 +723,14 @@ export function summarizeToolActivity(
 					}
 					continue;
 				}
-				if (name === "editor" || name === "apply_patch") {
+				if (
+					[
+						"editor",
+						"apply_draft",
+						"create_from_draft",
+						"apply_patch",
+					].includes(name)
+				) {
 					const path = collectPaths(input)[0];
 					if (path) {
 						editorPathsByToolUseId.set(block.id, path);

@@ -1,0 +1,112 @@
+---
+title: "Native file editor"
+description: "Hash-checked editing and chunked drafts in the shared Cline core."
+---
+
+Cline's default editor family uses the engine previously provided by the
+standalone file-editor MCP service. It runs in the execution host through the
+native SDK tool/capability path. No MCP server or dependency is required.
+
+| Tool | Required arguments |
+| --- | --- |
+| `editor` | `path`, `new_text` |
+| `read_file` | `path` |
+| `draft_create` | none |
+| `draft_append` | `id`, `chunk_index`, `content` |
+| `draft_finalize` | `id`, `chunk_count`, `expected_sha256` |
+| `apply_draft` | `path`, `new_text_ref`, `start_line`, `end_line`, `expected_sha256` |
+| `create_from_draft` | `path`, `new_text_ref` |
+| `draft_discard` | `id` |
+
+These tools form one `editor` entry in the tool catalog. Disabling it disables
+the whole family. Plan mode does not advertise editor operations. Existing
+model routing to `apply_patch` is preserved. Explicit legacy SDK editor
+overrides still use their legacy interface; the default CLI and extension path
+uses `ToolExecutors.fileEditor`.
+
+## Edit workflow
+
+Use `read_file` for exact unnumbered UTF-8 text, the actual returned line bounds,
+and the SHA-256 of the same whole-file byte snapshot. Replace an inclusive range
+using `editor` with `start_line`, `end_line`, `expected_sha256` and `new_text`.
+This avoids reproducing quote-heavy old content. The verified empty-file range
+is `start_line=1,end_line=0`.
+
+Inline `old_text` replacement requires exactly one match. Empty `new_text` deletes
+the match or selected lines; omitted content is never inferred. Creation refuses
+an existing target. Insertion uses one-based physical line boundaries, with
+`line_count+1` meaning EOF; append concatenates literally. Send dependent edits
+sequentially.
+
+For large content, create a draft, append ordered chunks, and finalize using the
+last acknowledgement's chunk count and cumulative hash. Then use `apply_draft`
+with a fresh file hash/range, or `create_from_draft` for a missing target. Draft
+assembly never modifies the destination. Identical chunk retries are idempotent;
+different content at an accepted index fails. Read the saved result and verify
+its meaning after applying it.
+
+Reads are capped at 12,000 characters by default, optionally up to 50,000, with
+whole-line continuation bounds. Writes return saved byte count, hash, operation,
+line count and a bounded diff preview. A truncated preview is not a truncated
+write. Failures include bounded recovery guidance and never perform a guessed
+correction.
+
+## Configuration
+
+Merge a `fileEditor` object into shared Cline global settings:
+
+```json
+{
+  "fileEditor": {
+    "maxChars": 50000,
+    "advertiseLengthBounds": true,
+    "lockTimeoutMs": 15000
+  }
+}
+```
+
+`maxChars` applies independently to inline old/new text. It does not increase the
+model's output-token budget. Set `advertiseLengthBounds=false` only when working
+around slow bounded-string grammar generation; runtime limits remain enforced.
+Rebuild the session's toolset after changing these settings. SDK hosts can pass
+`executorOptions.fileEditor`, including trusted filesystem roots, or override
+`ToolExecutors.fileEditor` for a different execution host.
+
+The complete file is limited to 16 MiB. Draft chunks are at most 4,000 characters
+(or the configured field limit if lower), with eight drafts and 16 MiB of staged
+content per editor context. Drafts expire after 30 idle minutes and are scoped
+to conversation, agent and workspace. Session/runtime recreation may discard
+drafts; finalize and apply within the same session.
+
+## Native host integration
+
+Write operations use native edit approvals. The extension resolves inline and
+staged previews through the same engine that computes writes, so previews use
+the exact range, draft, BOM and newline semantics. A displayed existing-file
+snapshot adds a hash guard at commit; a concurrent change requires a fresh read.
+Background-edit mode keeps its existing headless behavior.
+
+Native run hooks and configured checkpoints see the writes. Compaction/activity
+tracking recognizes `apply_draft` and `create_from_draft` alongside `editor`.
+Draft assembly changes memory only; native hash reads follow read approval.
+
+The engine preserves UTF-8 BOMs, line endings and POSIX mode bits, rejects
+binary/invalid UTF-8 and hard-linked files, and commits through a synced
+temporary file and atomic replacement. Adjacent filesystem locks coordinate
+with other engine instances and the existing MCP service. Cancellation is
+checked before commit and during lock waits. External writers do not honor
+these locks; hash guards reduce races without claiming a filesystem compare-
+and-swap guarantee. Ownership, extended attributes and custom ACLs may not be
+retained by atomic replacement.
+
+Absolute paths use the execution host's normal filesystem permissions. Relative
+paths resolve against the session workspace and cannot lexically escape it.
+The engine retains WSL Windows-drive/Ubuntu-UNC conversion. Optional trusted
+roots use canonical paths to contain symlinks as in the original engine.
+
+When rolling this feature out, disable the standalone `file-editor` MCP
+registration and enable the native `editor` tool group to avoid duplicates.
+This branch does not modify existing registrations or active installations.
+
+Run both the native integration tests and `bun -F @cline/core test:file-editor`
+for the imported transport-independent engine regressions.

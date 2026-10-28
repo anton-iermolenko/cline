@@ -183,6 +183,20 @@ export function formatToolInput(toolName: string, input: unknown): string {
 	switch (toolName) {
 		case "ask_question":
 			return formatAskQuestionInput(obj);
+		case "read_file":
+		case "apply_draft":
+		case "create_from_draft":
+			return truncate(obj.path, 120);
+		case "draft_create":
+			return "new draft";
+		case "draft_append":
+			return truncate(
+				`${toDisplayString(obj.id)}: chunk ${toDisplayString(obj.chunk_index)}`,
+				120,
+			);
+		case "draft_finalize":
+		case "draft_discard":
+			return truncate(obj.id, 120);
 		case "read_files":
 			if (Array.isArray(obj.file_paths)) {
 				return truncate(obj.file_paths.join(", "), 120);

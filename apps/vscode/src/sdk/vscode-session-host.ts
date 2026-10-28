@@ -64,6 +64,7 @@ export interface VscodeSessionHostOptions {
 	 * default disk-writing executor.
 	 */
 	editorExecutor?: EditorExecutor
+	fileEditorExecutor?: import("@cline/core").FileEditorExecutor
 	/**
 	 * Custom `apply_patch` tool executor (reverts the approval-time diff preview before
 	 * delegating to the SDK's default patch application).
@@ -120,6 +121,9 @@ export class VscodeSessionHost implements SdkSessionHost {
 		const toolExecutors: Partial<ToolExecutors> = {}
 		if (options.askQuestion) {
 			toolExecutors.askQuestion = options.askQuestion
+		}
+		if (options.fileEditorExecutor) {
+			toolExecutors.fileEditor = options.fileEditorExecutor
 		}
 		if (options.editorExecutor) {
 			toolExecutors.editor = options.editorExecutor

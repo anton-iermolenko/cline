@@ -240,7 +240,12 @@ export function handleAgentEvent(
 			provider: config.providerId,
 			...agentIdentity,
 		});
-		if (!success && (toolName === "editor" || toolName === "apply_patch")) {
+		if (
+			!success &&
+			["editor", "apply_draft", "create_from_draft", "apply_patch"].includes(
+				toolName,
+			)
+		) {
 			captureDiffEditFailure(telemetry, {
 				ulid: sessionId,
 				modelId: config.modelId,

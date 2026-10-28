@@ -234,13 +234,28 @@ export function createBuiltinTools(
 		!executorOverrides?.processWait
 	)
 		delete executors.processWait;
+	if (executorOverrides?.editor && !executorOverrides.fileEditor)
+		delete executors.fileEditor;
 	return createDefaultTools({
 		...toolsConfig,
+		fileEditorOptions:
+			toolsConfig.fileEditorOptions ?? resolvedExecutorOptions.fileEditor,
 		shell,
 		executors,
 	});
 }
 
+export {
+	createFileEditorExecutor,
+	createFileEditorTools,
+	FILE_EDITOR_TOOL_NAMES,
+	FILE_EDITOR_WRITE_TOOLS,
+	type FileEditorExecutor,
+	type FileEditorOptions,
+	type FileEditorPreview,
+	type FileEditorToolName,
+	resolveFileEditorPath,
+} from "./file-editor";
 export type { WebPageAcquirer, WebPageSource } from "./web-pages";
 export {
 	createWebProviderPlugin,

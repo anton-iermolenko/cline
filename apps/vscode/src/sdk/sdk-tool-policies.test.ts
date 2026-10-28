@@ -53,3 +53,17 @@ describe("bounded web tool approval", () => {
 		})
 	}
 })
+
+describe("native staged edit approval", () => {
+	for (const tool of ["editor", "apply_draft", "create_from_draft"]) {
+		it(`${tool} follows edit approval rather than MCP approval`, () => {
+			for (const enabled of [true, false])
+				expect(
+					isToolAutoApproved(tool, {
+						...DEFAULT_AUTO_APPROVAL_SETTINGS,
+						actions: { ...DEFAULT_AUTO_APPROVAL_SETTINGS.actions, editFiles: enabled, useMcp: !enabled },
+					}),
+				).toBe(enabled)
+		})
+	}
+})

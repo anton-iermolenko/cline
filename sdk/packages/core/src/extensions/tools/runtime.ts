@@ -1,6 +1,7 @@
 import { supportsModelTool } from "@cline/llms";
 import { isModelToolEnabledGlobally } from "../../services/global-settings";
 import type { CoreAgentMode } from "../../types/config";
+import { FILE_EDITOR_TOOL_NAMES } from "./file-editor";
 import {
 	DEFAULT_MODEL_TOOL_ROUTING_RULES,
 	resolveToolRoutingConfig,
@@ -76,7 +77,7 @@ const BASE_TOOL_CATALOG: readonly RuntimeToolCatalogEntry[] = [
 		id: "editor",
 		description:
 			"Make controlled filesystem edits on text files with create, replace, and insert operations.",
-		headlessToolNames: ["editor"],
+		headlessToolNames: [...FILE_EDITOR_TOOL_NAMES],
 	},
 	{
 		id: "web_pages",
@@ -257,7 +258,9 @@ function buildCatalogEntry(
 		return {
 			...entry,
 			defaultEnabled: isEntryEnabledByDefault(entry.id, context),
-			headlessToolNames: [usesApplyPatch ? "apply_patch" : "editor"],
+			headlessToolNames: usesApplyPatch
+				? ["apply_patch"]
+				: [...FILE_EDITOR_TOOL_NAMES],
 		};
 	}
 
