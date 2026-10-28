@@ -39,7 +39,7 @@ const TOOL_NAME_TO_FLAG: Record<
 		| "enableSearch"
 		| "enableBash"
 		| "enableProcessWait"
-		| "enableWebFetch"
+		| "enableWebPages"
 		| "enableApplyPatch"
 		| "enableEditor"
 		| "enableSkills"
@@ -51,7 +51,9 @@ const TOOL_NAME_TO_FLAG: Record<
 	search_codebase: "enableSearch",
 	run_commands: "enableBash",
 	wait_for_process: "enableProcessWait",
-	fetch_web_content: "enableWebFetch",
+	load_web_page: "enableWebPages",
+	search_web_page: "enableWebPages",
+	read_web_page_content: "enableWebPages",
 	apply_patch: "enableApplyPatch",
 	editor: "enableEditor",
 	skills: "enableSkills",

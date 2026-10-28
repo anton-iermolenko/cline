@@ -4482,3 +4482,33 @@ describe("persisted display-only errors", () => {
 		expect(rendered.some((message) => message.say === "completion_result" || message.ask === "completion_result")).toBe(false)
 	})
 })
+
+describe("bounded web tool translation", () => {
+	for (const [toolName, input, expectedPath] of [
+		["load_web_page", { url: "https://example.com/docs" }, "https://example.com/docs"],
+		["search_web_page", { document_id: "fixture-document", query: "authentication" }, "fixture-document: authentication"],
+		["read_web_page_content", { document_id: "fixture-document", start_line: 20 }, "fixture-document"],
+	] as const) {
+		it(`renders ${toolName} without a local filesystem path`, () => {
+			const result = translateSessionEvent(
+				{
+					type: "agent_event",
+					payload: {
+						sessionId: "fixture",
+						event: {
+							type: "content_start",
+							contentType: "tool",
+							toolName,
+							toolCallId: "fixture-call",
+							input,
+						} as AgentEvent,
+					},
+				},
+				new MessageTranslatorState(),
+			)
+			const tool = JSON.parse(result.messages[0].text!)
+			expect(tool.tool).toBe("webFetch")
+			expect(tool.path).toBe(expectedPath)
+		})
+	}
+})

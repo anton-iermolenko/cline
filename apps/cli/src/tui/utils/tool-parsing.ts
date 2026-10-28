@@ -164,6 +164,7 @@ export interface WebFetchInfo {
 
 export function parseWebFetchInput(input: unknown): WebFetchInfo | undefined {
 	if (!isRecord(input)) return undefined;
+	if (typeof input.url === "string") return { urls: [input.url] };
 	if (!Array.isArray(input.requests)) return undefined;
 	return {
 		urls: input.requests

@@ -866,7 +866,7 @@ export type HubToolExecutorName =
 	| "readFile"
 	| "search"
 	| "bash"
-	| "webFetch"
+	| "webPages"
 	| "editor"
 	| "applyPatch"
 	| "skills"
@@ -877,7 +877,7 @@ export const HUB_TOOL_EXECUTOR_NAMES = [
 	"readFile",
 	"search",
 	"bash",
-	"webFetch",
+	"webPages",
 	"editor",
 	"applyPatch",
 	"skills",

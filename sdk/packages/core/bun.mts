@@ -86,6 +86,21 @@ const builds: Parameters<typeof Bun.build>[0][] = [
 	},
 ];
 
+builds.push({
+	entrypoints: ["./src/extensions/tools/web-page-worker.ts"],
+	outdir: "./dist/extensions",
+	target: "node",
+	format: "esm",
+	naming: "[name].mjs",
+	// Bundled PDF dependencies use require for Node builtins in both Node and Bun workers.
+	banner:
+		'import { createRequire as __webCreateRequire } from "node:module"; const require = __webCreateRequire(import.meta.url);',
+	packages: "bundle",
+	external: [],
+	minify,
+	sourcemap,
+});
+
 for (const config of builds) {
 	const result = await Bun.build(config as Parameters<typeof Bun.build>[0]);
 

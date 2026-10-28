@@ -24,7 +24,6 @@ export {
 	createShellTool,
 	createSkillsTool,
 	createSubmitAndExitTool,
-	createWebFetchTool,
 } from "./definitions";
 // Built-in Executors
 export {
@@ -40,7 +39,6 @@ export {
 	createFileReadExecutor,
 	createSearchExecutor,
 	createShellExecutor,
-	createWebFetchExecutor,
 	type DefaultExecutorsOptions,
 	type EditorExecutorOptions,
 	type FileReadExecutorOptions,
@@ -51,7 +49,6 @@ export {
 	type RunningCommandRegistration,
 	type SearchExecutorOptions,
 	type ShellExecutorOptions,
-	type WebFetchExecutorOptions,
 } from "./executors/index";
 export {
 	MAX_COMMAND_OUTPUT_CHARS,
@@ -101,8 +98,6 @@ export {
 	AskQuestionInputSchema,
 	type EditFileInput,
 	EditFileInputSchema,
-	type FetchWebContentInput,
-	FetchWebContentInputSchema,
 	type ReadFileRequest,
 	ReadFileRequestSchema,
 	type ReadFilesInput,
@@ -117,8 +112,6 @@ export {
 	StructuredCommandInputSchema,
 	type SubmitInput,
 	SubmitInputSchema,
-	type WebFetchRequest,
-	WebFetchRequestSchema,
 } from "./schemas";
 export { TEAM_TOOL_NAMES } from "./team/team-tools";
 // Types
@@ -138,8 +131,16 @@ export type {
 	ToolExecutors,
 	ToolOperationResult,
 	VerifySubmitExecutor,
-	WebFetchExecutor,
 } from "./types";
+export {
+	createWebPageExecutor,
+	createWebPageTools,
+	LoadWebPageSchema,
+	ReadWebPageSchema,
+	SearchWebPageSchema,
+	type WebPageExecutor,
+	type WebPageOptions,
+} from "./web-pages";
 
 // =============================================================================
 // Convenience: Create Tools with Built-in Executors
@@ -186,7 +187,7 @@ export interface CreateBuiltinToolsOptions
  * const tools = createBuiltinTools({
  *   cwd: "/path/to/project",
  *   enableBash: true,
- *   enableWebFetch: false, // Disable web fetching
+ *   enableWebPages: false, // Disable web fetching
  *   executorOptions: {
  *     bash: { timeoutMs: 60000 },
  *   },
@@ -239,3 +240,14 @@ export function createBuiltinTools(
 		executors,
 	});
 }
+
+export type { WebPageAcquirer, WebPageSource } from "./web-pages";
+export {
+	createWebProviderPlugin,
+	readWebPageProvider,
+	readWebSearchProvider,
+	type WebProviderOptions,
+	type WebSearchInput,
+	WebSearchInputSchema,
+	type WebSearchResponse,
+} from "./web-provider";

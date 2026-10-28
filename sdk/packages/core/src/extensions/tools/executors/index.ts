@@ -8,6 +8,7 @@
 
 import { createProcessWaitExecutor } from "../process-wait";
 import type { ToolExecutors } from "../types";
+import { createWebPageExecutor, type WebPageOptions } from "../web-pages";
 import {
 	type ApplyPatchExecutorOptions,
 	createApplyPatchExecutor,
@@ -19,11 +20,8 @@ import {
 	type FileReadExecutorOptions,
 } from "./file-read";
 import { createSearchExecutor, type SearchExecutorOptions } from "./search";
-import {
-	createWebFetchExecutor,
-	type WebFetchExecutorOptions,
-} from "./web-fetch";
 
+export { createWebPageExecutor, type WebPageOptions } from "../web-pages";
 // Re-export individual executors and their options types
 export {
 	type ApplyPatchExecutorOptions,
@@ -49,10 +47,6 @@ export {
 	type RunningCommandRegistration,
 } from "./run-command-execution-controller";
 export { createSearchExecutor, type SearchExecutorOptions } from "./search";
-export {
-	createWebFetchExecutor,
-	type WebFetchExecutorOptions,
-} from "./web-fetch";
 
 /**
  * Options for creating default executors
@@ -61,7 +55,7 @@ export interface DefaultExecutorsOptions {
 	fileRead?: FileReadExecutorOptions;
 	search?: SearchExecutorOptions;
 	bash?: ShellExecutorOptions;
-	webFetch?: WebFetchExecutorOptions;
+	webPages?: WebPageOptions;
 	applyPatch?: ApplyPatchExecutorOptions;
 	editor?: EditorExecutorOptions;
 }
@@ -103,7 +97,7 @@ export function createDefaultExecutors(
 		search: createSearchExecutor(options.search),
 		bash: createDefaultShellExecutor(options.bash),
 		processWait: createProcessWaitExecutor(),
-		webFetch: createWebFetchExecutor(options.webFetch),
+		webPages: createWebPageExecutor(options.webPages),
 		applyPatch: createApplyPatchExecutor(options.applyPatch),
 		editor: createEditorExecutor(options.editor),
 	};

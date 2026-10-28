@@ -3,7 +3,9 @@ import type { ToolPolicy } from "@cline/core";
 const SAFE_AUTO_APPROVE_TOOL_NAMES = [
 	"ask_followup_question",
 	"ask_question",
-	"fetch_web_content",
+	"load_web_page",
+	"search_web_page",
+	"read_web_page_content",
 	"read_files",
 	"search_codebase",
 	"skills",

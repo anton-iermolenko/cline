@@ -50,6 +50,7 @@ import {
 import type { ConfiguredAgentConfig } from "../../extensions/tools/team/configured-agent-config";
 import { loadConfiguredAgentConfigs } from "../../extensions/tools/team/configured-agent-config";
 import { createConfiguredAgentTools } from "../../extensions/tools/team/configured-agent-tool";
+import { readWebSearchProvider } from "../../extensions/tools/web-provider";
 import {
 	filterDisabledTools,
 	isModelToolEnabledGlobally,
@@ -451,6 +452,7 @@ export class DefaultRuntimeBuilder implements RuntimeBuilder {
 			normalized.enableTools &&
 			normalized.mode !== "yolo" &&
 			isModelToolEnabledGlobally("web_search") &&
+			readWebSearchProvider() === "native" &&
 			supportsModelTool(
 				{ providerId: config.providerId, modelId: config.modelId },
 				"web_search",

@@ -814,6 +814,7 @@ function sdkToolToClineSayTool(toolName: string, input?: unknown): ClineSayTool 
 			}
 		}
 
+		case "load_web_page":
 		case "fetch_web_content":
 		case "web_fetch": {
 			// fetch_web_content carries { requests: [{ url, prompt }] };
@@ -839,6 +840,14 @@ function sdkToolToClineSayTool(toolName: string, input?: unknown): ClineSayTool 
 			return {
 				tool: "webSearch",
 				path: query,
+			}
+		}
+
+		case "search_web_page":
+		case "read_web_page_content": {
+			return {
+				tool: "webFetch",
+				path: `${getStringField(parsedInput, "document_id") ?? ""}${getStringField(parsedInput, "query") ? `: ${getStringField(parsedInput, "query")}` : ""}`,
 			}
 		}
 

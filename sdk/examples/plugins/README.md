@@ -67,8 +67,8 @@ cline -P openrouter -m anthropic/claude-sonnet-4.6 "Search the web for recent Bu
 ```
 
 The plugin registers `web_search`, which returns normalized search results from
-Exa. It is intentionally separate from `fetch_web_content`: use `web_search` to
-discover relevant URLs, then use `fetch_web_content` when the agent needs to
+Exa. It is intentionally separate from `load_web_page`: use `web_search` to
+discover relevant URLs, then use `load_web_page` when the agent needs to
 inspect a specific page. `EXA_API_KEY` only authenticates the search backend;
 the CLI still needs a normal model provider key or saved provider auth for
 inference.
@@ -217,3 +217,17 @@ Reach for `beforeModel` only when you need the runtime snapshot or want to mutat
 | `delete_background_command` | deletes saved job metadata, optionally deletes captured logs |
 
 When `notifyParent` is true (the default), the plugin emits a `steer_message` through the host bridge after the command exits, pushing a completion summary back into the active session — so the agent can react to long-running commands without blocking the original tool call.
+
+## Configurable web research
+
+Use `searxng-search.ts` for SearXNG or `web-search.ts` for Exa. Set
+`webSearchProvider` in Cline global settings to `searxng`, `exa`, or `native`.
+Only the selected, configured plugin registers the shared `web_search` name.
+SearXNG connection and engine settings live in `~/.cline/searxng.json`.
+Provider changes take effect in a new session.
+
+Both adapters use `createWebProviderPlugin`; custom providers may supply search
+and/or page-download callbacks. Core owns page extraction, file-backed caching,
+link navigation, passage search and selected reads. See
+[web research](../../../docs/sdk/web-research.mdx) for configuration, provider
+interfaces, limits and migration from the standalone MCP server.

@@ -1,0 +1,145 @@
+---
+title: "Web research"
+description: "Configure search providers and use bounded, file-backed page research."
+---
+
+Cline uses one `web_search` name. Configuration selects its backend; an external
+backend supplies the same public search schema. Native search continues to use
+the selected model provider's native search capability. It is never advertised
+alongside a plugin tool with the same name.
+
+Page research replaces `fetch_web_content` with three built-in tools shared by
+the CLI, VS Code extension and SDK:
+
+1. `load_web_page` downloads a public HTML/text page or PDF, saves the source and
+   extracted document outside context, and returns a document handle, headings,
+   source URL and file paths. Links remain navigable in extracted text.
+2. `search_web_page` finds ranked keyword passages or regular-expression
+   matches, returning line numbers, PDF page numbers and a continuation offset.
+3. `read_web_page_content` reads a selected line range, returning `next_line`
+   when more content remains. Load a link's URL to navigate to another page.
+
+The core owns validation, extraction, storage, provenance, expiration, eviction,
+searching and bounded reads. Providers supply only search results or page bytes.
+There is no Python runtime or separate web MCP server required for this workflow.
+
+## Select a search backend
+
+In Cline's shared `global-settings.json` (normally
+`~/.cline/data/settings/global-settings.json`), merge these fields into the existing
+settings. Preserve unrelated settings:
+
+```json
+{
+  "webSearchProvider": "searxng",
+  "webPageProvider": "http",
+  "tools": { "web_search": { "enabled": true } }
+}
+```
+
+`webSearchProvider` defaults to `native`. `webPageProvider` defaults to `http`.
+Search provider choices are independent of page-download provider choices.
+Start a new session after changing providers or installing a plugin so the tool
+catalog is rebuilt. Changes to SearXNG connection/engine settings are read on the
+next search call. Backend failures never automatically select a different provider.
+
+### SearXNG plugin
+
+Install the optional adapter from the source checkout:
+
+```sh
+cline plugin install ./sdk/examples/plugins/searxng-search.ts
+```
+
+Create `~/.cline/searxng.json`, or point `CLINE_SEARXNG_CONFIG` at another trusted
+local settings file:
+
+```json
+{
+  "baseUrl": "https://search.example.com/search",
+  "defaultEngines": ["google"],
+  "language": "en",
+  "safeSearch": 1
+}
+```
+
+Use the address and engine names configured on your own SearXNG service. A private
+SearXNG endpoint is allowed because it is explicitly configured by the host.
+Optional `headers` can hold connection authentication headers; they are never
+accepted from model tool arguments or forwarded to retrieved pages.
+
+The adapter registers `web_search` only when selected and configured. Missing or
+invalid connection settings register no search tool, and do not fall back to
+native search. SearXNG supports `query`, `limit`, `domains` and `language` from the
+shared schema; it rejects unsupported `country`/`recencyDays` filters rather than
+pretending to apply them. Engine and SafeSearch settings stay outside model input.
+
+### Exa plugin
+
+The existing `sdk/examples/plugins/web-search.ts` adapter remains supported.
+Install it, provide `EXA_API_KEY` to its host environment, and set
+`webSearchProvider` to `exa`. It registers the same `web_search` tool and preserves
+Exa domain, recency and country filters. It registers nothing when unselected or
+when its credential is missing. A normal model provider credential remains
+necessary for inference.
+
+### Native search
+
+Set `webSearchProvider` to `native`, enable `tools.web_search`, and use a model
+provider that supports native search. No external search plugin registers a tool
+in this configuration. Existing provider and mode restrictions still apply.
+
+## Add another provider
+
+Use the shared adapter factory instead of duplicating research tools:
+
+```ts
+import { createWebProviderPlugin } from "@cline/core";
+
+export default createWebProviderPlugin({
+  id: "my-provider",
+  isConfigured: () => Boolean(process.env.MY_WEB_ENDPOINT),
+  search: async (input, context) => {
+    // Call your configured search service, honoring context.signal.
+    return { results: [{ title: "Documentation", url: "https://example.com/docs" }] };
+  },
+  loadPage: async (url, context) => {
+    // Fetch bytes through your configured service, honoring context.signal.
+    const response = await fetch(url, { signal: context.signal });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return {
+      bytes: new Uint8Array(await response.arrayBuffer()),
+      url: response.url,
+      contentType: response.headers.get("content-type") ?? "text/plain"
+    };
+  }
+});
+```
+
+Set `webSearchProvider` and/or `webPageProvider` to that plugin's id. The selected
+page adapter exposes the same `load_web_page`; core extraction and saved-document
+search/read behavior remain the same. Page adapters must bound downloads, honor cancellation and validate/pin every
+redirect destination before contacting it. Core revalidates the requested and final public URLs, enforces
+size limits, and applies its common extraction and output budgets.
+
+## Limits and persistence
+
+Downloads are limited to 32 MiB. PDF extraction is text-only, limited to 2,000
+pages and ten million characters. Scans may have no extractable text. JavaScript
+rendering and browser sessions are not part of the built-in HTTP provider.
+
+Tool results are capped at 6,500 JSON characters, with normally 3,800 characters
+available for passages. Documents have source hashes and URLs, private cache
+permissions, a seven-day lifetime and a 250-document cap per workspace. The cache
+is under Cline's data settings directory and shared by clients using the same
+data directory and workspace. A restart can reopen an unexpired document handle.
+
+Public-page retrieval rejects private, local and reserved destinations, validates
+every redirect and pins the checked DNS address. Access-denied and verification
+challenge pages return structured failure guidance. Downloads, PDF extraction
+and regular expressions run with enforceable cancellation and deadlines.
+
+When migrating from the standalone `web` MCP server, disable its registration
+after enabling the built-in page tools and selected search provider to avoid
+offering duplicate workflows. Existing MCP document handles are not migrated.
+Old `fetch_web_content` transcript entries remain readable in the clients.

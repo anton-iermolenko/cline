@@ -1,4 +1,5 @@
 import { supportsModelTool } from "@cline/llms";
+import { isModelToolEnabledGlobally } from "../../services/global-settings";
 import type { CoreAgentMode } from "../../types/config";
 import {
 	DEFAULT_MODEL_TOOL_ROUTING_RULES,
@@ -8,6 +9,7 @@ import { resolveToolPresetName, ToolPresets } from "./presets";
 import { createSpawnAgentTool } from "./team/spawn-agent-tool";
 import { TEAM_TOOL_NAMES } from "./team/team-tools";
 import type { DefaultToolsConfig } from "./types";
+import { readWebSearchProvider } from "./web-provider";
 
 export interface ToolCatalogEntry {
 	id: string;
@@ -43,8 +45,7 @@ type RuntimeToolCatalogEntry = Omit<ToolCatalogEntry, "defaultEnabled">;
 const BASE_TOOL_CATALOG: readonly RuntimeToolCatalogEntry[] = [
 	{
 		id: "web_search",
-		description:
-			"Search the public web using the selected model provider's native search capability.",
+		description: "Search the public web using the configured provider.",
 		headlessToolNames: ["web_search"],
 	},
 	{
@@ -78,10 +79,14 @@ const BASE_TOOL_CATALOG: readonly RuntimeToolCatalogEntry[] = [
 		headlessToolNames: ["editor"],
 	},
 	{
-		id: "fetch_web_content",
+		id: "web_pages",
 		description:
-			"Fetch URL content and analyze it with a prompt describing what to extract.",
-		headlessToolNames: ["fetch_web_content"],
+			"Load public webpages and PDFs outside context, search passages, and read selected lines.",
+		headlessToolNames: [
+			"load_web_page",
+			"search_web_page",
+			"read_web_page_content",
+		],
 	},
 	{
 		id: "skills",
@@ -125,7 +130,7 @@ const TOOL_NAME_TO_FLAG: Partial<
 			| "enableSearch"
 			| "enableBash"
 			| "enableProcessWait"
-			| "enableWebFetch"
+			| "enableWebPages"
 			| "enableApplyPatch"
 			| "enableEditor"
 			| "enableSkills"
@@ -138,7 +143,7 @@ const TOOL_NAME_TO_FLAG: Partial<
 	search_codebase: "enableSearch",
 	run_commands: "enableBash",
 	wait_for_process: "enableProcessWait",
-	fetch_web_content: "enableWebFetch",
+	web_pages: "enableWebPages",
 	apply_patch: "enableApplyPatch",
 	editor: "enableEditor",
 	skills: "enableSkills",
@@ -157,7 +162,7 @@ type ResolvedToolFlags = Pick<
 	| "enableSearch"
 	| "enableBash"
 	| "enableProcessWait"
-	| "enableWebFetch"
+	| "enableWebPages"
 	| "enableApplyPatch"
 	| "enableEditor"
 	| "enableSkills"
@@ -216,7 +221,9 @@ function isEntryEnabledByDefault(
 		return false;
 	}
 	if (entryId === "web_search") {
-		return context.enabledModelToolIds?.has(entryId) === true;
+		return readWebSearchProvider() === "native"
+			? context.enabledModelToolIds?.has(entryId) === true
+			: isModelToolEnabledGlobally("web_search");
 	}
 
 	const { flags } = resolvePresetFlags(context);
@@ -268,6 +275,7 @@ export function getCoreBuiltinToolCatalog(
 			isCoreBuiltinToolAvailable(entry.id, context.clientType) &&
 			(entry.id !== "tasks" || resolveContextMode(context.mode) !== "yolo") &&
 			(entry.id !== "web_search" ||
+				readWebSearchProvider() !== "native" ||
 				supportsModelTool(
 					{ providerId: context.providerId ?? "", modelId: context.modelId },
 					"web_search",

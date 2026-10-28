@@ -1,4 +1,5 @@
 import {
+	copyFileSync,
 	existsSync,
 	mkdirSync,
 	readFileSync,
@@ -68,6 +69,11 @@ export async function buildPluginRuntime(): Promise<void> {
 		if (!result.success)
 			throw new AggregateError(result.logs, "Plugin runtime build failed");
 	mkdirSync(outdir, { recursive: true });
+	// The same runtime tree is copied into Node hosts and embedded in binaries.
+	copyFileSync(
+		resolve(import.meta.dir, "dist/extensions/web-page-worker.mjs"),
+		join(outdir, "web-page-worker.mjs"),
+	);
 	writeFileSync(
 		join(outdir, "package.json"),
 		JSON.stringify({
