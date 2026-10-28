@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="340" viewBox="0 0 1120 340" role="img" aria-labelledby="title description">
+  <title id="title">Cline / AI Local</title>
+  <desc id="description">A luminous processor and a measured context meter on a dark circuit board. Built for local GPUs.</desc>
+  <defs>
+    <linearGradient id="background" x2="1" y2="1"><stop stop-color="#101f32"/><stop offset="1" stop-color="#080e19"/></linearGradient>
+    <linearGradient id="accent" x2="1" y2="1"><stop stop-color="#7cf4d1"/><stop offset="1" stop-color="#64b8ff"/></linearGradient>
+    <linearGradient id="meter"><stop stop-color="#75edcb"/><stop offset="1" stop-color="#61b9ff"/></linearGradient>
+    <pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse"><path d="M28 0H0V28" fill="none" stroke="#a7d8f7" stroke-opacity=".045"/></pattern>
+  </defs>
+  <rect x="1" y="1" width="1118" height="338" rx="26" fill="url(#background)" stroke="#25405a" stroke-width="2"/>
+  <rect x="2" y="2" width="1116" height="336" rx="25" fill="url(#grid)"/>
+  <path d="M46 57H151L175 81H255M42 276H136L164 248H270M897 57H1049M1014 57V102H1078M922 277H1078" fill="none" stroke="#68cfd4" stroke-opacity=".22" stroke-width="2"/>
+  <g fill="#7cf4d1"><circle cx="46" cy="57" r="3"/><circle cx="42" cy="276" r="3"/><circle cx="1078" cy="102" r="3"/></g>
+  <g transform="translate(78 98)">
+    <path d="M30 0V-17M60 0V-17M90 0V-17M120 0V-17M30 142V159M60 142V159M90 142V159M120 142V159M0 26H-17M0 56H-17M0 86H-17M0 116H-17M150 26H167M150 56H167M150 86H167M150 116H167" stroke="#6598b0" stroke-width="5" stroke-linecap="round"/>
+    <rect width="150" height="142" rx="22" fill="#102b3b" stroke="url(#accent)" stroke-width="3"/>
+    <rect x="14" y="14" width="122" height="114" rx="13" fill="#0b1929" stroke="#284659"/>
+    <path d="M37 42L65 65L37 88" fill="none" stroke="url(#accent)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M82 88H112" stroke="#eef9ff" stroke-width="7" stroke-linecap="round"/>
+    <circle cx="116" cy="31" r="4" fill="#7cf4d1"/>
+  </g>
+  <text x="290" y="98" fill="#8faac1" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700" letter-spacing="4">YOUR GPU. YOUR MODELS.</text>
+  <text x="285" y="177" font-family="Arial, Helvetica, sans-serif" font-size="66" font-weight="700" letter-spacing="-2"><tspan fill="#f1f7ff">Cline</tspan><tspan dx="14" fill="#526f8b" font-weight="400">/</tspan><tspan dx="14" fill="url(#accent)">AI Local</tspan></text>
+  <text x="290" y="215" fill="#b1c3d6" font-family="Arial, Helvetica, sans-serif" font-size="20">More useful context. More room to think.</text>
+  <g transform="translate(291 253)">
+    <rect width="391" height="8" rx="4" fill="#1d344a"/>
+    <rect width="253" height="8" rx="4" fill="url(#meter)"/>
+    <path d="M267 -4V12" stroke="#f7cc8c" stroke-width="2"/>
+    <text x="407" y="9" fill="#8faac1" font-family="Arial, Helvetica, sans-serif" font-size="12" letter-spacing="2">MEASURED CONTEXT BUDGETS</text>
+  </g>
+</svg>
