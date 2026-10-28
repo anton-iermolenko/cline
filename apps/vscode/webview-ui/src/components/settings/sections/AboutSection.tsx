@@ -19,7 +19,7 @@ const AboutSection = ({ version, extensionVariant, renderSectionHeader }: AboutS
 			<Section>
 				<div className="flex px-4 flex-col gap-2">
 					<h2 className="text-lg font-semibold">
-						Cline v{version}
+						Cline / AI Local v{version}
 						{extensionVariant && (
 							<span className="ml-2 text-sm font-normal text-description">
 								({VARIANT_LABELS[extensionVariant]})
