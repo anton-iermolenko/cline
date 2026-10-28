@@ -4,8 +4,10 @@ Portable, opt-in setup material for this fork's CLI and VS Code extension.
 Checking out or building Cline does not install or activate anything here.
 
 - [`rules/`](rules/): the six global rule files in use when this kit was created.
-  Only personal home paths were generalized; wording and policy are otherwise
-  preserved. Built-in prompt overlaps and conflicts are deliberately left for
+  Personal paths and execution-environment assumptions were generalized for
+  use on hosts, in containers, virtual machines or subsystems, and on remote
+  systems. Other wording and policy are preserved. Built-in prompt overlaps
+  and conflicts are deliberately left for
   the later harmonization pass. These are instructions, not provider settings.
 - [`consult-expert/`](consult-expert/): the working stdio MCP implementation,
   regression tests, installation instructions and configuration templates.
