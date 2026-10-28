@@ -1,3 +1,5 @@
+import { refreshLocalModelDefaults } from "@cline/core"
+import { getProviderSettingsManager } from "@/sdk/provider-migration"
 import { toLegacyApiProvider } from "@/shared/model-catalog/provider-helpers"
 import { Empty } from "@/shared/proto/cline/common"
 import { CommitModelSelectionRequest } from "@/shared/proto/cline/models"
@@ -10,13 +12,24 @@ import {
 	toModelSelection,
 } from "./providerCatalogShared"
 
-export async function commitModelSelection(
+async function commitModelSelectionNow(
 	controller: ProviderCatalogController,
 	request: CommitModelSelectionRequest,
 ): Promise<Empty> {
 	const providerId = parseProviderIdRequest(request.providerId)
 	const mode = parseModeRequest(request.mode)
 	const selection = toModelSelection(request, providerId)
+	if (["vllm", "llamacpp"].includes(providerId.toString())) {
+		const manager = getProviderSettingsManager()
+		const config = manager.getProviderConfig(providerId.toString())
+		if (config) {
+			const beforeUrl = config.baseUrl
+			if (!manager.hasLocalModelProfile(providerId.toString(), selection.modelId))
+				await refreshLocalModelDefaults(config, selection.modelId)
+			if (manager.getProviderConfig(providerId.toString())?.baseUrl !== beforeUrl)
+				throw new Error("Provider URL changed during model selection; select again")
+		}
+	}
 	const previousApiConfiguration = hasProviderCatalogStateController(controller)
 		? controller.stateManager.getApiConfiguration?.()
 		: undefined
@@ -46,4 +59,21 @@ export async function commitModelSelection(
 	}
 
 	return Empty.create()
+}
+
+// Serialize model switches per controller. Slow discovery never reorders commits.
+const modelSwitches = new WeakMap<object, Promise<unknown>>()
+export async function commitModelSelection(
+	controller: ProviderCatalogController,
+	request: CommitModelSelectionRequest,
+): Promise<Empty> {
+	const pending = (modelSwitches.get(controller) ?? Promise.resolve())
+		.catch(() => {})
+		.then(() => commitModelSelectionNow(controller, request))
+	modelSwitches.set(controller, pending)
+	try {
+		return await pending
+	} finally {
+		if (modelSwitches.get(controller) === pending) modelSwitches.delete(controller)
+	}
 }

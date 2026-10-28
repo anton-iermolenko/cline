@@ -1,3 +1,4 @@
+import { LocalInferenceSettingsSchema } from "@cline/shared";
 import { z } from "zod";
 import {
 	type ProviderClient,
@@ -35,6 +36,10 @@ export interface StoredProviderModes {
 
 export interface StoredProviderSettingsEntry {
 	settings: ProviderSettings;
+	localModelProfiles?: Record<
+		string,
+		import("@cline/shared").LocalInferenceSettings
+	>;
 	updatedAt: string;
 	tokenSource: ProviderTokenSource;
 }
@@ -70,6 +75,9 @@ export const StoredProviderRepairsSchema: z.ZodType<StoredProviderRepairs> =
 export const StoredProviderSettingsEntrySchema: z.ZodType<StoredProviderSettingsEntry> =
 	z.object({
 		settings: ProviderSettingsSchema,
+		localModelProfiles: z
+			.record(z.string(), LocalInferenceSettingsSchema)
+			.optional(),
 		updatedAt: z.string().datetime(),
 		tokenSource: z.enum(["manual", "oauth", "migration"]).default("manual"),
 	});

@@ -8,6 +8,7 @@ import { BaseUrlField } from "../common/BaseUrlField"
 import { ModelInfoView } from "../common/ModelInfoView"
 import ReasoningEffortSelector from "../ReasoningEffortSelector"
 import { useProviderApiKeyField } from "../utils/useProviderApiKeyField"
+import { LocalInferenceSettingsForm } from "./LocalInferenceSettingsForm"
 import { type ModelPickerSelection, ModelPickerWithManualEntry } from "./ModelPickerWithManualEntry"
 
 interface GenericProviderBaseUrlFieldConfig {
@@ -106,19 +107,23 @@ export const GenericProviderSettings = ({
 						selectedModel={selectedModel}
 					/>
 
-					{selectedModel.modelInfo.supportsReasoning === true && (
-						<ReasoningEffortSelector
-							currentMode={currentMode}
-							onEffortChange={(effort) => {
-								void write({
-									reasoning: {
-										enabled: effort !== "none",
-										effort: effort !== "none" ? effort : undefined,
-									},
-								}).catch((err) => console.error(`Failed to update ${providerName} reasoning effort:`, err))
-							}}
-						/>
+					{["vllm", "llamacpp"].includes(providerId.toString()) && (
+						<LocalInferenceSettingsForm config={config} selectedModelId={selectedModel.modelId} write={write} />
 					)}
+					{!["vllm", "llamacpp"].includes(providerId.toString()) &&
+						selectedModel.modelInfo.supportsReasoning === true && (
+							<ReasoningEffortSelector
+								currentMode={currentMode}
+								onEffortChange={(effort) => {
+									void write({
+										reasoning: {
+											enabled: effort !== "none",
+											effort: effort !== "none" ? effort : undefined,
+										},
+									}).catch((err) => console.error(`Failed to update ${providerName} reasoning effort:`, err))
+								}}
+							/>
+						)}
 
 					<ModelInfoView
 						isPopup={isPopup}

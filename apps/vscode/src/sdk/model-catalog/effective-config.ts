@@ -1,3 +1,4 @@
+import { localModelProfileKey } from "@cline/core"
 import type { ApiConfiguration } from "@shared/api"
 import { StateManager } from "@/core/storage/StateManager"
 import { getProviderSettingsManager } from "../provider-migration"
@@ -11,6 +12,9 @@ type ConfigParts = Omit<EffectiveProviderConfig, "providerId">
 type ConfigKey = keyof ConfigParts
 
 type ProviderSettingsLike = {
+	readonly localInference?: import("@cline/shared").LocalInferenceSettings
+	readonly localInferenceModelId?: string
+	readonly localInferenceScope?: string
 	readonly apiKey?: string
 	readonly baseUrl?: string
 	readonly apiLine?: string
@@ -208,6 +212,11 @@ function readProviderSettings(providerId: ProviderId): ConfigParts {
 
 		return {
 			apiKey: readString(settings, "apiKey"),
+			localInference: settings.localInference as import("@cline/shared").LocalInferenceSettings | undefined,
+			localInferenceModelId: readString(settings, "model"),
+			localInferenceScope: ["vllm", "llamacpp"].includes(providerId.toString())
+				? localModelProfileKey(readString(settings, "baseUrl"), readString(settings, "model") ?? "")
+				: undefined,
 			baseUrl: readString(settings, "baseUrl"),
 			apiLine: readString(settings, "apiLine"),
 			headers: readHeaders(settings, "headers"),
@@ -381,7 +390,11 @@ function assignIfDefined<T extends ConfigKey>(target: Partial<ConfigParts>, key:
 export function buildEffectiveProviderConfig(providerId: ProviderId): EffectiveProviderConfig {
 	const providerSettings = readProviderSettings(providerId)
 	const stateConfig = readStateConfig(providerId, StateManager.get().getApiConfiguration())
-	const merged: Partial<ConfigParts> = {}
+	const merged: Partial<ConfigParts> = {
+		localInference: providerSettings.localInference,
+		localInferenceModelId: providerSettings.localInferenceModelId,
+		localInferenceScope: providerSettings.localInferenceScope,
+	}
 
 	assignIfDefined(merged, "apiKey", stateConfig.apiKey ?? providerSettings.apiKey)
 	assignIfDefined(merged, "baseUrl", stateConfig.baseUrl ?? providerSettings.baseUrl)

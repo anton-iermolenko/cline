@@ -14,11 +14,11 @@ export function estimateTokens(chars: number): number {
 /**
  * Flat per-image token cost used in place of the char-based estimate for an
  * image block's base64 payload. Real vision-model costs depend on pixel
- * dimensions, not encoded byte size, and top out around ~1.6k tokens even
- * for a large image; this sits comfortably above typical per-image cost
- * without scaling with the base64 string length.
+ * dimensions, not encoded byte size, and vary with each backend processor.
+ * The fallback reserves 2,048 tokens per image independently of payload length;
+ * this is an estimate rather than a universal image-token ceiling.
  */
-export const ESTIMATED_TOKENS_PER_IMAGE = 1_600;
+export const ESTIMATED_TOKENS_PER_IMAGE = 2_048;
 
 export interface TokenEstimatedRequest {
 	systemPrompt?: string;

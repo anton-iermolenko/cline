@@ -292,7 +292,7 @@ describe("normalizeSdkBaseUrl", () => {
 
 describe("resolveProviderFetch", () => {
 	it("gives local model servers the idle-timeout-free fetch", () => {
-		for (const providerId of ["lmstudio", "ollama", "openai-compatible", "litellm"]) {
+		for (const providerId of ["lmstudio", "ollama", "openai-compatible", "litellm", "vllm", "llamacpp"]) {
 			expect(resolveProviderFetch(providerId, undefined)).toBe(netModule.fetchWithoutIdleTimeouts)
 		}
 		for (const baseUrl of [

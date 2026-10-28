@@ -308,7 +308,11 @@ export async function runAgenticCompaction(options: {
 	const summaryInfo =
 		summarizerProviderConfig.modelInfo ??
 		summarizerProviderConfig.knownModels?.[summarizerProviderConfig.modelId];
-	if (typeof summaryInfo?.metadata?.inputTokenCountUrl === "string") {
+	if (
+		typeof summaryInfo?.metadata?.inputTokenCountUrl === "string" ||
+		(["vllm", "llamacpp"].includes(summarizerProviderConfig.providerId) &&
+			summarizerProviderConfig.localInference?.inputTokenCounting !== false)
+	) {
 		const folded = messagesToSummarize.filter(
 			(message) => message !== protectedPrompt,
 		);

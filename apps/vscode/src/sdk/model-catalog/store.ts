@@ -1,5 +1,7 @@
 import {
+	getLocalModelDefaults,
 	isPrivateModelCatalogProvider,
+	localModelProfileKey,
 	type ProviderTokenSource,
 	readModelsFileSync,
 	resolveModelsRegistryPath,
@@ -614,6 +616,18 @@ function patchTouchesCredentials(patch: ProviderConfigPatch): boolean {
 function writeProviderSettingsFields(providerId: ProviderId, patch: ProviderConfigPatch): void {
 	const existing = getProviderSettings(providerId)
 	const next: ProviderSettingsRecord = { ...existing }
+	if (patch.localInference !== undefined) {
+		if (!["vllm", "llamacpp"].includes(providerId.toString()))
+			throw new Error("Native model controls require a local provider")
+		if (!patch.localInferenceModelId || patch.localInferenceModelId !== existing.model)
+			throw new Error("Selected model changed; reload its configuration before saving")
+		if (patch.localInferenceScope !== localModelProfileKey(existing.baseUrl as string | undefined, existing.model as string))
+			throw new Error("Provider URL changed; reload its configuration before saving")
+		next.localInference = {
+			...getLocalModelDefaults(existing.baseUrl as string | undefined, existing.model as string, providerId.toString()),
+			...patch.localInference,
+		}
+	}
 
 	for (const key of ["apiKey", "baseUrl", "apiLine", "headers", "region", "auth", "extras"] as const) {
 		if (key in patch) {
@@ -751,12 +765,15 @@ function writeSelectionToProviderSettings(providerId: ProviderId, selection: Mod
 	// Prune model metadata that earlier builds may have written to
 	// providers.json — except for Ollama, whose contextWindow is a real
 	// user setting (maps to num_ctx) written by the settings UI.
-	if (providerKey(providerId) !== "ollama") {
+	if (!["ollama", "vllm", "llamacpp"].includes(providerKey(providerId))) {
 		delete next.contextWindow
 	}
 	delete next.maxTokens
 
-	saveProviderSettings(providerId, next)
+	getProviderSettingsManager().saveProviderSettings(
+		{ ...next, provider: providerSettingsProviderId(providerId) },
+		{ setLastUsed: ["vllm", "llamacpp"].includes(providerId.toString()) },
+	)
 }
 
 type MutableModelSelectionOverrides = { -readonly [Key in keyof ModelSelectionOverrides]: ModelSelectionOverrides[Key] }

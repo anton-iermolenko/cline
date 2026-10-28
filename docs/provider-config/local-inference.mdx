@@ -1,0 +1,49 @@
+---
+title: "vLLM and llama.cpp"
+description: "Native local providers, model settings and input counting shared by VS Code and CLI."
+---
+
+Choose **vLLM** (`vllm`) or **llama.cpp** (`llamacpp`) and enter the server's
+OpenAI-compatible base URL and optional API key. Model discovery runs when the
+connection changes. Both direct servers and a router preserving the selected
+provider's native API are supported. Provider selection is manual.
+
+Select a model in VS Code to activate its settings. A switch saves the outgoing
+model profile and restores the target's saved profile. On first selection,
+reported server metadata initializes the profile; unknown settings remain unset.
+Set maximum output tokens before use. Context, output, thinking, sampling,
+capabilities and compaction controls are saved separately for each provider,
+server and model. Clearing a control restores a reported default where available.
+Discovery reads catalog metadata and already-loaded model properties; it does not
+load every model to fill a settings page.
+
+The shared settings manager persists the active provider/model in
+`settings/providers.json`. A new CLI process using the same Cline data directory
+reads that active configuration. VS Code applies changes through its queued
+session rebuild path once the current run is idle. Model selection leaves
+backend weight loading to the next request. This replaces the separate
+`cline-model` workflow; no helper invocation or extension reload is needed.
+
+Native providers declare their preflight counting APIs: vLLM uses `/tokenize`;
+llama.cpp uses `/v1/chat/completions/input_tokens` on versions exposing that
+full-chat endpoint. The same request codec handles inference and counting,
+including tools, template settings, reasoning history and image processing.
+A declared counter failure stops the request; it never silently uses estimates.
+A server-declared `input_token_counting: false` initializes a configuration
+without counting. These configurations retain Cline's conservative estimated
+budget and 90% compaction trigger, with **2,048 tokens per image**. Generic
+OpenAI-compatible providers without counting retain that estimated path too.
+
+Total output includes reasoning tokens. It is reserved once against total
+context; measured compaction buffers are additional proactive headroom. The
+native setting for an exact thinking budget is `thinking_token_budget` on vLLM
+and `reasoning_budget_tokens` on llama.cpp. Model/template effort values can
+differ; leave unknown values at server default or configure supported values.
+
+The native path has no slow-response watchdog, continuous-usage request injection
+or notification delivery. Normal final input/output/cache usage remains intact.
+
+The feature does not change installed clients, disable an existing adapter, or
+remove the old helper automatically. Switch deployment and migrate existing
+profiles only after validating the feature build. Historical model-specific
+values stored by the adapter are not inferred as universal server defaults.

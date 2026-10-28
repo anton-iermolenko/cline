@@ -1,3 +1,4 @@
+import { LocalInferenceSettingsSchema } from "@cline/shared"
 import type { ApiConfiguration, ModelInfo } from "@shared/api"
 import { filterChatModelMap, resolveChatModelDefault } from "@/sdk/model-catalog/chat-models"
 import type {
@@ -242,6 +243,9 @@ export function toRedactedProviderConfigResponse(
 		aws: toRedactedAwsProviderConfigProto(config.aws),
 		gcp: toRedactedGcpProviderConfigProto(config.gcp),
 		contextWindow: config.contextWindow,
+		localInferenceJson: config.localInference ? JSON.stringify(config.localInference) : undefined,
+		localInferenceModelId: config.localInferenceModelId,
+		localInferenceScope: config.localInferenceScope,
 	})
 }
 
@@ -250,6 +254,21 @@ export function toProviderConfigPatch(protoPatch: WriteProviderConfigPatch | und
 		throw new Error("patch is required")
 	}
 	return {
+		...(protoPatch.localInferenceJson !== undefined
+			? {
+					localInference: LocalInferenceSettingsSchema.parse(
+						JSON.parse(
+							protoPatch.localInferenceJson.length <= 16384
+								? protoPatch.localInferenceJson
+								: (() => {
+										throw new Error("Model configuration is too large")
+									})(),
+						),
+					),
+					localInferenceModelId: protoPatch.localInferenceModelId,
+					localInferenceScope: protoPatch.localInferenceScope,
+				}
+			: {}),
 		...(protoPatch.apiKey !== undefined ? { apiKey: protoPatch.apiKey } : {}),
 		...(protoPatch.baseUrl !== undefined ? { baseUrl: protoPatch.baseUrl } : {}),
 		...(protoPatch.clearHeaders

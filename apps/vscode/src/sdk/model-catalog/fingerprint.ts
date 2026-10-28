@@ -173,6 +173,7 @@ export function computeConfigFingerprint(providerId: ProviderId, config: Effecti
 		// The context window is not a secret; include it raw so changes
 		// invalidate cached model lists.
 		contextWindow: config.contextWindow ?? null,
+		localInference: sanitizeExtrasValue(config.localInference),
 		extras: sanitizeExtras(config.extras),
 		auth: {
 			accountId: config.auth?.accountId ?? null,

@@ -206,7 +206,7 @@ async function resolveSdkModels(
 	const sdkProviderId = toSdkProviderId(providerId)
 	const resolved = await resolveProviderConfig(
 		sdkProviderId,
-		DEFAULT_MODEL_CATALOG_CONFIG,
+		{ ...DEFAULT_MODEL_CATALOG_CONFIG, ...(["vllm", "llamacpp"].includes(sdkProviderId) ? { failOnError: true } : {}) },
 		toSdkProviderConfig(config, selection),
 	)
 	const sdkModels = resolved?.knownModels ?? {}

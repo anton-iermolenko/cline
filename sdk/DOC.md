@@ -485,3 +485,21 @@ response envelope, including custom tool-name transforms. Readiness and explicit
 snapshots pass through. Routine expert progress is collected for the requested
 interval; questions and terminal states return immediately. Cancellation reaches
 the MCP request. Expert state normalization is internal to validation.
+
+
+## Native local inference profiles
+
+The `vllm` and `llamacpp` builtins share OpenAI-compatible chat transport and
+encode native model controls in the final serialized request. Their preflight
+counters normalize native responses into `RequestInputTokenCount`; failures of
+declared counting remain errors. Unmeasured requests use the shared image-aware
+estimator, reserving 2,048 tokens per image.
+
+`ProviderSettingsManager` retains one active `localInference` configuration per
+provider and saves model profiles scoped to provider/server/model. Connection
+credentials stay outside those profiles. Model selection saves/restores profiles
+atomically with the active selection. VS Code edits carry a server/model scope
+guard and queue session rebuilds; CLI consumes the same stored active settings.
+Native profiles carry model-specific compaction policy so a prior model's global
+limits do not leak into a newly selected model. See the local-inference provider
+guide for UI and endpoint contracts.

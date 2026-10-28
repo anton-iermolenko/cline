@@ -64,6 +64,7 @@ import {
 	filterExtensionToolRegistrations,
 	resolveDisabledAgentPluginNames,
 } from "./global-settings";
+import { localInferenceModelInfo } from "./providers/local-inference-discovery";
 import { hasRuntimeHooks, mergeAgentExtensions } from "./session-data";
 import type { ProviderSettingsManager } from "./storage/provider-settings-manager";
 import { captureDetachedHookRuntime } from "./telemetry/core-events";
@@ -194,6 +195,12 @@ function buildProviderConfig(
 	defaultFetch?: typeof fetch,
 ): ProviderConfig {
 	const stored = providerSettingsManager.getProviderSettings(config.providerId);
+	const nativeSettings = ["vllm", "llamacpp"].includes(config.providerId)
+		? providerSettingsManager.getLocalModelSettings(
+				config.providerId,
+				config.modelId,
+			)
+		: undefined;
 	const modelCatalog =
 		modelCatalogDefaults || stored?.modelCatalog
 			? {
@@ -236,6 +243,7 @@ function buildProviderConfig(
 	});
 	const settings: ProviderSettings = {
 		...(stored ?? {}),
+		localInference: nativeSettings,
 		provider: config.providerId,
 		model: config.modelId,
 		apiKey: config.apiKey ?? stored?.apiKey,
@@ -247,6 +255,14 @@ function buildProviderConfig(
 	const providerConfig: ProviderConfig = {
 		...toProviderConfig(settings),
 		...(sessionProviderConfig ?? {}),
+		...(["vllm", "llamacpp"].includes(config.providerId)
+			? {
+					localInference:
+						(sessionProviderConfig?.modelId === config.modelId
+							? sessionProviderConfig.localInference
+							: undefined) ?? nativeSettings,
+				}
+			: {}),
 	};
 	if (resolvedHeaders) {
 		providerConfig.headers = resolvedHeaders;
@@ -263,6 +279,21 @@ function buildProviderConfig(
 	const resolvedFetch = sessionFetch ?? providerConfig.fetch ?? defaultFetch;
 	if (resolvedFetch) {
 		providerConfig.fetch = resolvedFetch;
+	}
+	if (["vllm", "llamacpp"].includes(config.providerId)) {
+		const local = providerConfig.localInference ?? {};
+		providerConfig.modelId = config.modelId;
+		providerConfig.maxOutputTokens = local.maxOutputTokens;
+		providerConfig.maxInputTokens = local.maxInputTokens;
+		const previous = providerConfig.knownModels?.[config.modelId];
+		providerConfig.knownModels = {
+			...providerConfig.knownModels,
+			[config.modelId]: localInferenceModelInfo(
+				config.modelId,
+				local,
+				previous,
+			),
+		};
 	}
 	return providerConfig;
 }
@@ -590,6 +621,21 @@ export async function prepareLocalRuntimeBootstrap(
 	const config: CoreSessionConfig = {
 		...baseConfig,
 		providerConfig,
+		...(["vllm", "llamacpp"].includes(baseConfig.providerId)
+			? {
+					maxTokensPerTurn: providerConfig.localInference?.maxOutputTokens,
+					temperature: providerConfig.localInference?.temperature,
+					thinking: providerConfig.localInference?.thinking,
+					thinkingBudgetTokens:
+						providerConfig.localInference?.thinkingBudgetTokens,
+					reasoningEffort: undefined,
+					compaction: {
+						enabled: baseConfig.compaction?.enabled,
+						strategy: baseConfig.compaction?.strategy,
+						...providerConfig.localInference?.compaction,
+					},
+				}
+			: {}),
 		workspaceMetadata,
 		systemPrompt: resolveBootstrapSystemPrompt(
 			baseConfig,

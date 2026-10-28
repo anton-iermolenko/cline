@@ -28,6 +28,8 @@ export enum BUILT_IN_PROVIDER {
 	// Local/self-hosted
 	OLLAMA = "ollama",
 	LMSTUDIO = "lmstudio",
+	VLLM = "vllm",
+	LLAMACPP = "llamacpp",
 	// OpenAI-compatible
 	DEEPSEEK = "deepseek",
 	XAI = "xai",

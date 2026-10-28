@@ -34,7 +34,6 @@ import type {
 import type { ProviderConfig } from "../../types/provider-settings";
 import { runAgenticCompaction } from "./agentic-compaction";
 import { runBasicCompaction } from "./basic-compaction";
-import { createMeasuredImageTokenEstimator } from "./image-token-accounting";
 import {
 	COMPACTION_TRIGGER_RATIO,
 	createTokenEstimator,
@@ -45,6 +44,7 @@ import {
 	MAX_INPUT_UNDERESTIMATE_FACTOR,
 	resolveEffectiveMaxInputTokens,
 } from "./compaction-shared";
+import { createMeasuredImageTokenEstimator } from "./image-token-accounting";
 
 export interface ContextPipelinePrepareTurnInput {
 	agentId: string;
@@ -300,6 +300,11 @@ export function createContextCompactionPrepareTurn(
 	| undefined {
 	const userCompaction: CoreCompactionConfig = {
 		...config.compaction,
+		...(
+			config.providerConfig as
+				| { localInference?: import("@cline/shared").LocalInferenceSettings }
+				| undefined
+		)?.localInference?.compaction,
 		...options.compaction,
 	};
 	if (userCompaction.enabled !== true) {
@@ -322,7 +327,10 @@ export function createContextCompactionPrepareTurn(
 			: mode;
 		const countRequest =
 			context.countRequestInputTokens ??
-			(typeof context.model.info?.metadata?.inputTokenCountUrl !== "string"
+			(typeof context.model.info?.metadata?.inputTokenCountUrl !== "string" &&
+			!["vllm", "llamacpp"].includes(
+				context.model.provider ?? config.providerId ?? "",
+			)
 				? async () => undefined
 				: async (
 						messages: CoreCompactionContext["messages"],

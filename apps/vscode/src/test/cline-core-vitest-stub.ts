@@ -549,4 +549,9 @@ export async function loginOpenAICodex(): Promise<OAuthCredentials> {
 	return {}
 }
 
+export {
+	getLocalModelDefaults,
+	localModelProfileKey,
+	refreshLocalModelDefaults,
+} from "../../../../sdk/packages/core/src/services/providers/local-inference-discovery"
 export { resolveMessageDisplayRole } from "../../../../sdk/packages/core/src/session/user-run-messages"

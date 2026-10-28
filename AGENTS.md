@@ -36,6 +36,8 @@ A Tauri v2 (Rust) shell + Next.js webview + a Bun "sidecar" backend. Rust and th
 
 ## Local integration workflow
 
+Use `feature/` for features and `fix/` for repairs. Do not create `codex/` branches.
+
 `local-main` is the shared integration branch for both the CLI and the VS Code extension. The primary checkout stays on this branch. Keep individual fixes as branches in this repository; use temporary worktrees to develop and verify new changes, then merge the reviewed fix into `local-main` and remove the worktree after preserving its work.
 
 Build both clients from the refreshed primary `local-main` checkout and the same committed SDK source. Build caches and installed release directories are artifacts, never independent source checkouts. Record the source commit with build artifacts and deploy only verified builds after integration.

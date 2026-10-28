@@ -44,6 +44,7 @@ function buildGatewayProviderOptions(
 		apiLine: config.apiLine,
 		openRouterProviderSorting: config.openRouterProviderSorting,
 		modelCatalog: config.modelCatalog,
+		localInference: config.localInference,
 	};
 
 	if (usesOpenAICompatibleClient(config)) {
@@ -180,6 +181,7 @@ function toGatewayConfiguredModel(
 		capabilities: toGatewayModelCapabilities(model.capabilities),
 		reasoningOptions: model.reasoningOptions,
 		metadata: {
+			...model.metadata,
 			...(typeof model.metadata?.inputTokenCountUrl === "string"
 				? { inputTokenCountUrl: model.metadata.inputTokenCountUrl }
 				: {}),

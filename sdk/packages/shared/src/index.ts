@@ -160,6 +160,13 @@ export {
 } from "./llms/ai-sdk-format";
 export * from "./llms/gateway";
 export {
+	type LocalInferenceEngine,
+	type LocalInferenceSettings,
+	LocalInferenceSettingsSchema,
+	localInferenceEngine,
+	localInferenceUrl,
+} from "./llms/local-inference";
+export {
 	type Base64MediaValidationFailure,
 	type Base64MediaValidationResult,
 	type Base64MediaValidationSuccess,

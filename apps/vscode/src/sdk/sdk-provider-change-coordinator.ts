@@ -62,6 +62,10 @@ export class SdkProviderChangeCoordinator {
 		this.options.rebuilds.request("provider", () => this.restartActiveSessionForProviderChange())
 	}
 
+	handleNativeProviderSettingsChanged(): void {
+		this.options.rebuilds.request("provider", () => this.restartActiveSessionForProviderChange())
+	}
+
 	async restartActiveSessionForProviderChange(): Promise<void> {
 		await this.performRestartActiveSessionForProviderChange()
 	}

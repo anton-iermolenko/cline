@@ -754,7 +754,7 @@ export function resolveOllamaProviderConfig(config: ApiConfiguration, modelId: s
  * proxy-aware fetch: on VS Code it honours `http.proxy`, which
  * `fetchWithoutIdleTimeouts` cannot, and it keeps the dead-connection cap.
  */
-const LOCAL_SERVER_PROVIDERS = new Set(["lmstudio", "ollama", "openai-compatible", "litellm"])
+const LOCAL_SERVER_PROVIDERS = new Set(["lmstudio", "ollama", "openai-compatible", "litellm", "vllm", "llamacpp"])
 
 const LOCAL_NETWORK_ADDRESSES = new BlockList()
 for (const [address, prefix] of [
@@ -1144,7 +1144,14 @@ export async function buildSessionConfig(input: SessionConfigInput): Promise<Cor
 	// proxy/self-signed CA setups fail on JetBrains and CLI. Cloud providers
 	// additionally need structured options (region/project/auth/SAP OAuth), which core
 	// reads from providerConfig in createAgentModelFromConfig.
-	const cloudProviderConfig = bedrockProviderConfig ?? vertexProviderConfig ?? sapProviderConfig ?? ollamaProviderConfig
+	const nativeProviderConfig = ["vllm", "llamacpp"].includes(sdkProviderId)
+		? getProviderSettingsManager(resolveDataDir()).getProviderConfig(sdkProviderId)
+		: undefined
+	const nativeSettings = nativeProviderConfig
+		? getProviderSettingsManager(resolveDataDir()).getLocalModelSettings(sdkProviderId, modelId)
+		: undefined
+	const cloudProviderConfig =
+		nativeProviderConfig ?? bedrockProviderConfig ?? vertexProviderConfig ?? sapProviderConfig ?? ollamaProviderConfig
 	// Spread the cloud config first so the explicit fields below — notably the
 	// proxy/CA-aware fetch — can never be clobbered if those types gain matching keys.
 	const providerConfig = {
@@ -1199,6 +1206,23 @@ export async function buildSessionConfig(input: SessionConfigInput): Promise<Cor
 		...reasoningConfig,
 		...(maxTokensPerTurn !== undefined ? { maxTokensPerTurn } : {}),
 		...(temperature !== undefined ? { temperature } : {}),
+		...(["vllm", "llamacpp"].includes(sdkProviderId)
+			? {
+					maxTokensPerTurn: nativeSettings?.maxOutputTokens,
+					temperature: nativeSettings?.temperature,
+					thinking: nativeSettings?.thinking,
+					thinkingBudgetTokens: nativeSettings?.thinkingBudgetTokens,
+					reasoningEffort: undefined,
+					providerConfig: {
+						...providerConfig,
+						localInference: nativeSettings,
+						maxOutputTokens: nativeSettings?.maxOutputTokens,
+					},
+					...(useAutoCondense
+						? { compaction: { ...nativeSettings?.compaction, enabled: true, strategy: compactionStrategy } }
+						: {}),
+				}
+			: {}),
 		maxIterations: undefined,
 		logger: sdkLogger,
 		extensionContext: {

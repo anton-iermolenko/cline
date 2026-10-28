@@ -1126,6 +1126,12 @@ export type {
 	RegisterProviderInput,
 } from "./services/llms/runtime-types";
 export {
+	discoverLocalInferenceModels,
+	getLocalModelDefaults,
+	localModelProfileKey,
+	refreshLocalModelDefaults,
+} from "./services/providers/local-inference-discovery";
+export {
 	TelemetryService,
 	type TelemetryServiceOptions,
 } from "./services/telemetry/TelemetryService";
