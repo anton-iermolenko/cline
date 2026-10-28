@@ -1,6 +1,6 @@
 import type { LocalInferenceSettings } from "@cline/shared"
 import type { ProviderConfigResponse } from "@shared/proto/cline/models"
-import { useEffect, useState } from "react"
+import { useEffect, useId, useState } from "react"
 
 const numericFields = [
 	["contextWindow", "Total context tokens"],
@@ -16,7 +16,7 @@ const numericFields = [
 	["frequencyPenalty", "Frequency penalty"],
 ] as const
 const compactionFields = [
-	["bufferTokens", "Compaction buffer tokens"],
+	["bufferTokens", "Context safety margin (tokens)"],
 	["targetTokens", "Compaction target tokens"],
 	["maxTargetTokens", "Maximum compaction target tokens"],
 	["preserveRecentTokens", "Recent tokens to preserve"],
@@ -34,6 +34,7 @@ export function LocalInferenceSettingsForm({
 	const [settings, setSettings] = useState<LocalInferenceSettings>({})
 	const [error, setError] = useState<string>()
 	const [saving, setSaving] = useState(false)
+	const safetyMarginHelpId = useId()
 	useEffect(() => {
 		setSettings(config?.localInferenceJson ? (JSON.parse(config.localInferenceJson) as LocalInferenceSettings) : {})
 		setError(undefined)
@@ -59,6 +60,7 @@ export function LocalInferenceSettingsForm({
 		<label key={key} style={{ display: "grid", gap: 4, marginBottom: 10 }}>
 			{label}
 			<input
+				aria-describedby={compaction && key === "bufferTokens" ? safetyMarginHelpId : undefined}
 				aria-label={label}
 				disabled={disabled}
 				onBlur={() => void save(settings)}
@@ -81,6 +83,11 @@ export function LocalInferenceSettingsForm({
 				type="number"
 				value={value ?? ""}
 			/>
+			{compaction && key === "bufferTokens" && (
+				<span id={safetyMarginHelpId} style={{ color: "var(--vscode-descriptionForeground)", fontSize: 12 }}>
+					Extra room below the input limit before compaction starts. Output tokens are reserved separately.
+				</span>
+			)}
 		</label>
 	)
 	return (
