@@ -34,6 +34,16 @@ root dependency changes. These workflows build and test without publishing.
 Qlty coverage uploads are restricted to the upstream repository because forks
 do not have its service token. Test coverage artifacts remain available on GitHub.
 
+The test workflows share the `ci-quiet-period` GitHub environment. Configure its
+**Wait timer** in repository **Settings > Environments** to choose the quiet
+period in whole minutes; zero removes the delay. GitHub holds each workflow's
+initial job before assigning a runner, and downstream build/test jobs wait on
+that initial job. Both independent desktop test jobs use the same wait timer.
+No deployment record is created. New runs cancel older runs of the same workflow
+on the same branch or PR, restarting the wait for the new run. Manual and reusable
+test runs also respect this environment. Configure the environment in each fork;
+its timer is a repository setting, not stored in Git.
+
 Disable all publishing workflows (including `ext-vscode-ab-package` and any
 older `ui-publish` entry) and `ext-jb-test-integration` in the fork's GitHub
 Actions settings. Retain the upstream workflow files for future merges; disabling

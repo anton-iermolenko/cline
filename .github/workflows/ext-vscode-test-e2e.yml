@@ -19,6 +19,9 @@ permissions:
 
 jobs:
     detect-changes:
+        environment:
+            name: ci-quiet-period
+            deployment: false
         runs-on: ubuntu-latest
         name: Detect Changes
         outputs:
