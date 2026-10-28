@@ -1,6 +1,6 @@
 {
   "version": "2026.10.1",
   "displayName": "Cline / AI Local",
-  "repository": "https://github.com/anton-iermolenko/cline",
+  "repository": "https://github.com/anton-iermolenko/cline-ai-local",
   "description": "Built for local GPUs, with precise token budgeting, improved context compaction, focused web research, and native model controls."
 }
