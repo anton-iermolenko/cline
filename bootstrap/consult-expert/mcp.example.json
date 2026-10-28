@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "consult-expert": {
+      "command": "/absolute/path/to/venv/bin/consult-expert-mcp",
+      "args": [],
+      "disabled": false
+    }
+  }
+}

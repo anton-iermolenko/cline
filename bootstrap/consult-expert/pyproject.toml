@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "consult-expert-mcp"
+version = "2.1.0"
+description = "Cline expert consultation through ChatGPT-authenticated Codex"
+requires-python = ">=3.11"
+dependencies = ["mcp==1.30.0", "jsonschema>=4.20,<5"]
+
+[project.scripts]
+consult-expert-mcp = "consult_expert.server:main"
+consult-expert-auth = "consult_expert.auth:main"
+consult-expert-supervisor = "consult_expert.daemon:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
