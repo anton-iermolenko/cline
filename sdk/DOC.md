@@ -561,6 +561,9 @@ Legacy local
 `maxTargetTokens`/`preserveRecentTokens` fields do not override this policy.
 `disabledOverrides` projects server/calculated defaults without deleting saved
 override numbers; `serverDefaults` retains the context/output discovery baseline.
+Native local requests with `supportsReasoning: false` omit thinking budgets and
+reasoning effort, including saved or pre-serialized values; stored controls remain
+recoverable. The settings form hides those controls for unsupported models.
 See [local-provider settings](../docs/provider-config/local-inference.mdx).
 
 

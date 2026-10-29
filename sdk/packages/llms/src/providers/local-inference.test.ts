@@ -80,6 +80,42 @@ describe("native local inference", () => {
 		});
 		expect(llama).not.toHaveProperty("thinking_token_budget");
 	});
+	it.each([
+		"vllm",
+		"llama.cpp",
+	] as const)("omits unsupported reasoning controls on %s without changing stored settings", (engine) => {
+		const stored = {
+			...settings,
+			supportsReasoning: false,
+			reasoningEffort: "high",
+			thinkingBudgetTokens: 25,
+		};
+		const original = JSON.stringify(stored);
+		const serialized = {
+			...body,
+			reasoning_effort: "high",
+			thinking_token_budget: 25,
+			reasoning_budget_tokens: 25,
+			chat_template_kwargs: {
+				enable_thinking: true,
+				reasoning_effort: "high",
+				custom_option: "keep",
+			},
+		};
+		const normalized = normalizeLocalInferenceRequest(
+			serialized,
+			engine,
+			stored,
+		);
+		expect(normalized).not.toHaveProperty("reasoning_effort");
+		expect(normalized).not.toHaveProperty("thinking_token_budget");
+		expect(normalized).not.toHaveProperty("reasoning_budget_tokens");
+		expect(normalized.chat_template_kwargs).toEqual({ custom_option: "keep" });
+		expect(JSON.stringify(stored)).toBe(original);
+		expect(serialized.chat_template_kwargs.enable_thinking).toBe(true);
+		expect(normalized.messages).toBe(body.messages);
+		expect(normalized.tools).toBe(body.tools);
+	});
 	it("uses native multimodal tokenization and preserves proxy mount paths and auth", async () => {
 		const fetcher = vi.fn(async (url, init) => {
 			expect(String(url)).toBe("http://server/mount/tokenize");

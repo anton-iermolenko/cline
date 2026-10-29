@@ -15,12 +15,17 @@ Verify maximum context and normal output before use. Context, output, thinking, 
 capabilities and compaction controls are saved separately for each provider,
 server and model. Clearing a control restores a reported default where available.
 The main settings are **Maximum context size**, **Normal output (including
-thinking)**, **Compaction target**, and **Summarized history**. Each has an override
-switch; server/calculated defaults are grey italic, and explicit overrides use
-normal text. Switching an override off retains its saved value for re-enabling,
-including across model switches. Clearing an editable value explicitly returns
-to its default. Sampling, penalties, normal-turn thinking and the counting margin
-are under **Advanced settings**.
+thinking)**, **Compaction target**, and **Compaction: Summarized History Budget**.
+All numeric controls are editable directly. Server/calculated defaults are grey
+italic; editing a value creates an override in normal text. Clearing a value
+returns to its default. Clearing a budget keeps its previous number inactive in
+storage for recoverability, including across model switches. Sampling, penalties,
+normal-turn thinking and **Counting margin** are under **Advanced settings**.
+
+Setting **Reasoning support** to **Unsupported** hides the thinking, thinking-budget
+and reasoning-effort controls. Their saved values remain intact, but native
+requests omit reasoning parameters while support is disabled. Tool-calling
+capability remains discovery metadata; it has no toggle in this form.
 
 Maximum context must be reported by discovery or entered by the user. A missing
 capacity rejects model-control saves and native requests; live native counting

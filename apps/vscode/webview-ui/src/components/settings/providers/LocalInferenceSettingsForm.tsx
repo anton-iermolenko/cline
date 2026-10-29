@@ -111,10 +111,12 @@ export function LocalInferenceSettingsForm({
 	const [settings, setSettings] = useState<LocalInferenceSettings>({})
 	const [error, setError] = useState<string>()
 	const [saving, setSaving] = useState(false)
+	const [fieldDrafts, setFieldDrafts] = useState<Partial<Record<LocalInferenceOverrideField, string>>>({})
 	// biome-ignore lint/correctness/useExhaustiveDependencies: Reset drafts/errors on server/model changes even if JSON is identical.
 	useEffect(() => {
 		setSettings(config?.localInferenceJson ? JSON.parse(config.localInferenceJson) : {})
 		setError(undefined)
+		setFieldDrafts({})
 	}, [config?.localInferenceJson, config?.localInferenceModelId, config?.localInferenceScope])
 	const disabled = saving || !config?.localInferenceModelId || config.localInferenceModelId !== selectedModelId
 	const effective = resolveLocalInferenceSettings(settings)
@@ -129,6 +131,7 @@ export function LocalInferenceSettingsForm({
 	try {
 		budget = resolveLocalModelBudget(settings)
 		if (
+			effective.supportsReasoning !== false &&
 			effective.thinking !== false &&
 			effective.thinkingBudgetTokens &&
 			effective.thinkingBudgetTokens >= budget.maxOutputTokens
@@ -156,29 +159,47 @@ export function LocalInferenceSettingsForm({
 	}
 	const mark = (next: LocalInferenceSettings, key: LocalInferenceOverrideField, enabled = true): LocalInferenceSettings => {
 		const fields = new Set(editedFields)
-		const inactive = new Set(settings.disabledOverrides ?? [])
+		const inactive = new Set(next.disabledOverrides ?? [])
 		if (enabled) {
 			fields.add(key)
 			inactive.delete(key)
 		} else fields.delete(key)
 		return { ...next, userOverrides: [...fields], disabledOverrides: [...inactive] }
 	}
-	const numeric = (key: LocalInferenceOverrideField, label: string, value: number | undefined, locked = false) => {
-		const custom = !locked && active(key)
+	const commitField = (key: LocalInferenceOverrideField) => {
+		if (fieldDrafts[key] === undefined) return
+		setFieldDrafts((drafts) => {
+			const next = { ...drafts }
+			delete next[key]
+			return next
+		})
+		void save(settings)
+	}
+	const numeric = (key: LocalInferenceOverrideField, label: string, value: number | undefined) => {
+		const custom = active(key)
 		return (
 			<label key={key} style={{ display: "grid", gap: 4, alignContent: "start", minWidth: 0 }}>
 				<input
 					aria-label={label}
-					disabled={disabled || locked}
-					onBlur={() => void save(settings)}
+					disabled={disabled}
+					onBlur={() => commitField(key)}
 					onChange={(event) => {
-						const value = event.target.value === "" ? undefined : Number(event.target.value)
-						const next = key.startsWith("compaction.")
-							? { ...settings, compaction: { ...settings.compaction, [key.slice(11)]: value } }
-							: { ...settings, [key]: value }
+						const text = event.target.value
+						setFieldDrafts((drafts) => ({ ...drafts, [key]: text }))
+						const value = text === "" ? undefined : Number(text)
+						const restoreDefault =
+							value === undefined &&
+							(key === "contextWindow" || key === "maxOutputTokens" || key.startsWith("compaction."))
+						// Clearing a budget restores its default while retaining the old
+						// number in storage; the next explicit edit activates its new value.
+						const next = restoreDefault
+							? { ...settings, disabledOverrides: [...new Set([...(settings.disabledOverrides ?? []), key])] }
+							: key.startsWith("compaction.")
+								? { ...settings, compaction: { ...settings.compaction, [key.slice(11)]: value } }
+								: { ...settings, [key]: value }
 						setSettings(mark(next, key, value !== undefined))
 					}}
-					placeholder="Required / server default unknown"
+					placeholder={key === "contextWindow" ? "Required" : "Server default"}
 					step={samplingFields.some(([field]) => field === key) ? "any" : "1"}
 					style={{
 						...inputStyle,
@@ -186,54 +207,13 @@ export function LocalInferenceSettingsForm({
 						fontStyle: custom ? "normal" : "italic",
 					}}
 					type="number"
-					value={value ?? ""}
+					value={fieldDrafts[key] ?? value ?? ""}
 				/>
 				<span>{label}</span>
 			</label>
 		)
 	}
-	const overrideField = (
-		key:
-			| "contextWindow"
-			| "maxOutputTokens"
-			| "compaction.targetTokens"
-			| "compaction.summaryTokens"
-			| "compaction.bufferTokens",
-		label: string,
-		value: number | undefined,
-		toggleLabel: string,
-	) => {
-		const required = key === "contextWindow" && !settings.serverDefaults?.contextWindow
-		const checked = active(key) || required
-		return (
-			<div key={key}>
-				<label style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
-					<input
-						aria-label={toggleLabel}
-						checked={checked}
-						disabled={disabled || required}
-						onChange={(event) => {
-							const enabled = event.target.checked
-							let next = { ...settings }
-							if (enabled) {
-								if (key !== "contextWindow" && key !== "maxOutputTokens") {
-									const field = key.slice(11) as keyof NonNullable<LocalInferenceSettings["compaction"]>
-									next.compaction = { ...settings.compaction, [field]: settings.compaction?.[field] ?? value }
-								} else next[key] = settings[key] ?? value
-								next = mark(next, key)
-							} else next.disabledOverrides = [...new Set([...(settings.disabledOverrides ?? []), key])]
-							setSettings(next)
-							void save(next)
-						}}
-						type="checkbox"
-					/>
-					<span>{required ? "Manual value required" : "Override"}</span>
-				</label>
-				{numeric(key, label, value, !checked)}
-			</div>
-		)
-	}
-	const select = (key: "supportsVision" | "supportsTools" | "supportsReasoning" | "thinking", label: string) => (
+	const select = (key: "supportsVision" | "supportsReasoning" | "thinking", label: string) => (
 		<label key={key} style={{ display: "grid", gap: 4 }}>
 			<select
 				aria-label={label}
@@ -263,84 +243,73 @@ export function LocalInferenceSettingsForm({
 	return (
 		<fieldset disabled={disabled} style={{ border: "none", padding: 0, marginTop: 16, minWidth: 0 }}>
 			<legend style={{ fontWeight: 600 }}>Model context & compaction</legend>
-			<p style={hint}>
-				Grey italic: server/calculated defaults. Normal: your overrides. Switching an override off preserves its saved
-				number for later.
-			</p>
+			<p style={hint}>Grey italic: server/calculated defaults. Normal: your overrides. Clear a value to use its default.</p>
 			<div style={grid}>
-				{overrideField(
-					"contextWindow",
-					"Maximum context size (tokens)",
-					effective.contextWindow,
-					"Override maximum context size",
-				)}
-				{overrideField(
-					"maxOutputTokens",
-					"Normal output tokens (including thinking)",
-					effective.maxOutputTokens,
-					"Override normal output",
-				)}
-				{overrideField(
+				{numeric("contextWindow", "Maximum context size (tokens)", effective.contextWindow)}
+				{numeric("maxOutputTokens", "Normal output tokens (including thinking)", effective.maxOutputTokens)}
+				{numeric(
 					"compaction.targetTokens",
 					"Compaction target tokens",
 					effective.compaction?.targetTokens ?? budget?.targetTokens,
-					"Override compaction target",
 				)}
-				{overrideField(
+				{numeric(
 					"compaction.summaryTokens",
-					"Summarized history tokens",
+					"Compaction: Summarized History Budget",
 					effective.compaction?.summaryTokens ?? budget?.summaryTokens,
-					"Override summarized history",
 				)}
 			</div>
 			{budget && <ContextBreakdown budget={budget} />}
 			<details style={{ marginTop: 16 }}>
 				<summary style={{ cursor: "pointer", fontWeight: 600 }}>Advanced settings</summary>
-				<h4>Thinking for normal conversation</h4>
-				<div style={grid}>
-					{select("thinking", "Thinking")}
-					{numeric("thinkingBudgetTokens", "Thinking token budget", effective.thinkingBudgetTokens)}
-					<label style={{ display: "grid", gap: 4 }}>
-						<input
-							aria-label="Reasoning effort"
-							disabled={disabled}
-							onBlur={() => void save(settings)}
-							onChange={(event) =>
-								setSettings(
-									mark(
-										{ ...settings, reasoningEffort: event.target.value || undefined },
-										"reasoningEffort",
-										!!event.target.value,
-									),
-								)
-							}
-							placeholder="Server default / unknown"
-							style={{
-								...inputStyle,
-								fontStyle: active("reasoningEffort") ? "normal" : "italic",
-								color: active("reasoningEffort")
-									? "var(--vscode-input-foreground)"
-									: "var(--vscode-descriptionForeground)",
-							}}
-							value={effective.reasoningEffort ?? ""}
-						/>
-						<span>Reasoning effort</span>
-					</label>
-				</div>
-				<p style={hint}>Thinking consumes part of normal output. Compaction summaries request thinking off.</p>
+				{effective.supportsReasoning !== false && (
+					<>
+						<h4>Thinking for normal conversation</h4>
+						<div style={grid}>
+							{select("thinking", "Thinking")}
+							{numeric("thinkingBudgetTokens", "Thinking token budget", effective.thinkingBudgetTokens)}
+							<label style={{ display: "grid", gap: 4 }}>
+								<input
+									aria-label="Reasoning effort"
+									disabled={disabled}
+									onBlur={() => commitField("reasoningEffort")}
+									onChange={(event) => {
+										const value = event.target.value
+										setFieldDrafts((drafts) => ({ ...drafts, reasoningEffort: value }))
+										setSettings(
+											mark(
+												{ ...settings, reasoningEffort: value || undefined },
+												"reasoningEffort",
+												!!value,
+											),
+										)
+									}}
+									placeholder="Server default"
+									style={{
+										...inputStyle,
+										fontStyle: active("reasoningEffort") ? "normal" : "italic",
+										color: active("reasoningEffort")
+											? "var(--vscode-input-foreground)"
+											: "var(--vscode-descriptionForeground)",
+									}}
+									value={effective.reasoningEffort ?? ""}
+								/>
+								<span>Reasoning effort</span>
+							</label>
+						</div>
+						<p style={hint}>Thinking consumes part of normal output. Compaction summaries request thinking off.</p>
+					</>
+				)}
 				<h4>Counting margin</h4>
-				{overrideField(
+				{numeric(
 					"compaction.bufferTokens",
 					"Counting margin (tokens)",
 					effective.compaction?.bufferTokens ?? DEFAULT_COMPACTION_BUFFER_TOKENS,
-					"Override counting margin",
 				)}
 				<h4>Sampling & penalties</h4>
 				<div style={grid}>{samplingFields.map(([key, label]) => numeric(key, label, effective[key]))}</div>
-				<h4>Model capabilities</h4>
+				<h4 style={{ marginTop: 32 }}>Model capabilities</h4>
 				<div style={grid}>
 					{select("supportsVision", "Image inputs")}
-					{select("supportsTools", "Tool calling")}
 					{select("supportsReasoning", "Reasoning support")}
 				</div>
 			</details>

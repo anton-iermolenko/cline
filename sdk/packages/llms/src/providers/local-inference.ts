@@ -46,37 +46,47 @@ export function normalizeLocalInferenceRequest(
 	if (typeof supplied === "number")
 		out.max_tokens = Math.min(supplied, settings.maxOutputTokens ?? supplied);
 	delete out.max_completion_tokens;
-	const effort = settings.reasoningEffort ?? out.reasoning_effort;
-	const enabled =
-		settings.thinking ??
-		(effort === "none" || settings.thinkingBudgetTokens === 0
-			? false
-			: undefined);
-	if (enabled !== undefined) kwargs.enable_thinking = enabled;
-	if (effort !== undefined) {
-		out.reasoning_effort = enabled === false ? "none" : effort;
-		// vLLM merges this field during chat inference; tokenize has no top-level effort.
-		kwargs.reasoning_effort = out.reasoning_effort;
-	}
-	if (enabled === false) {
-		out.reasoning_effort = "none";
-		kwargs.reasoning_effort = "none";
-	}
-	if (settings.thinkingBudgetTokens !== undefined || enabled === false) {
-		const budget = enabled === false ? 0 : settings.thinkingBudgetTokens!;
-		if (
-			typeof out.max_tokens === "number" &&
-			budget >= out.max_tokens &&
-			budget > 0
-		)
-			throw new Error(
-				"Thinking budget must leave room within the total output allowance",
-			);
-		out[
-			engine === "vllm" ? "thinking_token_budget" : "reasoning_budget_tokens"
-		] = budget;
+	if (settings.supportsReasoning === false) {
+		// Keep stored controls recoverable without sending unsupported parameters.
+		delete out.reasoning_effort;
+		delete out.thinking_token_budget;
+		delete out.reasoning_budget_tokens;
+		delete kwargs.enable_thinking;
+		delete kwargs.reasoning_effort;
+	} else {
+		const effort = settings.reasoningEffort ?? out.reasoning_effort;
+		const enabled =
+			settings.thinking ??
+			(effort === "none" || settings.thinkingBudgetTokens === 0
+				? false
+				: undefined);
+		if (enabled !== undefined) kwargs.enable_thinking = enabled;
+		if (effort !== undefined) {
+			out.reasoning_effort = enabled === false ? "none" : effort;
+			// vLLM merges this field during chat inference; tokenize has no top-level effort.
+			kwargs.reasoning_effort = out.reasoning_effort;
+		}
+		if (enabled === false) {
+			out.reasoning_effort = "none";
+			kwargs.reasoning_effort = "none";
+		}
+		if (settings.thinkingBudgetTokens !== undefined || enabled === false) {
+			const budget = enabled === false ? 0 : settings.thinkingBudgetTokens!;
+			if (
+				typeof out.max_tokens === "number" &&
+				budget >= out.max_tokens &&
+				budget > 0
+			)
+				throw new Error(
+					"Thinking budget must leave room within the total output allowance",
+				);
+			out[
+				engine === "vllm" ? "thinking_token_budget" : "reasoning_budget_tokens"
+			] = budget;
+		}
 	}
 	if (Object.keys(kwargs).length) out.chat_template_kwargs = kwargs;
+	else delete out.chat_template_kwargs;
 	if (engine === "vllm" && Array.isArray(out.tools) && out.tools.length === 0) {
 		if (out.tool_choice && out.tool_choice !== "none")
 			throw new Error("Tool choice requires nonempty tools");
