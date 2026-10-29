@@ -3490,7 +3490,7 @@ describe("createContextCompactionPrepareTurn", () => {
 		expect(result).toBeUndefined();
 	});
 
-	it("targets basic compaction at half the input budget for long conversations", async () => {
+	it("uses the plateau target independent of long conversation length", async () => {
 		const compact = vi.fn((_context: CoreCompactionContext) => ({
 			messages: [
 				{ role: "user" as const, content: "Compacted by target budget" },
@@ -3544,14 +3544,14 @@ describe("createContextCompactionPrepareTurn", () => {
 		expect(compact).toHaveBeenCalledTimes(1);
 		const context = compact.mock.calls[0]?.[0];
 		expect(context?.budget.request.triggerTokens).toBe(244_800);
-		expect(context?.budget.request.targetTokens).toBe(136_000);
+		expect(context?.budget.request.targetTokens).toBe(86_000);
 		expect(context?.budget.messages.targetTokens).toBe(
 			(context?.budget.request.targetTokens ?? 0) -
 				(context?.budget.request.overheadTokens ?? 0),
 		);
 	});
 
-	it("keeps the long-conversation target below the fixed trigger", async () => {
+	it("clamps the capacity-based target below a tiny trigger", async () => {
 		const compact = vi.fn((_context: CoreCompactionContext) => ({
 			messages: [
 				{ role: "user" as const, content: "Compacted by low threshold" },
@@ -3609,7 +3609,7 @@ describe("createContextCompactionPrepareTurn", () => {
 		expect(compact).toHaveBeenCalledTimes(1);
 		const context = compact.mock.calls[0]?.[0];
 		expect(context?.budget.request.triggerTokens).toBe(90);
-		expect(context?.budget.request.targetTokens).toBe(50);
+		expect(context?.budget.request.targetTokens).toBe(89);
 		expect(context?.budget.messages.targetTokens).toBe(
 			Math.max(
 				1,
@@ -4080,7 +4080,7 @@ describe("createContextCompactionPrepareTurn", () => {
 				providerId: "anthropic",
 				modelId: "small-model",
 			} as LlmsProviders.ProviderConfig,
-			compaction: { enabled: true, strategy: "agentic" },
+			compaction: { enabled: true, strategy: "agentic", targetTokens: 1260 },
 			logger: undefined,
 		});
 
@@ -5050,5 +5050,106 @@ describe("automatic compaction no-result recovery", () => {
 		await expect(
 			prepare([{ role: "user", content: "x".repeat(30000) }]),
 		).rejects.toThrow("Compaction cannot fit");
+	});
+});
+
+describe("independent local summary allocation", () => {
+	it("uses the dedicated summary cap and disables native thinking without changing normal output", () => {
+		const active = {
+			providerId: "vllm",
+			modelId: "fixture",
+			maxOutputTokens: 8000,
+			localInference: {
+				contextWindow: 150000,
+				maxOutputTokens: 8000,
+				thinking: true,
+				thinkingBudgetTokens: 2000,
+				disabledOverrides: ["maxOutputTokens" as const],
+				serverDefaults: { contextWindow: 150000, maxOutputTokens: 8000 },
+			},
+		};
+		const summary = resolveSummarizerConfig({
+			activeProviderConfig: active,
+			summaryTokens: 14000,
+		});
+		expect(summary.maxOutputTokens).toBe(14000);
+		expect(summary.localInference).toMatchObject({
+			maxOutputTokens: 14000,
+			thinking: false,
+			thinkingBudgetTokens: 0,
+			reasoningEffort: "none",
+		});
+		expect(summary.localInference?.disabledOverrides).not.toContain(
+			"maxOutputTokens",
+		);
+		expect(active.localInference.maxOutputTokens).toBe(8000);
+		expect(active.localInference.thinking).toBe(true);
+	});
+	it.each([
+		130000, 141900,
+	])("checks a measured result of %i against the derived local hard cap", async (afterTokens) => {
+		const messages: MessageWithMetadata[] = [
+			{
+				role: "user",
+				content: "Keep this exact instruction",
+				metadata: { humanInput: true },
+			},
+			{ role: "assistant", content: "evidence ".repeat(10000) },
+		];
+		const compact = vi.fn((context: CoreCompactionContext) => {
+			expect(context.budget.request).toMatchObject({
+				targetTokens: 64000,
+				summaryTokens: 14000,
+				hardCapTokens: 141871,
+			});
+			return {
+				messages: [
+					messages[0],
+					{ role: "assistant" as const, content: "Semantic checkpoint" },
+				],
+			};
+		});
+		const prepare = createContextCompactionPrepareTurn({
+			providerId: "vllm",
+			modelId: "fixture",
+			providerConfig: {
+				providerId: "vllm",
+				modelId: "fixture",
+				maxOutputTokens: 8000,
+				localInference: { contextWindow: 150000, maxOutputTokens: 8000 },
+			},
+			compaction: { enabled: true, compact, strategy: "agentic" },
+		});
+		let calls = 0;
+		const run = prepare!({
+			agentId: "fixture",
+			conversationId: "fixture",
+			parentAgentId: null,
+			iteration: 1,
+			messages,
+			apiMessages: messages,
+			abortSignal: new AbortController().signal,
+			systemPrompt: "Rules",
+			tools: [],
+			model: {
+				id: "fixture",
+				provider: "vllm",
+				info: { id: "fixture", contextWindow: 150000, maxTokens: 8000 },
+			},
+			countRequestInputTokens: async () => ({
+				inputTokens: calls++ === 0 ? 141950 : afterTokens,
+				source: "tokenized",
+				fingerprint: "fixture",
+				budgetRevision: "fixture",
+				contextWindow: 150000,
+				maxInputTokens: 141999,
+				maxOutputTokens: 8000,
+				compactionBufferTokens: 128,
+				serverBoundaryTokens: 1,
+			}),
+		});
+		if (afterTokens === 130000)
+			expect((await run)?.messages).toContain(messages[0]);
+		else await expect(run).rejects.toThrow("Original context was preserved");
 	});
 });

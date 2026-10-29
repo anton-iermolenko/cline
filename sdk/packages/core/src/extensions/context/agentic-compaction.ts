@@ -183,11 +183,13 @@ export async function runAgenticCompaction(options: {
 	const summarizerProviderConfig = resolveSummarizerConfig({
 		activeProviderConfig: options.providerConfig,
 		summarizer: options.summarizer,
+		summaryTokens: options.context.budget.request.summaryTokens,
 	});
 	// Retain history toward the preferred full-request size, rather than a
 	// fixed 20K suffix. The caller has removed request overhead and clamped
 	// this message budget to the configured maximum and live input allowance.
 	const summaryReserveTokens =
+		options.context.budget.request.summaryTokens ??
 		summarizerProviderConfig.maxOutputTokens ??
 		DEFAULT_SUMMARY_MAX_OUTPUT_TOKENS;
 	let preserveRecentTokens = Math.max(

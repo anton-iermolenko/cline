@@ -68,6 +68,7 @@ export const GlobalSettingsSchema = z
 			.object({
 				maxTargetTokens: z.number().int().positive().optional(),
 				targetTokens: z.number().int().positive().optional(),
+				summaryTokens: z.number().int().positive().optional(),
 			})
 			.refine(
 				(budget) =>

@@ -2,6 +2,8 @@ import * as Llms from "@cline/llms";
 import {
 	LocalInferenceSettingsSchema,
 	ReasoningLevelSchema,
+	resolveLocalInferenceInputTokens,
+	resolveLocalInferenceSettings,
 } from "@cline/shared";
 import { z } from "zod";
 import {
@@ -249,8 +251,11 @@ export function toProviderConfig(
 				: undefined))
 		: undefined;
 
+	const local = settings.localInference
+		? resolveLocalInferenceSettings(settings.localInference)
+		: undefined;
 	const config: ProviderConfig = {
-		localInference: settings.localInference,
+		localInference: local,
 		providerId,
 		clientType: settings.client,
 		routingProviderId,
@@ -267,16 +272,19 @@ export function toProviderConfig(
 		baseUrl: resolvedBaseUrl,
 		headers: settings.headers,
 		timeoutMs: settings.timeout,
-		maxOutputTokens:
-			settings.localInference?.maxOutputTokens ?? settings.maxTokens,
-		maxInputTokens:
-			settings.localInference?.maxInputTokens ?? settings.contextWindow,
-		thinking: settings.localInference?.thinking ?? settings.reasoning?.enabled,
+		maxOutputTokens: local?.maxOutputTokens ?? settings.maxTokens,
+		maxInputTokens: local
+			? resolveLocalInferenceInputTokens({
+					contextWindow: local.contextWindow,
+					maxOutputTokens: local.maxOutputTokens,
+					nativeCounting: local.inputTokenCounting !== false,
+				})
+			: settings.contextWindow,
+		thinking: local?.thinking ?? settings.reasoning?.enabled,
 		reasoningEffort,
 		thinkingBudgetTokens:
-			settings.localInference?.thinkingBudgetTokens ??
-			settings.reasoning?.budgetTokens,
-		temperature: settings.localInference?.temperature,
+			local?.thinkingBudgetTokens ?? settings.reasoning?.budgetTokens,
+		temperature: local?.temperature,
 		region: settings.region ?? settings.aws?.region ?? settings.gcp?.region,
 		apiLine: settings.apiLine,
 		useCrossRegionInference: settings.aws?.useCrossRegionInference,

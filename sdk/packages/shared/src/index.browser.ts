@@ -137,13 +137,18 @@ export {
 	localInferenceEngine,
 	localInferenceUrl,
 	localInferenceUserOverrides,
+	resolveLocalInferenceSettings,
 } from "./llms/local-inference";
 export {
 	COMPACTION_TRIGGER_RATIO,
 	DEFAULT_COMPACTION_BUFFER_TOKENS,
-	DEFAULT_TARGET_RATIO,
+	DEFAULT_LOCAL_OUTPUT_TOKENS,
+	ESTIMATED_INSTRUCTION_TOKENS,
+	type LocalModelBudget,
 	resolveAutoCompactionTargetTokens,
+	resolveCompactionDefaults,
 	resolveLocalInferenceInputTokens,
+	resolveLocalModelBudget,
 } from "./llms/local-model-budget";
 export {
 	type Base64MediaValidationFailure,

@@ -220,7 +220,11 @@ function readProviderSettings(providerId: ProviderId): ConfigParts {
 		return {
 			apiKey: readString(settings, "apiKey"),
 			localInference: localInference
-				? { ...localInference, userOverrides: localInferenceUserOverrides(localInference, localDefaults) }
+				? {
+						...localInference,
+						serverDefaults: localDefaults?.serverDefaults ?? localInference.serverDefaults,
+						userOverrides: localInferenceUserOverrides(localInference, localDefaults),
+					}
 				: undefined,
 			localInferenceModelId: readString(settings, "model"),
 			localInferenceScope: ["vllm", "llamacpp"].includes(providerId.toString())

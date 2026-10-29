@@ -141,6 +141,17 @@ describe("native local model profiles", () => {
 			maxOutputTokens: 7000,
 			temperature: 0.6,
 		});
+		store.saveProviderSettings({
+			provider: "vllm",
+			baseUrl: config.baseUrl,
+			model: "discovered",
+			localInference: {},
+		});
+		expect(store.getProviderConfig("vllm")?.localInference).toMatchObject({
+			contextWindow: 153600,
+			maxOutputTokens: 7000,
+		});
+		expect(store.getProviderSettings("vllm")?.localInference).toEqual({});
 		expect(fetcher).toHaveBeenCalledTimes(1);
 		expect(String(fetcher.mock.calls[0]?.[0])).toBe(
 			"http://discovery/v1/models",

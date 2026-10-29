@@ -1252,12 +1252,54 @@ describe("native local model settings", () => {
 		const { createProviderConfigStore } = await import("./store")
 		const store = createProviderConfigStore()
 		store.write(parseProviderId("vllm"), {
-			localInference: { maxOutputTokens: 6000 },
+			localInference: { contextWindow: 150000, maxOutputTokens: 6000 },
 			localInferenceModelId: "A",
 			localInferenceScope: JSON.stringify(["http://fixture/v1", "A"]),
 		})
-		expect(mocks.getSavedProviderSettings("vllm")?.localInference).toEqual({ maxOutputTokens: 6000 })
+		expect(mocks.getSavedProviderSettings("vllm")?.localInference).toEqual({ contextWindow: 150000, maxOutputTokens: 6000 })
 	})
+	it("rejects missing context without changing the saved native profile", async () => {
+		mocks.reset()
+		const old = { contextWindow: 150000, maxOutputTokens: 8000 }
+		mocks.setProviderSettings({ vllm: { provider: "vllm", baseUrl: "http://fixture/v1", model: "A", localInference: old } })
+		const { createProviderConfigStore } = await import("./store")
+		const store = createProviderConfigStore()
+		expect(() =>
+			store.write(parseProviderId("vllm"), {
+				localInference: { maxOutputTokens: 8000 },
+				localInferenceModelId: "A",
+				localInferenceScope: JSON.stringify(["http://fixture/v1", "A"]),
+			}),
+		).toThrow("Maximum context size is required")
+		expect(mocks.getSavedProviderSettings("vllm")?.localInference).toEqual(old)
+	})
+	it("persists inactive override numbers rather than deleting them", async () => {
+		mocks.reset()
+		mocks.setProviderSettings({
+			vllm: {
+				provider: "vllm",
+				baseUrl: "http://fixture/v1",
+				model: "A",
+				localInference: { contextWindow: 150000, maxOutputTokens: 8000 },
+			},
+		})
+		const { createProviderConfigStore } = await import("./store")
+		const store = createProviderConfigStore()
+		const localInference = {
+			contextWindow: 150000,
+			maxOutputTokens: 8000,
+			compaction: { targetTokens: 61000, summaryTokens: 12000 },
+			userOverrides: ["compaction.targetTokens" as const, "compaction.summaryTokens" as const],
+			disabledOverrides: ["compaction.targetTokens" as const],
+		}
+		store.write(parseProviderId("vllm"), {
+			localInference,
+			localInferenceModelId: "A",
+			localInferenceScope: JSON.stringify(["http://fixture/v1", "A"]),
+		})
+		expect(mocks.getSavedProviderSettings("vllm")?.localInference).toEqual(localInference)
+	})
+
 	it("rejects delayed settings for the previous model or URL without modifying active controls", async () => {
 		mocks.reset()
 		mocks.setProviderSettings({

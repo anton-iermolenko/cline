@@ -10,7 +10,7 @@ import {
 	writeModelsFileSync,
 } from "@cline/core"
 import { getGeneratedModelsForProvider, MODEL_COLLECTIONS_BY_PROVIDER_ID } from "@cline/llms"
-import { ModelCapabilitySchema } from "@cline/shared"
+import { ModelCapabilitySchema, resolveLocalModelBudget } from "@cline/shared"
 import { type ApiConfiguration, type ApiProvider, type ModelInfo, openAiModelInfoSafeDefaults } from "@shared/api"
 import { Logger } from "@shared/services/Logger"
 import { getProviderModelIdKey } from "@shared/storage/provider-keys"
@@ -627,6 +627,7 @@ function writeProviderSettingsFields(providerId: ProviderId, patch: ProviderConf
 			...getLocalModelDefaults(existing.baseUrl as string | undefined, existing.model as string, providerId.toString()),
 			...patch.localInference,
 		}
+		resolveLocalModelBudget(next.localInference as import("@cline/shared").LocalInferenceSettings)
 	}
 
 	for (const key of ["apiKey", "baseUrl", "apiLine", "headers", "region", "auth", "extras"] as const) {

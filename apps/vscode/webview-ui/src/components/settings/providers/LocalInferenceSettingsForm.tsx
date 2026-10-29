@@ -1,14 +1,14 @@
 import {
-	COMPACTION_TRIGGER_RATIO,
 	DEFAULT_COMPACTION_BUFFER_TOKENS,
 	type LocalInferenceOverrideField,
 	type LocalInferenceSettings,
+	type LocalModelBudget,
 	localInferenceUserOverrides,
-	resolveAutoCompactionTargetTokens,
-	resolveLocalInferenceInputTokens,
+	resolveLocalInferenceSettings,
+	resolveLocalModelBudget,
 } from "@cline/shared"
 import type { ProviderConfigResponse } from "@shared/proto/cline/models"
-import { type CSSProperties, useEffect, useId, useState } from "react"
+import { type CSSProperties, useEffect, useState } from "react"
 
 const samplingFields = [
 	["temperature", "Temperature"],
@@ -34,13 +34,71 @@ const inputStyle: CSSProperties = {
 	padding: 6,
 }
 const hint: CSSProperties = { color: "var(--vscode-descriptionForeground)", fontSize: 12, margin: "6px 0 12px" }
-type NumericKey =
-	| "contextWindow"
-	| "maxInputTokens"
-	| "maxOutputTokens"
-	| "thinkingBudgetTokens"
-	| (typeof samplingFields)[number][0]
-type CompactionKey = keyof NonNullable<LocalInferenceSettings["compaction"]>
+const format = (value: number) => Math.floor(value).toLocaleString()
+
+function ContextBreakdown({ budget }: { budget: LocalModelBudget }) {
+	const parts = [
+		{ label: "Tools & instructions (estimate)", tokens: budget.overheadTokens, color: "#64748b" },
+		{ label: "Summarized history (output allowance)", tokens: budget.summaryTokens, color: "#a78bfa" },
+		{ label: "Raw recent history (estimate)", tokens: budget.recentTokens, color: "#2dd4bf" },
+		{ label: "Next normal output (including thinking)", tokens: budget.maxOutputTokens, color: "#fb923c" },
+		{ label: "Counting margin + boundary", tokens: budget.marginTokens + budget.boundaryTokens, color: "#f472b6" },
+		{ label: "Next iterative problem-solving space", tokens: budget.growthTokens, color: "#60a5fa" },
+	]
+	return (
+		<section aria-label="Context budget breakdown" style={{ marginTop: 16 }}>
+			<h4 style={{ marginBottom: 8 }}>Context budget breakdown</h4>
+			<div
+				aria-label="Estimated allocation of maximum context"
+				role="img"
+				style={{ display: "flex", height: 12, overflow: "hidden", borderRadius: 3, marginBottom: 10 }}>
+				{parts.map((part) => (
+					<div
+						key={part.label}
+						style={{ width: `${(part.tokens / budget.contextWindow) * 100}%`, background: part.color }}
+						title={`${part.label}: ${format(part.tokens)} tokens`}
+					/>
+				))}
+			</div>
+			<dl style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: "5px 12px", margin: 0 }}>
+				{parts.map((part) => (
+					<div key={part.label} style={{ display: "contents" }}>
+						<dt>{part.label}</dt>
+						<dd style={{ margin: 0, fontVariantNumeric: "tabular-nums" }}>{format(part.tokens)}</dd>
+					</div>
+				))}
+				<div style={{ display: "contents", fontWeight: 600 }}>
+					<dt>Compaction target subtotal</dt>
+					<dd style={{ margin: 0 }}>{format(budget.targetTokens)}</dd>
+				</div>
+				<div style={{ display: "contents", fontWeight: 600 }}>
+					<dt>Hard compaction cap</dt>
+					<dd style={{ margin: 0 }}>{format(budget.hardCapTokens)}</dd>
+				</div>
+				<div style={{ display: "contents", fontWeight: 600 }}>
+					<dt>Maximum context size</dt>
+					<dd style={{ margin: 0 }}>{format(budget.contextWindow)}</dd>
+				</div>
+			</dl>
+			<p style={hint}>
+				Hard cap = context − next output − {budget.boundaryTokens} boundary token − counting margin. The 10,000-token
+				tools/instructions allowance is a preview estimate; runtime retention uses calibrated overhead estimates, and
+				native counting verifies the complete request.
+			</p>
+			<p style={hint}>
+				This is a planning allocation; actual compaction can finish above or below the preferred target within the hard
+				cap. The latest human instruction stays verbatim within the raw-history budget. Older user messages can be
+				summarized. Message/tool boundaries can change the actual retained size; unused summary space is not backfilled.
+			</p>
+			{budget.targetTokens < budget.overheadTokens + budget.summaryTokens && (
+				<p role="status">
+					This target leaves no raw recent history under the 10K overhead estimate. Increase the target or reduce the
+					summary budget.
+				</p>
+			)}
+		</section>
+	)
+}
 
 export function LocalInferenceSettingsForm({
 	config,
@@ -54,24 +112,38 @@ export function LocalInferenceSettingsForm({
 	const [settings, setSettings] = useState<LocalInferenceSettings>({})
 	const [error, setError] = useState<string>()
 	const [saving, setSaving] = useState(false)
-	const [inputOverride, setInputOverride] = useState(false)
-	const [compactionOverride, setCompactionOverride] = useState(false)
-	const budgetHelpId = useId()
-	const safetyMarginHelpId = useId()
-	// biome-ignore lint/correctness/useExhaustiveDependencies: Reset drafts and errors when server/model changes even if the JSON is identical.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: Reset drafts/errors on server/model changes even if JSON is identical.
 	useEffect(() => {
-		const next: LocalInferenceSettings = config?.localInferenceJson ? JSON.parse(config.localInferenceJson) : {}
-		setSettings(next)
-		setInputOverride(next.maxInputTokens !== undefined)
-		setCompactionOverride(Object.values(next.compaction ?? {}).some((value) => value !== undefined))
+		setSettings(config?.localInferenceJson ? JSON.parse(config.localInferenceJson) : {})
 		setError(undefined)
 	}, [config?.localInferenceJson, config?.localInferenceModelId, config?.localInferenceScope])
 	const disabled = saving || !config?.localInferenceModelId || config.localInferenceModelId !== selectedModelId
+	const effective = resolveLocalInferenceSettings(settings)
+	const editedFields = localInferenceUserOverrides(settings)
+	const active = (key: LocalInferenceOverrideField) =>
+		!(settings.disabledOverrides ?? []).includes(key) &&
+		(editedFields.includes(key) ||
+			(key.startsWith("compaction.") &&
+				settings.compaction?.[key.slice(11) as keyof NonNullable<LocalInferenceSettings["compaction"]>] !== undefined))
+	let budget: LocalModelBudget | undefined
+	let budgetError: string | undefined
+	try {
+		budget = resolveLocalModelBudget(settings)
+		if (
+			effective.thinking !== false &&
+			effective.thinkingBudgetTokens &&
+			effective.thinkingBudgetTokens >= budget.maxOutputTokens
+		)
+			throw new Error("Thinking must leave room for the answer within normal output tokens.")
+	} catch (e) {
+		budgetError = e instanceof Error ? e.message : String(e)
+	}
 	const save = async (next: LocalInferenceSettings) => {
 		if (disabled || !config?.localInferenceModelId) return
-		setSaving(true)
 		setError(undefined)
 		try {
+			resolveLocalModelBudget(next)
+			setSaving(true)
 			await write({
 				localInferenceJson: JSON.stringify(next),
 				localInferenceModelId: config.localInferenceModelId,
@@ -83,113 +155,92 @@ export function LocalInferenceSettingsForm({
 			setSaving(false)
 		}
 	}
-	const counting = settings.inputTokenCounting !== false
-	let automaticInput: number | undefined
-	let budgetError: string | undefined
-	try {
-		automaticInput = resolveLocalInferenceInputTokens({ ...settings, maxInputTokens: undefined, nativeCounting: counting })
-	} catch (e) {
-		budgetError = e instanceof Error ? e.message : String(e)
+	const mark = (next: LocalInferenceSettings, key: LocalInferenceOverrideField, enabled = true): LocalInferenceSettings => {
+		const fields = new Set(editedFields)
+		const inactive = new Set(settings.disabledOverrides ?? [])
+		if (enabled) {
+			fields.add(key)
+			inactive.delete(key)
+		} else fields.delete(key)
+		return { ...next, userOverrides: [...fields], disabledOverrides: [...inactive] }
 	}
-	if (
-		settings.thinking !== false &&
-		settings.thinkingBudgetTokens &&
-		settings.maxOutputTokens &&
-		settings.thinkingBudgetTokens >= settings.maxOutputTokens
-	) {
-		budgetError = "Thinking must leave room for the answer within maximum output tokens."
+	const numeric = (key: LocalInferenceOverrideField, label: string, value: number | undefined, locked = false) => {
+		const custom = !locked && active(key)
+		return (
+			<label key={key} style={{ display: "grid", gap: 4, alignContent: "start", minWidth: 0 }}>
+				<input
+					aria-label={label}
+					disabled={disabled || locked}
+					onBlur={() => void save(settings)}
+					onChange={(event) => {
+						const value = event.target.value === "" ? undefined : Number(event.target.value)
+						const next = key.startsWith("compaction.")
+							? { ...settings, compaction: { ...settings.compaction, [key.slice(11)]: value } }
+							: { ...settings, [key]: value }
+						setSettings(mark(next, key, value !== undefined))
+					}}
+					placeholder="Required / server default unknown"
+					step={samplingFields.some(([field]) => field === key) ? "any" : "1"}
+					style={{
+						...inputStyle,
+						color: custom ? "var(--vscode-input-foreground)" : "var(--vscode-descriptionForeground)",
+						fontStyle: custom ? "normal" : "italic",
+					}}
+					type="number"
+					value={value ?? ""}
+				/>
+				<span>{label}</span>
+			</label>
+		)
 	}
-	const input = automaticInput === undefined ? undefined : Math.min(settings.maxInputTokens ?? Infinity, automaticInput)
-	const buffer = settings.compaction?.bufferTokens ?? DEFAULT_COMPACTION_BUFFER_TOKENS
-	const trigger = input === undefined ? undefined : counting ? Math.max(1, input - buffer) : input * COMPACTION_TRIGGER_RATIO
-	const targetFor = (messagePairCount: number) =>
-		input === undefined || trigger === undefined
-			? undefined
-			: Math.max(
-					1,
-					Math.min(
-						settings.compaction?.targetTokens ??
-							resolveAutoCompactionTargetTokens({
-								maxInputTokens: input,
-								modelMaxTokens: settings.maxOutputTokens,
-								triggerTokens: trigger,
-								messagePairCount,
-							}),
-						Math.max(1, trigger - 1),
-						settings.compaction?.maxTargetTokens ?? Infinity,
-					),
-				)
-	const target = targetFor(0)
-	const longTarget = targetFor(5)
-	const format = (value: number | undefined) => (value === undefined ? "unknown" : Math.floor(value).toLocaleString())
-	const markOverride = (
-		next: LocalInferenceSettings,
-		key: LocalInferenceOverrideField,
-		enabled: boolean,
-	): LocalInferenceSettings => {
-		const fields = new Set(localInferenceUserOverrides(settings))
-		if (enabled) fields.add(key)
-		else fields.delete(key)
-		return { ...next, userOverrides: [...fields] }
-	}
-	const valueStyle = (key: LocalInferenceOverrideField, locked = false): CSSProperties => ({
-		...inputStyle,
-		color:
-			!locked && localInferenceUserOverrides(settings).includes(key)
-				? "var(--vscode-input-foreground)"
-				: "var(--vscode-descriptionForeground)",
-		fontStyle: !locked && localInferenceUserOverrides(settings).includes(key) ? "normal" : "italic",
-	})
-	const numeric = (
-		key: NumericKey | CompactionKey,
+	const overrideField = (
+		key:
+			| "contextWindow"
+			| "maxOutputTokens"
+			| "compaction.targetTokens"
+			| "compaction.summaryTokens"
+			| "compaction.bufferTokens",
 		label: string,
 		value: number | undefined,
-		options: { locked?: boolean; compaction?: boolean; help?: string; describedBy?: string } = {},
-	) => (
-		<label key={key} style={{ display: "grid", alignContent: "start", gap: 4, minWidth: 0 }}>
-			<input
-				aria-describedby={options.describedBy}
-				aria-label={label}
-				disabled={disabled || options.locked}
-				onBlur={() => void save(settings)}
-				onChange={(event) => {
-					const next = event.target.value === "" ? undefined : Number(event.target.value)
-					const field = (options.compaction ? `compaction.${key}` : key) as LocalInferenceOverrideField
-					setSettings(
-						markOverride(
-							options.compaction
-								? { ...settings, compaction: { ...settings.compaction, [key]: next } }
-								: { ...settings, [key]: next },
-							field,
-							next !== undefined,
-						),
-					)
-				}}
-				placeholder={options.locked ? "Set context and output first" : "Server default / unknown"}
-				step={samplingFields.some(([field]) => field === key) ? "any" : "1"}
-				style={valueStyle(
-					(options.compaction ? `compaction.${key}` : key) as LocalInferenceOverrideField,
-					options.locked,
-				)}
-				type="number"
-				value={value ?? ""}
-			/>
-			<span>{label}</span>
-			{options.help && <span style={hint}>{options.help}</span>}
-		</label>
-	)
-	const toggle = (label: string, checked: boolean, change: (checked: boolean) => void) => (
-		<label style={{ display: "flex", alignItems: "center", gap: 6, margin: "10px 0" }}>
-			<input checked={checked} disabled={disabled} onChange={(event) => change(event.target.checked)} type="checkbox" />
-			{label}
-		</label>
-	)
+		toggleLabel: string,
+	) => {
+		const required = key === "contextWindow" && !settings.serverDefaults?.contextWindow
+		const checked = active(key) || required
+		return (
+			<div key={key}>
+				<label style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+					<input
+						aria-label={toggleLabel}
+						checked={checked}
+						disabled={disabled || required}
+						onChange={(event) => {
+							const enabled = event.target.checked
+							let next = { ...settings }
+							if (enabled) {
+								if (key.startsWith("compaction.")) {
+									const field = key.slice(11) as keyof NonNullable<LocalInferenceSettings["compaction"]>
+									next.compaction = { ...settings.compaction, [field]: settings.compaction?.[field] ?? value }
+								} else next[key] = settings[key] ?? value
+								next = mark(next, key)
+							} else next.disabledOverrides = [...new Set([...(settings.disabledOverrides ?? []), key])]
+							setSettings(next)
+							void save(next)
+						}}
+						type="checkbox"
+					/>
+					<span>{required ? "Manual value required" : "Override"}</span>
+				</label>
+				{numeric(key, label, value, !checked)}
+			</div>
+		)
+	}
 	const select = (key: "supportsVision" | "supportsTools" | "supportsReasoning" | "thinking", label: string) => (
 		<label key={key} style={{ display: "grid", gap: 4 }}>
 			<select
 				aria-label={label}
+				disabled={disabled}
 				onChange={(event) => {
-					const next = markOverride(
+					const next = mark(
 						{ ...settings, [key]: event.target.value === "" ? undefined : event.target.value === "true" },
 						key,
 						event.target.value !== "",
@@ -197,8 +248,12 @@ export function LocalInferenceSettingsForm({
 					setSettings(next)
 					void save(next)
 				}}
-				style={valueStyle(key)}
-				value={settings[key] === undefined ? "" : String(settings[key])}>
+				style={{
+					...inputStyle,
+					fontStyle: active(key) ? "normal" : "italic",
+					color: active(key) ? "var(--vscode-input-foreground)" : "var(--vscode-descriptionForeground)",
+				}}
+				value={effective[key] === undefined ? "" : String(effective[key])}>
 				<option value="">Server default / unknown</option>
 				<option value="true">{key === "thinking" ? "On" : "Supported"}</option>
 				<option value="false">{key === "thinking" ? "Off" : "Unsupported"}</option>
@@ -208,124 +263,86 @@ export function LocalInferenceSettingsForm({
 	)
 	return (
 		<fieldset disabled={disabled} style={{ border: "none", padding: 0, marginTop: 16, minWidth: 0 }}>
-			<legend style={{ fontWeight: 600 }}>Context & generation</legend>
+			<legend style={{ fontWeight: 600 }}>Model context & compaction</legend>
 			<p style={hint}>
-				Saved per server/model. Grey italic: server/calculated defaults. Normal: your overrides. Clear a field to restore
-				its default.
+				Grey italic: server/calculated defaults. Normal: your overrides. Switching an override off preserves its saved
+				number for later.
 			</p>
 			<div style={grid}>
-				{numeric("contextWindow", "Total context tokens", settings.contextWindow)}
-				{numeric("maxOutputTokens", "Maximum output tokens (including thinking)", settings.maxOutputTokens)}
-			</div>
-			<p id={budgetHelpId} style={hint}>
-				Input = context − total output{counting ? " − 1 boundary token" : ""}. Output already includes thinking.
-			</p>
-			{toggle("Override input allowance", inputOverride, (checked) => {
-				setInputOverride(checked)
-				const next = markOverride(
-					{ ...settings, maxInputTokens: checked ? (settings.maxInputTokens ?? automaticInput) : undefined },
-					"maxInputTokens",
-					checked,
-				)
-				setSettings(next)
-				if (!checked || next.maxInputTokens !== undefined) void save(next)
-			})}
-			<div style={grid}>
-				{numeric("maxInputTokens", "Input allowance (tokens)", inputOverride ? settings.maxInputTokens : automaticInput, {
-					locked: !inputOverride,
-					describedBy: budgetHelpId,
-				})}
-			</div>
-			{inputOverride && (
-				<p style={hint}>
-					An override can lower the allowance; it cannot exceed the live context remaining after output is reserved.
-					Effective allowance: {format(input)} tokens.
-				</p>
-			)}
-			<h4 style={{ marginBottom: 10 }}>Thinking</h4>
-			<div style={grid}>
-				{select("thinking", "Thinking")}
-				{numeric("thinkingBudgetTokens", "Thinking token budget", settings.thinkingBudgetTokens)}
-				<label style={{ display: "grid", alignContent: "start", gap: 4 }}>
-					<input
-						aria-label="Reasoning effort"
-						onBlur={() => void save(settings)}
-						onChange={(event) =>
-							setSettings(
-								markOverride(
-									{ ...settings, reasoningEffort: event.target.value || undefined },
-									"reasoningEffort",
-									!!event.target.value,
-								),
-							)
-						}
-						placeholder="Server default / unknown"
-						style={valueStyle("reasoningEffort")}
-						value={settings.reasoningEffort ?? ""}
-					/>
-					<span>Reasoning effort</span>
-				</label>
-			</div>
-			<h4 style={{ marginBottom: 4 }}>Compaction</h4>
-			<p style={hint}>Calculated from input allowance. Live prompt/tool overhead can reduce retained history.</p>
-			{toggle("Override compaction settings", compactionOverride, (checked) => {
-				setCompactionOverride(checked)
-				const next = checked
-					? markOverride(
-							{
-								...settings,
-								compaction: { bufferTokens: DEFAULT_COMPACTION_BUFFER_TOKENS, ...settings.compaction },
-							},
-							"compaction.bufferTokens",
-							true,
-						)
-					: {
-							...settings,
-							compaction: undefined,
-							userOverrides: localInferenceUserOverrides(settings).filter((key) => !key.startsWith("compaction.")),
-						}
-				setSettings(next)
-				void save(next)
-			})}
-			<div style={grid}>
-				{numeric("bufferTokens", "Context safety margin (tokens)", buffer, {
-					compaction: true,
-					locked: !compactionOverride || !counting,
-					describedBy: safetyMarginHelpId,
-				})}
-				{numeric("targetTokens", "Compaction target tokens", settings.compaction?.targetTokens ?? target, {
-					compaction: true,
-					locked: !compactionOverride,
-				})}
-				{numeric(
-					"maxTargetTokens",
-					"Maximum compaction target tokens",
-					settings.compaction?.maxTargetTokens ??
-						(trigger === undefined ? undefined : Math.max(1, Math.ceil(trigger) - 1)),
-					{ compaction: true, locked: !compactionOverride },
+				{overrideField(
+					"contextWindow",
+					"Maximum context size (tokens)",
+					effective.contextWindow,
+					"Override maximum context size",
 				)}
-				{numeric(
-					"preserveRecentTokens",
-					"Recent history token ceiling",
-					settings.compaction?.preserveRecentTokens ??
-						(target === undefined ? undefined : Math.max(0, target - (settings.maxOutputTokens ?? 8192))),
-					{ compaction: true, locked: !compactionOverride },
+				{overrideField(
+					"maxOutputTokens",
+					"Normal output tokens (including thinking)",
+					effective.maxOutputTokens,
+					"Override normal output",
+				)}
+				{overrideField(
+					"compaction.targetTokens",
+					"Compaction target tokens",
+					effective.compaction?.targetTokens ?? budget?.targetTokens,
+					"Override compaction target",
+				)}
+				{overrideField(
+					"compaction.summaryTokens",
+					"Summarized history tokens",
+					effective.compaction?.summaryTokens ?? budget?.summaryTokens,
+					"Override summarized history",
 				)}
 			</div>
-			<p id={safetyMarginHelpId} style={hint}>
-				{counting
-					? `Compaction starts at ${format(trigger)} input tokens, leaving ${format(buffer)} tokens of extra headroom.`
-					: `Estimated counting compacts at 90% of input allowance (${format(trigger)} tokens); the native safety margin does not apply.`}
-				{!settings.compaction?.targetTokens &&
-					target !== longTarget &&
-					` Automatic target: ${format(target)} tokens, or ${format(longTarget)} after five user/assistant pairs.`}{" "}
-				Recent history is an upper bound for agentic compaction, before subtracting prompt/tool overhead and space for the
-				summary.
+			<p style={hint}>
+				The compaction target includes tools/instructions, the summary and raw recent history. The summary has its own
+				output limit, independent of normal replies. Defaults increase gradually with context capacity and level off at
+				86K from 200K upward.
 			</p>
+			{budget && <ContextBreakdown budget={budget} />}
 			<details style={{ marginTop: 16 }}>
 				<summary style={{ cursor: "pointer", fontWeight: 600 }}>Advanced settings</summary>
+				<h4>Thinking for normal conversation</h4>
+				<div style={grid}>
+					{select("thinking", "Thinking")}
+					{numeric("thinkingBudgetTokens", "Thinking token budget", effective.thinkingBudgetTokens)}
+					<label style={{ display: "grid", gap: 4 }}>
+						<input
+							aria-label="Reasoning effort"
+							disabled={disabled}
+							onBlur={() => void save(settings)}
+							onChange={(event) =>
+								setSettings(
+									mark(
+										{ ...settings, reasoningEffort: event.target.value || undefined },
+										"reasoningEffort",
+										!!event.target.value,
+									),
+								)
+							}
+							placeholder="Server default / unknown"
+							style={{
+								...inputStyle,
+								fontStyle: active("reasoningEffort") ? "normal" : "italic",
+								color: active("reasoningEffort")
+									? "var(--vscode-input-foreground)"
+									: "var(--vscode-descriptionForeground)",
+							}}
+							value={effective.reasoningEffort ?? ""}
+						/>
+						<span>Reasoning effort</span>
+					</label>
+				</div>
+				<p style={hint}>Thinking consumes part of normal output. Compaction summaries request thinking off.</p>
+				<h4>Counting margin</h4>
+				{overrideField(
+					"compaction.bufferTokens",
+					"Counting margin (tokens)",
+					effective.compaction?.bufferTokens ?? DEFAULT_COMPACTION_BUFFER_TOKENS,
+					"Override counting margin",
+				)}
 				<h4>Sampling & penalties</h4>
-				<div style={grid}>{samplingFields.map(([key, label]) => numeric(key, label, settings[key]))}</div>
+				<div style={grid}>{samplingFields.map(([key, label]) => numeric(key, label, effective[key]))}</div>
 				<h4>Model capabilities</h4>
 				<div style={grid}>
 					{select("supportsVision", "Image inputs")}
@@ -335,17 +352,13 @@ export function LocalInferenceSettingsForm({
 			</details>
 			<p style={hint}>
 				Input counting:{" "}
-				{counting ? "native preflight; a counting failure stops the request" : "estimated; 2,048 tokens per image"}.
+				{effective.inputTokenCounting === false
+					? "estimated; 2,048 tokens per image. Estimation can trigger compaction earlier."
+					: "native preflight; counting errors stop the request."}
 			</p>
-			{!settings.maxOutputTokens && <p>Set maximum output tokens before starting a request.</p>}
-			{budgetError && (
+			{(error ?? budgetError) && (
 				<p role="alert" style={{ color: "var(--vscode-errorForeground)" }}>
-					{budgetError}
-				</p>
-			)}
-			{error && (
-				<p role="alert" style={{ color: "var(--vscode-errorForeground)" }}>
-					{error}
+					{error ?? budgetError}
 				</p>
 			)}
 		</fieldset>

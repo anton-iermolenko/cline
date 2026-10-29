@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export const DEFAULT_LOCAL_OUTPUT_TOKENS = 8_000;
+
 export const LOCAL_INFERENCE_OVERRIDE_FIELDS = [
 	"supportsVision",
 	"supportsTools",
@@ -19,6 +21,7 @@ export const LOCAL_INFERENCE_OVERRIDE_FIELDS = [
 	"thinkingBudgetTokens",
 	"compaction.bufferTokens",
 	"compaction.targetTokens",
+	"compaction.summaryTokens",
 	"compaction.maxTargetTokens",
 	"compaction.preserveRecentTokens",
 ] as const;
@@ -32,6 +35,17 @@ export const LocalInferenceSettingsSchema = z
 		userOverrides: z
 			.array(z.enum(LOCAL_INFERENCE_OVERRIDE_FIELDS))
 			.max(32)
+			.optional(),
+		/** Inactive overrides keep their saved values for later re-enabling. */
+		disabledOverrides: z
+			.array(z.enum(LOCAL_INFERENCE_OVERRIDE_FIELDS))
+			.max(32)
+			.optional(),
+		serverDefaults: z
+			.object({
+				contextWindow: z.number().int().positive().optional(),
+				maxOutputTokens: z.number().int().positive().optional(),
+			})
 			.optional(),
 		supportsVision: z.boolean().optional(),
 		supportsTools: z.boolean().optional(),
@@ -55,6 +69,7 @@ export const LocalInferenceSettingsSchema = z
 			.object({
 				bufferTokens: z.number().int().nonnegative().optional(),
 				targetTokens: z.number().int().positive().optional(),
+				summaryTokens: z.number().int().positive().optional(),
 				maxTargetTokens: z.number().int().positive().optional(),
 				preserveRecentTokens: z.number().int().nonnegative().optional(),
 			})
@@ -107,4 +122,30 @@ export function localInferenceUserOverrides(
 			value(settings, key) !== undefined &&
 			!Object.is(value(settings, key), value(defaults, key)),
 	);
+}
+
+/** Project active values without deleting the user's inactive overrides. */
+export function resolveLocalInferenceSettings(
+	settings: LocalInferenceSettings,
+): LocalInferenceSettings {
+	const out: LocalInferenceSettings = {
+		...settings,
+		compaction: settings.compaction ? { ...settings.compaction } : undefined,
+	};
+	for (const field of settings.disabledOverrides ?? []) {
+		if (field.startsWith("compaction.")) {
+			if (out.compaction)
+				delete out.compaction[
+					field.slice(11) as keyof NonNullable<
+						LocalInferenceSettings["compaction"]
+					>
+				];
+		} else if (field === "contextWindow" || field === "maxOutputTokens") {
+			out[field] = settings.serverDefaults?.[field];
+		}
+	}
+	out.contextWindow ??= settings.serverDefaults?.contextWindow;
+	out.maxOutputTokens ??=
+		settings.serverDefaults?.maxOutputTokens ?? DEFAULT_LOCAL_OUTPUT_TOKENS;
+	return out;
 }

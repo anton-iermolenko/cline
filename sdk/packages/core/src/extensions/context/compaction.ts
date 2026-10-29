@@ -3,6 +3,8 @@ import {
 	estimateRequestInputTokens,
 	type RequestInputTokenCount,
 	resolveAutoCompactionTargetTokens,
+	resolveLocalInferenceSettings,
+	resolveLocalModelBudget,
 } from "@cline/shared";
 import { messagesToAgentMessages } from "../../runtime/config/agent-message-codec";
 import {
@@ -227,22 +229,6 @@ function translateRequestBudgetToMessages(
 	return Math.max(1, Math.floor(requestTokens - overheadTokens));
 }
 
-function countUserAssistantPairs(
-	messages: CoreCompactionContext["messages"],
-): number {
-	let pairs = 0;
-	let hasPendingUser = false;
-	for (const message of messages) {
-		if (message.role === "user") {
-			hasPendingUser = true;
-		} else if (message.role === "assistant" && hasPendingUser) {
-			pairs += 1;
-			hasPendingUser = false;
-		}
-	}
-	return pairs;
-}
-
 /**
  * Build the `prepareTurn` callback used by the agent runtime to compact the
  * transcript before each model request.
@@ -290,6 +276,16 @@ export function createContextCompactionPrepareTurn(
 		return undefined;
 	}
 
+	const localSettings = config.providerConfig?.localInference
+		? resolveLocalInferenceSettings(config.providerConfig.localInference)
+		: undefined;
+	const isLocal = ["vllm", "llamacpp"].includes(
+		config.providerId ?? config.providerConfig?.providerId ?? "",
+	);
+	if (isLocal && !localSettings?.contextWindow)
+		throw new Error(
+			"Maximum context size is required: discover it from the server or enter it manually.",
+		);
 	const baseEstimateMessageTokens = createTokenEstimator();
 	const irreducibleRequests = new Set<string>();
 	const strategy = userCompaction?.strategy ?? "agentic";
@@ -352,7 +348,9 @@ export function createContextCompactionPrepareTurn(
 		const requestInputTokens =
 			beforeMeasurement?.inputTokens ?? estimatedRequestTokens;
 		const buffer =
-			userCompaction.bufferTokens ??
+			(isLocal
+				? localSettings?.compaction?.bufferTokens
+				: userCompaction.bufferTokens) ??
 			beforeMeasurement?.compactionBufferTokens ??
 			DEFAULT_COMPACTION_BUFFER_TOKENS;
 		if (!Number.isSafeInteger(buffer) || buffer < 0)
@@ -408,6 +406,22 @@ export function createContextCompactionPrepareTurn(
 		// recovery retains its conservative working budget.
 		if (effectiveMode === "auto" && modelMaxInputTokens === undefined)
 			return undefined;
+		const localBudget =
+			isLocal && localSettings
+				? resolveLocalModelBudget(
+						{
+							...localSettings,
+							compaction: localSettings.compaction,
+						},
+						{
+							contextWindow: beforeMeasurement?.contextWindow,
+							maxOutputTokens:
+								beforeMeasurement?.maxOutputTokens ??
+								config.providerConfig?.maxOutputTokens,
+							overheadTokens: requestOverheadTokens,
+						},
+					)
+				: undefined;
 		const rawMaxInputTokens = modelMaxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS;
 		// The char-based estimate under-counts dense content (disassembly, image
 		// dumps, minified sources). When the provider's actual count for the
@@ -438,13 +452,15 @@ export function createContextCompactionPrepareTurn(
 				: 1;
 		const maxInputTokens = rawMaxInputTokens / underestimateFactor;
 		for (const [name, value] of Object.entries({
-			maxTargetTokens: userCompaction.maxTargetTokens,
+			maxTargetTokens:
+				localBudget?.hardCapTokens ?? userCompaction.maxTargetTokens,
 			targetTokens: userCompaction.targetTokens,
 		})) {
 			if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0))
 				throw new Error(`Compaction ${name} must be a positive integer`);
 		}
 		if (
+			!isLocal &&
 			userCompaction.maxTargetTokens !== undefined &&
 			userCompaction.targetTokens !== undefined &&
 			userCompaction.targetTokens > userCompaction.maxTargetTokens
@@ -454,7 +470,10 @@ export function createContextCompactionPrepareTurn(
 			);
 		const requestTriggerTokens = beforeMeasurement
 			? Math.max(1, maxInputTokens - buffer)
-			: maxInputTokens * COMPACTION_TRIGGER_RATIO;
+			: Math.min(
+					maxInputTokens * COMPACTION_TRIGGER_RATIO,
+					localBudget?.hardCapTokens ?? Infinity,
+				);
 		if (beforeMeasurement)
 			context.emitStatusNotice?.("input-token-count", {
 				kind: "input_token_count",
@@ -506,13 +525,15 @@ export function createContextCompactionPrepareTurn(
 		let requestTargetTokens: number;
 		let messageTargetTokens: number;
 		if (effectiveMode === "auto") {
-			requestTargetTokens = resolveAutoCompactionTargetTokens({
-				maxInputTokens,
-				modelMaxTokens: context.model.info?.maxTokens,
-				triggerTokens: requestTriggerTokens,
-				messagePairCount: countUserAssistantPairs(context.messages),
-			});
-			if (userCompaction.targetTokens !== undefined)
+			requestTargetTokens = localBudget
+				? localBudget.targetTokens / underestimateFactor
+				: resolveAutoCompactionTargetTokens({
+						maxInputTokens,
+						modelMaxTokens: context.model.info?.maxTokens,
+						triggerTokens: requestTriggerTokens,
+						contextWindow: context.model.info?.contextWindow,
+					});
+			if (!isLocal && userCompaction.targetTokens !== undefined)
 				requestTargetTokens = Math.max(
 					1,
 					Math.min(
@@ -533,6 +554,7 @@ export function createContextCompactionPrepareTurn(
 			requestTargetTokens = requestOverheadTokens + messageTargetTokens;
 			if (
 				effectiveMode === "overflow_recovery" &&
+				!isLocal &&
 				userCompaction.targetTokens !== undefined
 			) {
 				requestTargetTokens = Math.max(
@@ -551,8 +573,9 @@ export function createContextCompactionPrepareTurn(
 
 		// The maximum bounds every compacted request, including default/manual
 		// targets. The message budget already excludes system/tool overhead.
-		const maxResultTokens =
-			userCompaction.maxTargetTokens === undefined
+		const maxResultTokens = isLocal
+			? localBudget?.hardCapTokens
+			: userCompaction.maxTargetTokens === undefined
 				? undefined
 				: Math.max(
 						1,
@@ -581,6 +604,9 @@ export function createContextCompactionPrepareTurn(
 					maxInputTokens,
 					triggerTokens: requestTriggerTokens,
 					targetTokens: requestTargetTokens,
+					summaryTokens:
+						localBudget?.summaryTokens ?? userCompaction.summaryTokens,
+					hardCapTokens: localBudget?.hardCapTokens,
 					overheadTokens: requestOverheadTokens,
 					thresholdRatio: requestTriggerTokens / maxInputTokens,
 					utilizationRatio:
@@ -637,7 +663,9 @@ export function createContextCompactionPrepareTurn(
 				}),
 				abortSignal: context.abortSignal,
 			},
-			compaction: userCompaction,
+			compaction: isLocal
+				? { ...userCompaction, preserveRecentTokens: undefined }
+				: userCompaction,
 			estimateMessageTokens,
 			logger: config.logger,
 		};
@@ -847,14 +875,22 @@ export function createContextCompactionPrepareTurn(
 							),
 						)) &&
 				afterMeasurement.inputTokens <= afterMeasurement.maxInputTokens &&
+				(!localBudget ||
+					afterMeasurement.inputTokens <=
+						Math.min(
+							localBudget.hardCapTokens,
+							afterMeasurement.maxInputTokens - buffer,
+						)) &&
 				afterMeasurement.inputTokens < requestInputTokens;
-			const continuityCeiling = Math.min(
-				userCompaction.maxTargetTokens ?? Number.POSITIVE_INFINITY,
-				requestTriggerTokens -
-					Math.max(2 * beforeMeasurement.maxOutputTokens, buffer),
-				beforeMeasurement.maxInputTokens -
-					Math.max(2 * beforeMeasurement.maxOutputTokens, buffer),
-			);
+			const continuityCeiling =
+				localBudget?.hardCapTokens ??
+				Math.min(
+					userCompaction.maxTargetTokens ?? Number.POSITIVE_INFINITY,
+					requestTriggerTokens -
+						Math.max(2 * beforeMeasurement.maxOutputTokens, buffer),
+					beforeMeasurement.maxInputTokens -
+						Math.max(2 * beforeMeasurement.maxOutputTokens, buffer),
+				);
 			const acceptable = () =>
 				validCandidate() &&
 				((afterMeasurement?.inputTokens ?? Number.POSITIVE_INFINITY) <=
@@ -862,7 +898,8 @@ export function createContextCompactionPrepareTurn(
 					// The preferred shrink target must not replace a useful semantic
 					// checkpoint with a lossy fold when there is measured growth room.
 					(effectiveMode === "auto" &&
-						(executedStrategy === "agentic" ||
+						(localBudget !== undefined ||
+							executedStrategy === "agentic" ||
 							userCompaction.maxTargetTokens !== undefined) &&
 						(afterMeasurement?.inputTokens ?? Number.POSITIVE_INFINITY) <=
 							continuityCeiling));
@@ -928,7 +965,8 @@ export function createContextCompactionPrepareTurn(
 				// under the hard limit without claiming successful compaction.
 				if (
 					context.messages.length <= 1 &&
-					requestInputTokens <= beforeMeasurement.maxInputTokens &&
+					requestInputTokens <=
+						(localBudget?.hardCapTokens ?? beforeMeasurement.maxInputTokens) &&
 					effectiveMode !== "overflow_recovery"
 				) {
 					if (irreducibleRequests.size >= 32) irreducibleRequests.clear();
@@ -1016,7 +1054,8 @@ export function createContextCompactionPrepareTurn(
 					requestTargetTokens,
 					afterRequestTokens,
 				),
-				maxTargetTokens: userCompaction.maxTargetTokens,
+				maxTargetTokens:
+					localBudget?.hardCapTokens ?? userCompaction.maxTargetTokens,
 				messagesBefore: beforeMessageCount,
 				messagesAfter: result.messages.length,
 				messagesRemoved: beforeMessageCount - result.messages.length,
@@ -1035,7 +1074,8 @@ export function createContextCompactionPrepareTurn(
 					requestTargetTokens,
 					afterRequestTokens,
 				),
-				maxTargetTokens: userCompaction.maxTargetTokens,
+				maxTargetTokens:
+					localBudget?.hardCapTokens ?? userCompaction.maxTargetTokens,
 				iteration: context.iteration,
 				tokensBefore: requestInputTokens,
 				tokensAfter: afterRequestTokens,
