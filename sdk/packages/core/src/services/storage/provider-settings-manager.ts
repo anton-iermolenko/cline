@@ -408,10 +408,24 @@ export class ProviderSettingsManager {
 		if (!settings) {
 			return undefined;
 		}
-		const config = toProviderConfig(settings, options);
+		const defaults =
+			localInferenceEngine(providerId) && settings.model
+				? getLocalModelDefaults(settings.baseUrl, settings.model, providerId)
+				: undefined;
+		const localInference =
+			settings.localInference || defaults
+				? {
+						...defaults,
+						...settings.localInference,
+						serverDefaults:
+							defaults?.serverDefaults ??
+							settings.localInference?.serverDefaults,
+					}
+				: undefined;
+		const config = toProviderConfig({ ...settings, localInference }, options);
 		applyLocalModelLimits(config, this);
 		if (localInferenceEngine(providerId) && settings.model) {
-			const local = settings.localInference ?? {};
+			const local = config.localInference ?? {};
 			const previousModel = config.knownModels?.[settings.model];
 			config.knownModels = {
 				...config.knownModels,

@@ -8,6 +8,7 @@ import {
 } from "./local-inference";
 
 const settings = {
+	compaction: { bufferTokens: 0 },
 	contextWindow: 100,
 	maxOutputTokens: 20,
 	thinkingBudgetTokens: 5,
@@ -230,9 +231,9 @@ describe("native local inference", () => {
 			maxOutputTokens: 20,
 		});
 	});
-	it("requires user-supplied unknown output defaults and rejects unverified truncation", () => {
+	it("requires a known context capacity and rejects unverified truncation", () => {
 		expect(() => normalizeLocalInferenceRequest(body, "vllm", {})).toThrow(
-			"Set maximum output",
+			"Maximum context size is required",
 		);
 		expect(() =>
 			normalizeLocalInferenceRequest(

@@ -6,6 +6,7 @@ import {
 	estimateTokens,
 	type MessageWithMetadata,
 	resolveEffectiveMaxInputTokens,
+	resolveLocalInferenceInputTokens,
 } from "@cline/shared";
 
 export { CHARS_PER_TOKEN, estimateTokens, resolveEffectiveMaxInputTokens };
@@ -17,7 +18,7 @@ export const DEFAULT_MAX_INPUT_TOKENS = 128_000;
 /** Estimate the usable input share when only a context window is reported. */
 export const CONTEXT_WINDOW_INPUT_RATIO = 0.9;
 /** Compact once the transcript consumes this share of the usable input budget. */
-export { COMPACTION_TRIGGER_RATIO, DEFAULT_TARGET_RATIO } from "@cline/shared";
+export { COMPACTION_TRIGGER_RATIO } from "@cline/shared";
 /**
  * Upper bound on how far the provider's actual input count may scale the
  * compaction budget down relative to the character-based estimate. Dense
@@ -915,6 +916,7 @@ function resolveSummaryMaxOutputTokens(config: ProviderConfig): number {
 export function resolveSummarizerConfig(options: {
 	activeProviderConfig: ProviderConfig;
 	summarizer?: CoreCompactionSummarizerConfig;
+	summaryTokens?: number;
 }): ProviderConfig {
 	const summarizer = options.summarizer;
 	const withSummarizerDefaults = (config: ProviderConfig): ProviderConfig => {
@@ -925,10 +927,57 @@ export function resolveSummarizerConfig(options: {
 				thinking: false,
 			};
 		}
+		const summaryTokens =
+			options.summaryTokens ?? resolveSummaryMaxOutputTokens(config);
+		const summaryInputTokens = config.localInference
+			? resolveLocalInferenceInputTokens({
+					contextWindow: config.localInference.contextWindow,
+					maxOutputTokens: summaryTokens,
+					nativeCounting: config.localInference.inputTokenCounting !== false,
+				})
+			: undefined;
 		return {
 			...config,
-			maxOutputTokens: resolveSummaryMaxOutputTokens(config),
+			maxOutputTokens: summaryTokens,
+			// Native entries carry the configured normal-output cap; project an independent cap for this summary request only.
+			...(config.localInference && options.summaryTokens !== undefined
+				? {
+						maxInputTokens: summaryInputTokens,
+						modelInfo: config.modelInfo
+							? {
+									...config.modelInfo,
+									maxTokens: summaryTokens,
+									maxInputTokens: summaryInputTokens,
+								}
+							: undefined,
+						knownModels: {
+							...config.knownModels,
+							[config.modelId]: {
+								...config.knownModels?.[config.modelId],
+								id: config.modelId,
+								contextWindow: config.localInference.contextWindow,
+								maxTokens: summaryTokens,
+								maxInputTokens: summaryInputTokens,
+							},
+						},
+					}
+				: {}),
 			thinking: false,
+			...(config.localInference
+				? {
+						localInference: {
+							...config.localInference,
+							maxOutputTokens: summaryTokens,
+							disabledOverrides:
+								config.localInference.disabledOverrides?.filter(
+									(field) => field !== "maxOutputTokens",
+								),
+							thinking: false,
+							thinkingBudgetTokens: 0,
+							reasoningEffort: "none",
+						},
+					}
+				: {}),
 		};
 	};
 	if (!summarizer) {

@@ -6,6 +6,8 @@ import {
 	localInferenceUrl,
 	type RequestInputTokenCount,
 	resolveLocalInferenceInputTokens,
+	resolveLocalInferenceSettings,
+	resolveLocalModelBudget,
 } from "@cline/shared";
 
 export interface NativeCountOptions {
@@ -21,10 +23,8 @@ export function normalizeLocalInferenceRequest(
 	engine: LocalInferenceEngine,
 	settings: LocalInferenceSettings,
 ): Record<string, unknown> {
-	if (!settings.maxOutputTokens)
-		throw new Error("Set maximum output tokens for the selected local model");
-	if (settings.inputTokenCounting === false && !settings.contextWindow)
-		throw new Error("Set total context tokens for the selected local model");
+	settings = resolveLocalInferenceSettings(settings);
+	resolveLocalModelBudget(settings);
 	const out = { ...body };
 	const kwargs = {
 		...((body.chat_template_kwargs as Record<string, unknown>) ?? {}),
@@ -138,7 +138,9 @@ export async function countLocalInferenceRequest(
 		AbortSignal.timeout(options.timeoutMs ?? 900000),
 	]);
 	signal.throwIfAborted();
-	const { engine, settings } = options;
+	const { engine } = options;
+	const settings = resolveLocalInferenceSettings(options.settings);
+	resolveLocalModelBudget(settings);
 	const countBody =
 		engine === "vllm"
 			? Object.fromEntries(
@@ -235,7 +237,6 @@ export async function countLocalInferenceRequest(
 		resolveLocalInferenceInputTokens({
 			contextWindow,
 			maxOutputTokens,
-			maxInputTokens: settings.maxInputTokens,
 			nativeCounting: true,
 		}),
 		"input allowance",

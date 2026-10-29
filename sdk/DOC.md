@@ -544,6 +544,21 @@ When compaction starts with a native input counter and image blocks, retention s
 
 Agentic compaction derives recent-history retention from the preferred full-request target, subtracting system/tool overhead, the summarizer output allowance, and any current user instruction reinserted outside the retained tail. `preserveRecentTokens` can request a smaller suffix; it cannot expand that budget. Whole messages and tool-call/result pairs remain intact, so the result can differ from the preference. `maxTargetTokens` caps compacted full requests, including default and manual targets. Measured automatic results may exceed the preference to preserve continuity only within that cap and the live input allowance. Estimated results are also rejected above the configured cap. A rejected candidate leaves the original context intact.
 
+For native local providers, `localInference.compaction.summaryTokens` is a separate
+summary-output reservation. `resolveLocalModelBudget()` provides the shared
+capacity-based defaults, derived hard compaction cap and preview/calibrated overhead
+breakdown. `CoreCompactionBudget.request.summaryTokens` carries the reservation
+to the summarizer; normal response output remains independent. Local defaults
+interpolate between the documented 40K–200K anchors and plateau above 200K;
+conversation-pair counts do not choose the target. Native results are accepted
+only below the derived hard cap (`context - normal output - boundary - margin`),
+including semantic checkpoints above the preference. Legacy local
+`maxTargetTokens`/`preserveRecentTokens` fields do not override this policy.
+`disabledOverrides` projects server/calculated defaults without deleting saved
+override numbers; `serverDefaults` retains the context/output discovery baseline.
+See [local-provider settings](../docs/provider-config/local-inference.mdx).
+
+
 Built-in automatic compaction, and manual compaction of an already oversized request, retry a deterministic basic fold when the selected strategy cannot return usable bounded context. Success requires estimated messages plus request overhead to fit below the compaction trigger. The input allowance and early-compaction trigger are separate values; diagnostics report both, together with remaining message tokens and request overhead when available. A missing fallback result is reported separately from an oversized result.
 
 When prior agentic compaction has replaced all typed user turns, the basic fold preserves the most recent compaction summary with its existing system provenance and keeps a recent suffix within the remaining budget. It never relabels generated summary text as user instructions. Retained tool results start with their assistant tool calls. An oversized continuation summary remains intact and causes a bounded-result failure rather than silent truncation. Custom compaction callbacks retain their existing contract.

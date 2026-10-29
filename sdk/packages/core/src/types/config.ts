@@ -72,6 +72,9 @@ export interface CoreCompactionBudget {
 		triggerTokens: number;
 		/** Full-request token count the strategy output should fit within. */
 		targetTokens: number;
+		/** Dedicated summary output reservation, independent of normal turns. */
+		summaryTokens?: number;
+		hardCapTokens?: number;
 		/** Fixed system-prompt, tool-definition, and request framing cost. */
 		overheadTokens: number;
 		thresholdRatio: number;
@@ -162,7 +165,9 @@ export interface CoreCompactionConfig {
 	targetTokens?: number;
 	/** Maximum full-request size after compaction; automatic results may exceed the preferred target up to this cap. */
 	maxTargetTokens?: number;
-	/** Proactive input headroom for providers with token counting. Defaults to 2048. */
+	/** Separate maximum output budget for the generated history summary. */
+	summaryTokens?: number;
+	/** Proactive input headroom for providers with token counting. Defaults to 128. */
 	bufferTokens?: number;
 	enabled?: boolean;
 	strategy?: CoreCompactionStrategy;

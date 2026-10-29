@@ -5,6 +5,8 @@ import {
 	LocalInferenceSettingsSchema,
 	localInferenceEngine,
 	localInferenceUrl,
+	resolveLocalInferenceInputTokens,
+	resolveLocalInferenceSettings,
 } from "@cline/shared";
 
 const defaults = new Map<string, LocalInferenceSettings>();
@@ -28,7 +30,15 @@ export function getLocalModelDefaults(
 	return value
 		? {
 				...structuredClone(value),
-				...(Object.keys(value).length ? { userOverrides: [] } : {}),
+				...(Object.keys(value).length
+					? {
+							userOverrides: [],
+							serverDefaults: {
+								contextWindow: value.contextWindow,
+								maxOutputTokens: value.maxOutputTokens,
+							},
+						}
+					: {}),
 			}
 		: undefined;
 }
@@ -214,6 +224,7 @@ export function localInferenceModelInfo(
 	settings: LocalInferenceSettings,
 	previous?: ModelInfo,
 ): ModelInfo {
+	settings = resolveLocalInferenceSettings(settings);
 	const capabilities = new Set<NonNullable<ModelInfo["capabilities"]>[number]>(
 		previous?.capabilities ?? ["streaming"],
 	);
@@ -229,7 +240,11 @@ export function localInferenceModelInfo(
 		...previous,
 		id: model,
 		contextWindow: settings.contextWindow,
-		maxInputTokens: settings.maxInputTokens,
+		maxInputTokens: resolveLocalInferenceInputTokens({
+			contextWindow: settings.contextWindow,
+			maxOutputTokens: settings.maxOutputTokens,
+			nativeCounting: settings.inputTokenCounting !== false,
+		}),
 		maxTokens: settings.maxOutputTokens,
 		capabilities: [...capabilities],
 		metadata: { ...previous?.metadata, localInference: settings },
