@@ -249,7 +249,7 @@ export function LocalInferenceSettingsForm({
 				{numeric("maxOutputTokens", "Normal output tokens (including thinking)", effective.maxOutputTokens)}
 				{numeric(
 					"compaction.targetTokens",
-					"Compaction target tokens",
+					"Compaction: Target Tokens",
 					effective.compaction?.targetTokens ?? budget?.targetTokens,
 				)}
 				{numeric(

@@ -23,7 +23,7 @@ describe("native model controls", () => {
 		render(<LocalInferenceSettingsForm config={config()} selectedModelId="A" write={vi.fn()} />)
 		expect(screen.getByLabelText("Maximum context size (tokens)")).toBeEnabled()
 		expect(screen.getByLabelText("Normal output tokens (including thinking)")).toHaveValue(8000)
-		expect(screen.getByLabelText("Compaction target tokens")).toHaveValue(64000)
+		expect(screen.getByLabelText("Compaction: Target Tokens")).toHaveValue(64000)
 		expect(screen.getByLabelText(summaryLabel)).toHaveValue(14000)
 		expect(screen.getByLabelText(summaryLabel)).toHaveStyle({ fontStyle: "italic" })
 		expect(screen.getByLabelText(summaryLabel)).toBeEnabled()
@@ -40,7 +40,7 @@ describe("native model controls", () => {
 	it("does not save unchanged fields when moving focus", () => {
 		const write = vi.fn()
 		render(<LocalInferenceSettingsForm config={config()} selectedModelId="A" write={write} />)
-		fireEvent.blur(screen.getByLabelText("Compaction target tokens"))
+		fireEvent.blur(screen.getByLabelText("Compaction: Target Tokens"))
 		fireEvent.blur(screen.getByLabelText(summaryLabel))
 		fireEvent.blur(screen.getByLabelText("Reasoning effort"))
 		expect(write).not.toHaveBeenCalled()
@@ -59,7 +59,7 @@ describe("native model controls", () => {
 				write={write}
 			/>,
 		)
-		const target = screen.getByLabelText("Compaction target tokens")
+		const target = screen.getByLabelText("Compaction: Target Tokens")
 		expect(target).toHaveStyle({ fontStyle: "normal" })
 		fireEvent.change(target, { target: { value: "" } })
 		expect(target).toHaveValue(null)
@@ -87,7 +87,7 @@ describe("native model controls", () => {
 		fireEvent.blur(output)
 		await waitFor(() => expect(write).toHaveBeenCalledTimes(1))
 		expect(screen.getByLabelText(summaryLabel)).toHaveValue(14000)
-		expect(screen.getByLabelText("Compaction target tokens")).toHaveValue(64000)
+		expect(screen.getByLabelText("Compaction: Target Tokens")).toHaveValue(64000)
 		const summary = screen.getByLabelText(summaryLabel)
 		await waitFor(() => expect(summary).toBeEnabled())
 		fireEvent.change(summary, { target: { value: "10000" } })
