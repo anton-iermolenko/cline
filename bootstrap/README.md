@@ -11,7 +11,7 @@ Checking out or building Cline does not install or activate anything here.
   regression tests, installation instructions and configuration templates.
   No credentials, task records, local installation scripts or private reports
   are included. Authentication and runtime state live outside this repository.
-- [`notifications/`](notifications/): CLI completion/error hook and a Home
+- [`notifications/`](notifications/): CLI completion/error and waiting-for-answer hooks, plus a Home
   Assistant webhook automation example. No YOLO support; YOLO skips CLI hooks.
 
 ## Install the rule supplements

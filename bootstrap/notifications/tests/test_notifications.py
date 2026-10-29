@@ -34,6 +34,24 @@ class Notifications(unittest.TestCase):
             self.assertEqual(set(value), {"source", "status", "message", "timestamp"})
             self.assertNotIn("PRIVATE", text)
 
+    def test_question_tools_send_only_generic_waiting_status(self):
+        for name in ("ask_question", "ask_followup_question", "plan_mode_respond"):
+            text = self.invoke({"hookName": "tool_call", "taskId": "PRIVATE", "workspaceRoots": ["PRIVATE"],
+                                "tool_call": {"name": name, "input": {"question": "PRIVATE", "response": "PRIVATE"}}},
+                               {"CLINE_NOTIFY_DRY_RUN": "1"})
+            value = json.loads(text)
+            self.assertEqual(value["status"], "waiting")
+            self.assertEqual(value["message"], "Cline is waiting for your answer.")
+            self.assertEqual(set(value), {"source", "status", "message", "timestamp"})
+            self.assertNotIn("PRIVATE", text)
+
+    def test_pre_tool_hook_ignores_other_tools_malformed_calls_and_subagents(self):
+        for extra in ({}, {"tool_call": []}, {"tool_call": {"name": "execute_command"}},
+                      {"parent_agent_id": "child", "tool_call": {"name": "ask_question"}}):
+            with patch.object(notifier, "send") as send:
+                self.assertEqual(self.invoke({"hookName": "tool_call", **extra}), "")
+                send.assert_not_called()
+
     def test_unrelated_events_are_ignored(self):
         with patch.object(notifier, "send") as send:
             self.assertEqual(self.invoke({"hookName": "tool_result"}), "")
