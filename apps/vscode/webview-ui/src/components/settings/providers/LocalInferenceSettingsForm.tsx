@@ -217,7 +217,7 @@ export function LocalInferenceSettingsForm({
 							const enabled = event.target.checked
 							let next = { ...settings }
 							if (enabled) {
-								if (key.startsWith("compaction.")) {
+								if (key !== "contextWindow" && key !== "maxOutputTokens") {
 									const field = key.slice(11) as keyof NonNullable<LocalInferenceSettings["compaction"]>
 									next.compaction = { ...settings.compaction, [field]: settings.compaction?.[field] ?? value }
 								} else next[key] = settings[key] ?? value

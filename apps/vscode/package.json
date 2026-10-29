@@ -367,7 +367,7 @@
 		"clean:all": "bun run clean:build && bun run clean:deps",
 		"compile-tests": "node ./scripts/build-tests.js",
 		"watch-tests": "tsc -p . -w --outDir out",
-		"check-types": "bun run protos && bunx tsc --noEmit && bun run check-types:compat && cd webview-ui && bunx tsc --noEmit",
+		"check-types": "bun run protos && bunx tsc --noEmit && bun run check-types:compat && cd webview-ui && bunx tsc -b --pretty false",
 		"check-types:compat": "bunx tsc --project tsconfig.vscode-compat.json --noEmit",
 		"lint": "biome lint --config-path ./biome.jsonc --no-errors-on-unmatched --files-ignore-unknown=true --diagnostic-level=error && bun run lint:proto",
 		"lint:proto": "bash ./scripts/proto-lint.sh",
