@@ -193,9 +193,35 @@ export const fetchWithoutIdleTimeouts: typeof globalThis.fetch = ((
 	} else {
 		dispatcher = proxiedDispatcher ??= new EnvHttpProxyAgent(NO_IDLE_TIMEOUTS)
 	}
+	// The SDK creates global Request objects, while this fetch belongs to the
+	// extension's separately bundled undici. Passing one across that boundary
+	// can stringify it as "[object Request]". Forward its URL and fetch fields
+	// instead; the body stream and cancellation signal remain intact.
+	const request = typeof input === "object" && input !== null && "url" in input ? input : undefined
+	const overrides = Object.fromEntries(Object.entries(init ?? {}).filter(([, value]) => value !== undefined))
+	const requestHeaders: [string, string][] = []
+	request?.headers.forEach((value, name) => requestHeaders.push([name, value]))
+	const requestInit = request
+		? {
+				method: request.method,
+				headers: requestHeaders,
+				body: request.body ?? undefined,
+				signal: request.signal,
+				redirect: request.redirect,
+				credentials: request.credentials,
+				cache: request.cache,
+				mode: request.mode,
+				referrer: request.referrer,
+				referrerPolicy: request.referrerPolicy,
+				integrity: request.integrity,
+				keepalive: request.keepalive,
+				duplex: "half",
+				...overrides,
+			}
+		: init
 	return undiciFetch(
-		input as Parameters<typeof undiciFetch>[0],
-		{ ...init, dispatcher } as Parameters<typeof undiciFetch>[1],
+		(request?.url ?? input) as Parameters<typeof undiciFetch>[0],
+		{ ...requestInit, dispatcher } as Parameters<typeof undiciFetch>[1],
 	) as unknown as Promise<Response>
 }) as typeof globalThis.fetch
 

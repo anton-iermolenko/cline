@@ -63,6 +63,42 @@ function peekResult(providerId: string, entries: Array<[string, ModelInfo]>, def
 }
 
 describe("resolveModelInfo", () => {
+	it.each(["vllm", "llamacpp"])("uses configured native limits over a stale 128K %s selection", async (provider) => {
+		const { resolveModelInfo } = await import("../resolveModelInfo")
+		const providerId = parseProviderId(provider)
+		const store = makeStore({
+			providerId,
+			localInferenceModelId: "fixture-max-context",
+			localInference: { contextWindow: 153600, maxOutputTokens: 7000 },
+		})
+		vi.mocked(store.readSelection).mockReturnValue({
+			providerId,
+			modelId: "fixture-max-context",
+			modelInfo: { contextWindow: 128000, supportsPromptCache: false },
+		})
+		const catalog = makeCatalog()
+		const response = await resolveModelInfo(makeController(store, catalog), {
+			providerId: provider,
+			modelId: "fixture-max-context",
+		})
+		expect(response.source).toBe("native-settings")
+		expect(response.modelInfo?.contextWindow).toBe(153600)
+		expect(response.modelInfo?.maxInputTokens).toBe(146599)
+		expect(response.modelInfo?.maxTokens).toBe(7000)
+		expect(catalog.resolveModels).not.toHaveBeenCalled()
+	})
+	it("does not apply one native model's limits to another requested model", async () => {
+		const { resolveModelInfo } = await import("../resolveModelInfo")
+		const providerId = parseProviderId("vllm")
+		const store = makeStore({
+			providerId,
+			localInferenceModelId: "selected",
+			localInference: { contextWindow: 153600, maxOutputTokens: 7000 },
+		})
+		const response = await resolveModelInfo(makeController(store, makeCatalog()), { providerId: "vllm", modelId: "other" })
+		expect(response.source).toBe("unknown")
+		expect(response.modelInfo).toBeUndefined()
+	})
 	it("returns committed-selection source when a matching selection exists", async () => {
 		const { resolveModelInfo } = await import("../resolveModelInfo")
 		const providerId = parseProviderId("deepseek")

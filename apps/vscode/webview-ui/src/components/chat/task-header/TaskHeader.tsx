@@ -254,6 +254,7 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
 							compactTask={compactTask}
 							contextWindow={selectedModelInfo?.contextWindow}
 							lastApiReqTotalTokens={lastApiReqTotalTokens}
+							maxInputTokens={selectedModelInfo?.maxInputTokens}
 							onSendMessage={onSendMessage}
 							tokensIn={tokensIn}
 							tokensOut={tokensOut}

@@ -1,6 +1,6 @@
 import http from "node:http"
 import net, { type AddressInfo } from "node:net"
-import { Agent, fetch as undiciFetch } from "undici"
+import { Agent, Request as UndiciRequest, fetch as undiciFetch } from "undici"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { fetchWithoutIdleTimeouts } from "./net"
 
@@ -112,5 +112,98 @@ describe("fetchWithoutIdleTimeouts", () => {
 		const response = await fetchWithoutIdleTimeouts(REMOTE_URL)
 		expect(await response.text()).toBe("first token")
 		expect(proxiedRequests).toEqual([new URL(REMOTE_URL).host])
+	})
+})
+
+describe("Request interoperability at the extension fetch boundary", () => {
+	let server: http.Server, base: string
+	beforeAll(async () => {
+		server = http.createServer(async (req, res) => {
+			let raw = ""
+			for await (const chunk of req) raw += chunk
+			if (req.url === "/tokenize") {
+				res.writeHead(200, { "content-type": "application/json" })
+				res.end(JSON.stringify({ count: 40, tokens: Array(40).fill(1), max_model_len: 150000 }))
+				return
+			}
+			if (req.url === "/v1/chat/completions") {
+				res.writeHead(200, { "content-type": "text/event-stream" })
+				res.end(
+					'data: {"id":"fixture","object":"chat.completion.chunk","created":0,"model":"fixture","choices":[{"index":0,"delta":{"content":"Confirmed continuation."},"finish_reason":null}]}\n\ndata: {"id":"fixture","object":"chat.completion.chunk","created":0,"model":"fixture","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+				)
+				return
+			}
+			if (req.url === "/wait") {
+				res.writeHead(200, { "content-type": "text/plain" })
+				res.flushHeaders()
+				return
+			}
+			res.writeHead(200, { "content-type": "application/json" })
+			res.end(JSON.stringify({ method: req.method, header: req.headers["x-marker"], body: raw }))
+		})
+		base = await listen(server)
+	})
+	afterAll(async () => {
+		server.closeAllConnections()
+		await close(server)
+	})
+	it.each(["global", "undici"])("forwards a %s Request with its method, headers and streamed body", async (kind) => {
+		const RequestClass = kind === "global" ? globalThis.Request : UndiciRequest
+		const request = new RequestClass(base + "/echo", {
+			method: "POST",
+			headers: { "x-marker": kind },
+			body: JSON.stringify({ history: "Preserve this." }),
+		})
+		if (kind === "global") expect(request).not.toBeInstanceOf(UndiciRequest)
+		const response = await fetchWithoutIdleTimeouts(request as unknown as Request)
+		expect(await response.json()).toEqual({
+			method: "POST",
+			header: kind,
+			body: JSON.stringify({ history: "Preserve this." }),
+		})
+	})
+	it("honors init overrides when the input is a Request", async () => {
+		const request = new Request(base + "/echo", {
+			method: "POST",
+			headers: { "x-marker": "original" },
+			body: "original body",
+		})
+		const response = await fetchWithoutIdleTimeouts(request, {
+			method: "PUT",
+			headers: { "x-marker": "override" },
+			body: "override body",
+		})
+		expect(await response.json()).toEqual({ method: "PUT", header: "override", body: "override body" })
+	})
+	it("keeps a Request's abort signal attached to its response", async () => {
+		const abort = new AbortController()
+		const response = await fetchWithoutIdleTimeouts(new Request(base + "/wait", { signal: abort.signal }))
+		abort.abort()
+		await expect(response.text()).rejects.toThrow()
+	})
+	it("streams a native summarizer response through the real SDK and extension fetch", async () => {
+		const { generateSummary } = await import("../../../../sdk/packages/core/src/extensions/context/summary-generation")
+		const { resolveSummarizerConfig } = await import("../../../../sdk/packages/core/src/extensions/context/compaction-shared")
+		const config = resolveSummarizerConfig({
+			activeProviderConfig: {
+				providerId: "vllm",
+				modelId: "fixture",
+				baseUrl: base + "/v1",
+				fetch: fetchWithoutIdleTimeouts,
+				maxOutputTokens: 8000,
+				localInference: { contextWindow: 150000, maxOutputTokens: 8000 },
+				modelInfo: { id: "fixture", contextWindow: 150000, maxTokens: 8000 },
+				knownModels: { fixture: { id: "fixture", contextWindow: 150000, maxTokens: 8000 } },
+			},
+			summaryTokens: 14000,
+		})
+		const result = await generateSummary({
+			providerConfig: config,
+			systemPrompt: "Continue the session summary.",
+			request: "New history.",
+			assistantPrefill: "Previous verified facts.\n\n",
+		})
+		expect(result.text).toBe("Confirmed continuation.")
+		expect(result.failed).toBe(false)
 	})
 })
