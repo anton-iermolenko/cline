@@ -749,6 +749,12 @@ export function createContextCompactionPrepareTurn(
 				) {
 					throw error;
 				}
+				if (beforeMeasurement)
+					throw new Error(
+						"Measured summary compaction failed; original context was preserved. " +
+							(error instanceof Error ? error.message : String(error)),
+						{ cause: error },
+					);
 				config.logger?.log(
 					"Agentic compaction failed; falling back to basic compaction",
 					{
@@ -913,7 +919,11 @@ export function createContextCompactionPrepareTurn(
 							continuityCeiling));
 			// Reproject from the original transcript so repeated fallback attempts
 			// do not stack summaries or lose the protected prompt's identity.
-			for (let attempt = 0; attempt < 8 && !acceptable(); attempt++) {
+			for (
+				let attempt = 0;
+				attempt < 8 && !acceptable() && executedStrategy !== "agentic";
+				attempt++
+			) {
 				context.abortSignal.throwIfAborted();
 				const current = afterMeasurement?.inputTokens ?? requestInputTokens;
 				const adjustedTarget = Math.max(

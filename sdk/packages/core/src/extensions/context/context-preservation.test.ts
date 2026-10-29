@@ -119,7 +119,13 @@ describe("task execution context survives compaction", () => {
 		mocks.generate.mockReset().mockImplementation(async function* () {
 			yield {
 				type: "text",
-				text: "Goal: finish the PR. LogSink is fixed and verified but still needs committing. Keep unit tests and update the checklist.",
+				text:
+					"- Goal: finish the PR. LogSink is fixed and verified but still needs committing. Keep unit tests and update the checklist.\n" +
+					Array.from(
+						{ length: 14 },
+						(_, i) =>
+							`- Verified contract ${i}: preserve Logger edits, successful type checking, pending commit, and checklist requirements.`,
+					).join("\n"),
 			};
 			yield { type: "done", success: true };
 		});
@@ -367,7 +373,7 @@ describe("task execution context survives compaction", () => {
 			},
 		})!;
 		const notices = vi.fn();
-		const output = await prepare({
+		const pending = prepare({
 			agentId: "test",
 			conversationId: "moving",
 			parentAgentId: null,
@@ -388,6 +394,14 @@ describe("task execution context survives compaction", () => {
 				),
 			emitStatusNotice: notices,
 		});
+		if (candidateTokens > 62000) {
+			await expect(pending).rejects.toThrow(/original context was preserved/i);
+			expect(
+				notices.mock.calls.some(([, meta]) => meta.phase === "completed"),
+			).toBe(false);
+			return;
+		}
+		const output = await pending;
 		const completed = notices.mock.calls.find(
 			([, meta]) => meta.phase === "completed",
 		)?.[1];
@@ -500,4 +514,69 @@ describe("task execution context survives compaction", () => {
 			notices.mock.calls.find(([, meta]) => meta.phase === "completed")?.[1],
 		).toMatchObject({ tokensAfter: 50000 });
 	});
+});
+
+it("fails closed for a bad measured summary instead of committing a basic fallback", async () => {
+	mocks.generate.mockImplementation(async function* () {
+		yield {
+			type: "text",
+			text: "Now I will inspect the files and continue your task.",
+		};
+		yield { type: "done", success: true };
+	});
+	mocks.count.mockResolvedValue({ inputTokens: 1000, maxInputTokens: 73727 });
+	const messages: MessageWithMetadata[] = [
+		user("original", "Preserve all verified changes."),
+		{
+			role: "assistant",
+			content: "Verified change and exact result. ".repeat(6000),
+		},
+		user("latest", "Continue the review."),
+	];
+	const before = JSON.stringify(messages);
+	const notices = vi.fn();
+	const prepare = createContextCompactionPrepareTurn({
+		providerId: "vllm",
+		modelId: "local",
+		providerConfig: {
+			...providerConfig,
+			providerId: "vllm",
+			localInference: { contextWindow: 81920, maxOutputTokens: 8192 },
+		},
+		compaction: { enabled: true, strategy: "agentic" },
+	})!;
+	await expect(
+		prepare({
+			agentId: "test",
+			conversationId: "test",
+			parentAgentId: null,
+			iteration: 1,
+			messages,
+			apiMessages: messages,
+			systemPrompt: "System",
+			tools: [],
+			model: {
+				id: "local",
+				provider: "vllm",
+				info: providerConfig.knownModels.local,
+			},
+			abortSignal: new AbortController().signal,
+			countRequestInputTokens: async () => ({
+				inputTokens: 73500,
+				source: "tokenized",
+				fingerprint: "before",
+				budgetRevision: "profile",
+				contextWindow: 81920,
+				maxInputTokens: 73727,
+				maxOutputTokens: 8192,
+				compactionBufferTokens: 2048,
+				serverBoundaryTokens: 1,
+			}),
+			emitStatusNotice: notices,
+		}),
+	).rejects.toThrow("original context was preserved");
+	expect(JSON.stringify(messages)).toBe(before);
+	expect(
+		notices.mock.calls.some(([, meta]) => meta?.phase === "completed"),
+	).toBe(false);
 });
