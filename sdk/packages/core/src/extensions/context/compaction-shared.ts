@@ -968,6 +968,14 @@ export function resolveSummarizerConfig(options: {
 						localInference: {
 							...config.localInference,
 							maxOutputTokens: summaryTokens,
+							// The summary is a standalone request. Its output allowance
+							// must not revalidate normal-turn compaction targets against
+							// a different output reservation; retain only counting policy.
+							compaction: config.localInference.compaction
+								? {
+										bufferTokens: config.localInference.compaction.bufferTokens,
+									}
+								: undefined,
 							disabledOverrides:
 								config.localInference.disabledOverrides?.filter(
 									(field) => field !== "maxOutputTokens",

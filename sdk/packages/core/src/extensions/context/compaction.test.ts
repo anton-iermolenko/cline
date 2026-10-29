@@ -5086,7 +5086,7 @@ describe("independent local summary allocation", () => {
 		expect(active.localInference.thinking).toBe(true);
 	});
 	it.each([
-		130000, 141900,
+		121871, 121872, 130000, 141900,
 	])("checks a measured result of %i against the derived local hard cap", async (afterTokens) => {
 		const messages: MessageWithMetadata[] = [
 			{
@@ -5100,7 +5100,8 @@ describe("independent local summary allocation", () => {
 			expect(context.budget.request).toMatchObject({
 				targetTokens: 64000,
 				summaryTokens: 14000,
-				hardCapTokens: 141871,
+				hardCapTokens: 121871,
+				triggerTokens: 141871,
 			});
 			return {
 				messages: [
@@ -5148,7 +5149,7 @@ describe("independent local summary allocation", () => {
 				serverBoundaryTokens: 1,
 			}),
 		});
-		if (afterTokens === 130000)
+		if (afterTokens === 121871)
 			expect((await run)?.messages).toContain(messages[0]);
 		else await expect(run).rejects.toThrow("Original context was preserved");
 	});

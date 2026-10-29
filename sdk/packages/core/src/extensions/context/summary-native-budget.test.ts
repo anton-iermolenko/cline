@@ -33,6 +33,7 @@ it.each([
 		localInference: {
 			contextWindow: 150000,
 			maxOutputTokens: 8000,
+			compaction: { targetTokens: 121871, summaryTokens: 16000 },
 			thinking: true,
 			thinkingBudgetTokens: 2000,
 		},
@@ -65,6 +66,8 @@ it.each([
 	expect(normal.modelInfo.maxTokens).toBe(8000);
 	expect(normal.knownModels.fixture.maxTokens).toBe(8000);
 	expect(normal.localInference.thinking).toBe(true);
+	expect(normal.localInference.compaction.targetTokens).toBe(121871);
+	expect(summary.localInference?.compaction?.targetTokens).toBeUndefined();
 });
 
 it("reserves summary output independently when native counting is unavailable", () => {

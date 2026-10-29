@@ -283,6 +283,8 @@ describe("measured target and protected prompt regressions", () => {
 			modelId: "local",
 			compaction: {
 				enabled: true,
+				// Exercise the plateau independently of capacity-based default targets.
+				targetTokens: 60000,
 				compact: async () => ({ messages: candidate }),
 			},
 		})!;

@@ -98,10 +98,14 @@ export function resolveLocalModelBudget(
 		settings.compaction?.bufferTokens ?? DEFAULT_COMPACTION_BUFFER_TOKENS;
 	if (!Number.isSafeInteger(marginTokens) || marginTokens < 0)
 		throw new Error("Counting margin must be a nonnegative whole number.");
-	const hardCapTokens = inputTokens - marginTokens;
+	const inputCapTokens = inputTokens - marginTokens;
+	// Keep multiple follow-up iterations possible even when a semantic checkpoint
+	// exceeds the preferred target. Scale continuously: 20K at 150K context.
+	const iterationReserveTokens = Math.ceil((contextWindow * 2) / 15);
+	const hardCapTokens = inputCapTokens - iterationReserveTokens;
 	if (hardCapTokens < 1)
 		throw new Error(
-			"Normal output and counting margin leave no input capacity.",
+			"Normal output, counting margin and iteration reserve leave no compaction capacity.",
 		);
 	const defaults = resolveCompactionDefaults(contextWindow);
 	const targetTokens =
@@ -131,12 +135,14 @@ export function resolveLocalModelBudget(
 		boundaryTokens,
 		marginTokens,
 		inputTokens,
+		inputCapTokens,
+		iterationReserveTokens,
 		hardCapTokens,
 		targetTokens,
 		summaryTokens,
 		overheadTokens,
 		recentTokens: Math.max(0, targetTokens - summaryTokens - overheadTokens),
-		growthTokens: Math.max(0, hardCapTokens - targetTokens),
+		growthTokens: inputCapTokens - targetTokens,
 	};
 }
 export type LocalModelBudget = ReturnType<typeof resolveLocalModelBudget>;

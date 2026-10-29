@@ -472,7 +472,9 @@ export function createContextCompactionPrepareTurn(
 			? Math.max(1, maxInputTokens - buffer)
 			: Math.min(
 					maxInputTokens * COMPACTION_TRIGGER_RATIO,
-					localBudget?.hardCapTokens ?? Infinity,
+					localBudget
+						? localBudget.inputCapTokens / underestimateFactor
+						: Infinity,
 				);
 		if (beforeMeasurement)
 			context.emitStatusNotice?.("input-token-count", {
@@ -573,8 +575,11 @@ export function createContextCompactionPrepareTurn(
 
 		// The maximum bounds every compacted request, including default/manual
 		// targets. The message budget already excludes system/tool overhead.
-		const maxResultTokens = isLocal
-			? localBudget?.hardCapTokens
+		const maxResultTokens = localBudget
+			? Math.max(
+					1,
+					Math.floor(localBudget.hardCapTokens / underestimateFactor),
+				)
 			: userCompaction.maxTargetTokens === undefined
 				? undefined
 				: Math.max(
@@ -606,7 +611,7 @@ export function createContextCompactionPrepareTurn(
 					targetTokens: requestTargetTokens,
 					summaryTokens:
 						localBudget?.summaryTokens ?? userCompaction.summaryTokens,
-					hardCapTokens: localBudget?.hardCapTokens,
+					hardCapTokens: localBudget ? maxResultTokens : undefined,
 					overheadTokens: requestOverheadTokens,
 					thresholdRatio: requestTriggerTokens / maxInputTokens,
 					utilizationRatio:
@@ -879,7 +884,9 @@ export function createContextCompactionPrepareTurn(
 					afterMeasurement.inputTokens <=
 						Math.min(
 							localBudget.hardCapTokens,
-							afterMeasurement.maxInputTokens - buffer,
+							afterMeasurement.maxInputTokens -
+								buffer -
+								localBudget.iterationReserveTokens,
 						)) &&
 				afterMeasurement.inputTokens < requestInputTokens;
 			const continuityCeiling =
@@ -966,7 +973,7 @@ export function createContextCompactionPrepareTurn(
 				if (
 					context.messages.length <= 1 &&
 					requestInputTokens <=
-						(localBudget?.hardCapTokens ?? beforeMeasurement.maxInputTokens) &&
+						(localBudget?.inputCapTokens ?? beforeMeasurement.maxInputTokens) &&
 					effectiveMode !== "overflow_recovery"
 				) {
 					if (irreducibleRequests.size >= 32) irreducibleRequests.clear();

@@ -26,7 +26,10 @@ describe("continuous local compaction budgets", () => {
 			targetTokens,
 			marginTokens: 128,
 		});
-		expect(b.hardCapTokens).toBe(contextWindow - 8000 - 1 - 128);
+		expect(b.inputCapTokens).toBe(contextWindow - 8000 - 1 - 128);
+		expect(b.iterationReserveTokens).toBe(Math.ceil((contextWindow * 2) / 15));
+		expect(b.hardCapTokens + b.iterationReserveTokens).toBe(b.inputCapTokens);
+		expect(b.growthTokens).toBeGreaterThanOrEqual(b.iterationReserveTokens);
 		expect(
 			10000 +
 				b.summaryTokens +
@@ -36,6 +39,50 @@ describe("continuous local compaction budgets", () => {
 				b.boundaryTokens +
 				b.growthTokens,
 		).toBe(contextWindow);
+	});
+	it("enforces a growing minimum reserve without changing the compaction trigger", () => {
+		for (const contextWindow of [
+			16000, 32000, 40000, 64000, 100000, 150000, 200000, 300000, 1000000,
+		]) {
+			const defaults = resolveLocalModelBudget({
+				contextWindow,
+				maxOutputTokens: 2000,
+			});
+			const full = resolveLocalModelBudget({
+				contextWindow,
+				maxOutputTokens: 2000,
+				compaction: { targetTokens: defaults.hardCapTokens },
+			});
+			expect(full.growthTokens).toBe(full.iterationReserveTokens);
+			expect(() =>
+				resolveLocalModelBudget({
+					contextWindow,
+					maxOutputTokens: 2000,
+					compaction: { targetTokens: defaults.hardCapTokens + 1 },
+				}),
+			).toThrow("hard cap");
+		}
+		const b = resolveLocalModelBudget({
+			contextWindow: 150000,
+			maxOutputTokens: 8000,
+		});
+		expect(b).toMatchObject({
+			inputCapTokens: 141871,
+			hardCapTokens: 121871,
+			iterationReserveTokens: 20000,
+			targetTokens: 64000,
+			growthTokens: 77871,
+		});
+		const next = resolveLocalModelBudget({
+			contextWindow: 150001,
+			maxOutputTokens: 8000,
+		});
+		expect(
+			next.iterationReserveTokens - b.iterationReserveTokens,
+		).toBeLessThanOrEqual(1);
+		expect(() =>
+			resolveLocalModelBudget({ contextWindow: 10000, maxOutputTokens: 9000 }),
+		).toThrow("iteration reserve");
 	});
 	it("interpolates gradually and plateaus without conversation-count thresholds", () => {
 		expect(resolveCompactionDefaults(82000)).toEqual({
@@ -141,7 +188,7 @@ describe("continuous local compaction budgets", () => {
 				maxOutputTokens: 8000,
 				thinkingBudgetTokens: 2000,
 				compaction: { bufferTokens: 0 },
-			}).hardCapTokens,
+			}).inputCapTokens,
 		).toBe(91999);
 		expect(
 			resolveLocalInferenceInputTokens({
