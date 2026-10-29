@@ -6,11 +6,17 @@ import {
 	refreshProviderModelsFromSource,
 	resolveProviderConfig,
 } from "@cline/core";
+import type { LocalModelProfileId } from "@cline/shared";
 import { isClineProvider } from "@cline/shared";
 import type { ChoiceContext } from "@opentui-ui/dialog";
 import type { DialogActions } from "@opentui-ui/dialog/react";
 import { useCallback } from "react";
 import { getLocalCliInfo } from "../../utils/local-cli";
+import {
+	activateLocalModelProfile,
+	isNativeLocalProvider,
+	readLocalModelProfiles,
+} from "../../utils/local-model-profiles";
 import {
 	getPersistedProviderApiKey,
 	isOAuthProvider,
@@ -407,6 +413,9 @@ export function useModelSelector(opts: {
 				}
 			}
 
+			let pendingLocalProfile:
+				| { modelId: string; profile: LocalModelProfileId }
+				| undefined;
 			let pickingModel = true;
 
 			while (pickingModel) {
@@ -561,6 +570,13 @@ export function useModelSelector(opts: {
 					continue;
 				}
 
+				const profileManager = new ProviderSettingsManager();
+				const modelProfiles = readLocalModelProfiles(
+					profileManager,
+					config.providerId,
+					modelOptions.map((model) => model.key),
+				);
+				let selectedProfile: LocalModelProfileId | undefined;
 				const selectedKey = await dialog.choice<string>({
 					style: { maxHeight: termHeight - 2 },
 					content: (ctx: ChoiceContext<string>) => (
@@ -569,6 +585,10 @@ export function useModelSelector(opts: {
 							currentModel={config.modelId}
 							currentProviderName={providerDisplayName}
 							models={modelOptions}
+							modelProfiles={modelProfiles}
+							onProfileSelect={(_modelId, profile) => {
+								selectedProfile = profile;
+							}}
 							showCustomModelId={config.providerId !== "cline-pass"}
 						/>
 					),
@@ -583,6 +603,19 @@ export function useModelSelector(opts: {
 					continue;
 				}
 
+				if (isNativeLocalProvider(config.providerId)) {
+					pendingLocalProfile = {
+						modelId: selectedKey,
+						profile:
+							selectedProfile ??
+							profileManager.getLocalModelProfileId(
+								config.providerId,
+								selectedKey,
+							),
+					};
+					pickingModel = false;
+					break;
+				}
 				config.modelId = selectedKey;
 
 				const selectedModel = modelOptions.find(
@@ -626,6 +659,14 @@ export function useModelSelector(opts: {
 			}
 
 			await withLoadingDialog(dialog, "Applying model...", async () => {
+				if (pendingLocalProfile) {
+					activateLocalModelProfile(
+						config,
+						new ProviderSettingsManager(),
+						pendingLocalProfile.modelId,
+						pendingLocalProfile.profile,
+					);
+				}
 				await onModelChange();
 			});
 			refocusTextarea();

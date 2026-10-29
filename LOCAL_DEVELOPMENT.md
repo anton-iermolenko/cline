@@ -51,6 +51,30 @@ a workflow is a repository setting, not a source-code deletion. Recheck this
 policy when upstream adds or renames a workflow. Accessible issue/PR maintenance
 workflows remain enabled independently of CI.
 
+## Native local model settings
+
+vLLM and llama.cpp keep Default, Profile 1 and Profile 2 independently for each
+server/model. Configure profiles in VS Code. In CLI `/model`, each native model
+row shows `D P1 P2` with the selected profile in brackets. Tab cycles the
+highlighted model's profile, Enter applies it and Escape discards the draft.
+Use Shift+Tab to select the provider row. Other providers retain Tab for provider
+selection. A profile's first use copies that model's Default settings; a model
+needs a known maximum context size before a profile can be activated.
+
+Token cost estimates are editable in native provider settings, in USD per million
+tokens. Prices belong to the provider/model and apply across its three profiles.
+Explicit prices use normal text; inherited values use grey italics. A missing
+price is unset; an explicit zero is a zero-cost estimate. Clearing a field removes
+only that price override, preserving the other model metadata. These estimates
+use the shared model registry for both clients.
+
+The focused terminal keyboard test runs without starting a CLI session or Hub:
+
+```sh
+cd apps/cli
+bun test src/tests/model-selector-profiles.test.tsx
+```
+
 ## Build the clients from one source
 
 At the clean primary checkout, use the shared fork release helper:
