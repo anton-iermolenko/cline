@@ -1,13 +1,17 @@
-# CLI completion/error notification example
+# CLI status notification hooks
 
 Opt-in file hooks for ordinary CLI mode. `TaskComplete.py` receives `agent_end`
-and `TaskError.py` receives `agent_error`. Completion means a successful runtime
+and `TaskError.py` receives `agent_error`. `PreToolUse.py` receives `tool_call`
+and sends a generic waiting-for-answer notification for `ask_question`,
+`ask_followup_question`, or `plan_mode_respond`. Other tools and subagent question
+events are ignored; question text and tool arguments are never forwarded.
+Completion means a successful runtime
 run/continuation (one submitted turn in interactive mode), not proof that every
 user acceptance criterion passed. Error means the run failed; individual failed
 tool calls are not task errors. Cancellation is not notified. No YOLO support:
 the CLI disables its normal hooks in YOLO mode.
 
-The same `notify.py` handles both events. It sends only generic status/message,
+The same `notify.py` handles all three statuses: `completed`, `error`, and `waiting`. It sends only generic status/message,
 source and UTC timestamp. Prompts, output, exception text, task IDs, branch names,
 user IDs and workspace paths never enter the webhook body. An unset endpoint
 disables sending. Delivery is best effort: one POST with a three-second timeout,
@@ -21,19 +25,21 @@ From the repository root, using Python >=3.11:
 ```sh
 printf '%s' '{"hookName":"agent_end"}' | CLINE_NOTIFY_DRY_RUN=1 python3 bootstrap/notifications/notify.py
 printf '%s' '{"hookName":"agent_error"}' | CLINE_NOTIFY_DRY_RUN=1 python3 bootstrap/notifications/notify.py
+printf '%s' '{"hookName":"tool_call","tool_call":{"name":"ask_question"}}' | CLINE_NOTIFY_DRY_RUN=1 python3 bootstrap/notifications/notify.py
 python3 -m unittest discover -s bootstrap/notifications/tests -v
 ```
 
 ## Install (opt-in, Linux/WSL)
 
 In the target workspace, preserve existing hooks with these names. Copy this
-single script twice; neither needs a repository-specific absolute path:
+single script to each desired hook name; neither needs a repository-specific absolute path:
 
 ```sh
 mkdir -p .cline/hooks
 cp /path/to/cline/bootstrap/notifications/notify.py .cline/hooks/TaskComplete.py
 cp /path/to/cline/bootstrap/notifications/notify.py .cline/hooks/TaskError.py
-chmod +x .cline/hooks/TaskComplete.py .cline/hooks/TaskError.py
+cp /path/to/cline/bootstrap/notifications/notify.py .cline/hooks/PreToolUse.py
+chmod +x .cline/hooks/TaskComplete.py .cline/hooks/TaskError.py .cline/hooks/PreToolUse.py
 ```
 
 Alternatively use `~/.cline/hooks/` for all workspaces. Install only one set to

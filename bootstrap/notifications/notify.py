@@ -15,13 +15,22 @@ class NoRedirect(HTTPRedirectHandler):
 
 
 def notification(event):
-    status = {"agent_end": "completed", "agent_error": "error"}.get(event.get("hookName"))
+    hook = event.get("hookName")
+    status = {"agent_end": "completed", "agent_error": "error"}.get(hook)
+    if hook == "tool_call":
+        tool = event.get("tool_call")
+        if (event.get("parent_agent_id") or not isinstance(tool, dict)
+                or tool.get("name") not in ("ask_question", "ask_followup_question", "plan_mode_respond")):
+            return None
+        status = "waiting"
     if status is None:
         return None
+    messages = {"completed": "Cline work completed.", "error": "Cline encountered an error.",
+                "waiting": "Cline is waiting for your answer."}
     return {
         "source": "cline-cli",
         "status": status,
-        "message": "Cline work completed." if status == "completed" else "Cline encountered an error.",
+        "message": messages[status],
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
