@@ -17,7 +17,10 @@ const mocks = vi.hoisted(() => {
 			return { getApiConfiguration: () => apiConfiguration }
 		},
 		getProviderSettingsManager() {
-			return { getProviderSettings: (providerId: string) => providerSettingsById[providerId] }
+			return {
+				getProviderSettings: (providerId: string) => providerSettingsById[providerId],
+				getLocalModelProfileId: () => "default",
+			}
 		},
 	}
 })

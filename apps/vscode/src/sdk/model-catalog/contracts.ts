@@ -93,6 +93,7 @@ export interface EffectiveProviderConfig {
 	readonly localInference?: import("@cline/shared").LocalInferenceSettings
 	readonly localInferenceModelId?: string
 	readonly localInferenceScope?: string
+	readonly localInferenceProfile?: import("@cline/shared").LocalModelProfileId
 	readonly providerId: ProviderId
 	readonly apiKey?: string
 	readonly baseUrl?: string
@@ -145,6 +146,7 @@ export interface ProviderConfigPatch {
 	readonly localInference?: import("@cline/shared").LocalInferenceSettings
 	readonly localInferenceModelId?: string
 	readonly localInferenceScope?: string
+	readonly localInferenceProfile?: import("@cline/shared").LocalModelProfileId
 	readonly apiKey?: string | null
 	readonly baseUrl?: string | null
 	readonly apiLine?: string | null

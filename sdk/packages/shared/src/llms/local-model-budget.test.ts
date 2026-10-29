@@ -240,3 +240,23 @@ it("rejects non-integral capacities and restores a cleared manual context from t
 		}).contextWindow,
 	).toBe(150000);
 });
+
+it("uses 128 tokens only with native preflight and 2048 when counts are estimated", () => {
+	const base = { contextWindow: 150000, maxOutputTokens: 8000 };
+	expect(resolveLocalModelBudget(base).marginTokens).toBe(128);
+	expect(
+		resolveLocalModelBudget({ ...base, inputTokenCounting: false }),
+	).toMatchObject({
+		marginTokens: 2048,
+		boundaryTokens: 0,
+		inputCapTokens: 139952,
+		hardCapTokens: 119952,
+	});
+	expect(
+		resolveLocalModelBudget({
+			...base,
+			inputTokenCounting: false,
+			compaction: { bufferTokens: 256 },
+		}).marginTokens,
+	).toBe(256);
+});

@@ -160,6 +160,8 @@ export {
 } from "./llms/ai-sdk-format";
 export * from "./llms/gateway";
 export {
+	type LocalModelProfileId,
+	LocalModelProfileIdSchema,
 	type LocalInferenceEngine,
 	type LocalInferenceOverrideField,
 	type LocalInferenceSettings,
@@ -172,6 +174,7 @@ export {
 export {
 	COMPACTION_TRIGGER_RATIO,
 	DEFAULT_COMPACTION_BUFFER_TOKENS,
+	DEFAULT_NATIVE_COMPACTION_BUFFER_TOKENS,
 	DEFAULT_LOCAL_OUTPUT_TOKENS,
 	ESTIMATED_INSTRUCTION_TOKENS,
 	type LocalModelBudget,

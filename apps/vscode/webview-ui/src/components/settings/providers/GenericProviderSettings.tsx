@@ -107,10 +107,25 @@ export const GenericProviderSettings = ({
 						models={models}
 						onSelect={handleModelSelect}
 						selectedModel={selectedModel}
+						selectedModelSuffix={
+							isLocalInference &&
+							config?.providerId === providerId &&
+							config.localInferenceModelId === selectedModel.modelId
+								? config.localInferenceProfile === "p1"
+									? " (P1)"
+									: config.localInferenceProfile === "p2"
+										? " (P2)"
+										: ""
+								: ""
+						}
 					/>
 
 					{isLocalInference && (
-						<LocalInferenceSettingsForm config={config} selectedModelId={selectedModel.modelId} write={write} />
+						<LocalInferenceSettingsForm
+							config={config?.providerId === providerId ? config : undefined}
+							selectedModelId={selectedModel.modelId}
+							write={write}
+						/>
 					)}
 					{!isLocalInference && selectedModel.modelInfo.supportsReasoning === true && (
 						<ReasoningEffortSelector

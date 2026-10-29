@@ -4,7 +4,8 @@ import {
 	resolveLocalInferenceSettings,
 } from "./local-inference";
 
-export const DEFAULT_COMPACTION_BUFFER_TOKENS = 128;
+export const DEFAULT_COMPACTION_BUFFER_TOKENS = 2_048;
+export const DEFAULT_NATIVE_COMPACTION_BUFFER_TOKENS = 128;
 export { DEFAULT_LOCAL_OUTPUT_TOKENS } from "./local-inference";
 export const ESTIMATED_INSTRUCTION_TOKENS = 10_000;
 export const COMPACTION_TRIGGER_RATIO = 0.9;
@@ -95,7 +96,10 @@ export function resolveLocalModelBudget(
 		nativeCounting,
 	})!;
 	const marginTokens =
-		settings.compaction?.bufferTokens ?? DEFAULT_COMPACTION_BUFFER_TOKENS;
+		settings.compaction?.bufferTokens ??
+		(nativeCounting
+			? DEFAULT_NATIVE_COMPACTION_BUFFER_TOKENS
+			: DEFAULT_COMPACTION_BUFFER_TOKENS);
 	if (!Number.isSafeInteger(marginTokens) || marginTokens < 0)
 		throw new Error("Counting margin must be a nonnegative whole number.");
 	const inputCapTokens = inputTokens - marginTokens;

@@ -78,6 +78,8 @@ const mocks = vi.hoisted(() => {
 		getProviderSettingsManager() {
 			return {
 				getProviderSettings: (providerId: string) => providerSettingsById[providerId],
+				getLocalModelProfileId: (providerId: string) =>
+					providerSettingsById[providerId]?.fixtureActiveProfile ?? "default",
 				saveProviderSettings,
 			}
 		},
@@ -1323,4 +1325,29 @@ describe("native local model settings", () => {
 		).toThrow("Provider URL changed")
 		expect(mocks.getSavedProviderSettings("vllm")?.localInference).toEqual({ maxOutputTokens: 7000 })
 	})
+})
+
+it("rejects a delayed Default edit after the active slot changed to P1", async () => {
+	mocks.reset()
+	const original = { contextWindow: 150000, maxOutputTokens: 16000 }
+	mocks.setProviderSettings({
+		vllm: {
+			provider: "vllm",
+			model: "A",
+			baseUrl: "http://fixture/v1",
+			fixtureActiveProfile: "p1",
+			localInference: original,
+		},
+	})
+	const { createProviderConfigStore } = await import("./store")
+	const store = createProviderConfigStore()
+	expect(() =>
+		store.write(parseProviderId("vllm"), {
+			localInference: { contextWindow: 150000, maxOutputTokens: 8000 },
+			localInferenceModelId: "A",
+			localInferenceScope: JSON.stringify(["http://fixture/v1", "A"]),
+			localInferenceProfile: "default",
+		}),
+	).toThrow("Model profile changed")
+	expect(mocks.getSavedProviderSettings("vllm")?.localInference).toEqual(original)
 })

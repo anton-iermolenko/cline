@@ -17,6 +17,7 @@ export interface ModelPickerWithManualEntryProps {
 	error?: string
 	allowsCustomIds: boolean
 	selectedModel: ModelPickerSelection
+	selectedModelSuffix?: string
 	onSelect: (selection: ModelPickerSelection) => void
 }
 
@@ -34,6 +35,7 @@ export function ModelPickerWithManualEntry({
 	error,
 	allowsCustomIds,
 	selectedModel,
+	selectedModelSuffix = "",
 	onSelect,
 }: ModelPickerWithManualEntryProps) {
 	const [isManualEntryVisible, setIsManualEntryVisible] = useState(false)
@@ -56,7 +58,7 @@ export function ModelPickerWithManualEntry({
 	// Force VSCodeDropdown to re-initialize after async catalog/selection
 	// hydration, otherwise it ignores the value prop for dynamically rendered
 	// options. https://github.com/microsoft/vscode-webview-ui-toolkit/issues/433
-	const dropdownKey = `${selectedModel.modelId}:${modelIds.join("\u0000")}`
+	const dropdownKey = `${selectedModel.modelId}:${selectedModelSuffix}:${modelIds.join("\u0000")}`
 
 	const commitCustomModel = (modelId: string) => {
 		const trimmed = modelId.trim()
@@ -102,11 +104,15 @@ export function ModelPickerWithManualEntry({
 						}}
 						value={selectedModelInList ? selectedModel.modelId : ""}>
 						{!selectedModelInList && allowsCustomIds && selectedModel.modelId && (
-							<VSCodeOption value="">{selectedModel.modelId} (not in current list)</VSCodeOption>
+							<VSCodeOption value="">
+								{selectedModel.modelId}
+								{selectedModelSuffix} (not in current list)
+							</VSCodeOption>
 						)}
 						{modelIds.map((modelId) => (
 							<VSCodeOption className="break-words whitespace-normal max-w-full" key={modelId} value={modelId}>
 								{modelId}
+								{modelId === selectedModel.modelId ? selectedModelSuffix : ""}
 							</VSCodeOption>
 						))}
 						{allowsCustomIds && <VSCodeOption value="__custom__">Use custom model ID…</VSCodeOption>}
@@ -118,6 +124,12 @@ export function ModelPickerWithManualEntry({
 				<div role="status">Selected model “{selectedModel.modelId}” is not in the current list.</div>
 			)}
 
+			{!hasModels && selectedModelSuffix && (
+				<div role="status">
+					Selected model: {selectedModel.modelId}
+					{selectedModelSuffix}
+				</div>
+			)}
 			{showManualEntry && (
 				<div style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
 					<VSCodeTextField

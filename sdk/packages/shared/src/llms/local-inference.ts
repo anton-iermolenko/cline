@@ -1,6 +1,8 @@
 import { z } from "zod";
 
 export const DEFAULT_LOCAL_OUTPUT_TOKENS = 8_000;
+export const LocalModelProfileIdSchema = z.enum(["default", "p1", "p2"]);
+export type LocalModelProfileId = z.infer<typeof LocalModelProfileIdSchema>;
 
 export const LOCAL_INFERENCE_OVERRIDE_FIELDS = [
 	"supportsVision",

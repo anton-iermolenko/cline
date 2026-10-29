@@ -173,3 +173,117 @@ describe("native local model profiles", () => {
 		});
 	});
 });
+
+describe("native per-model configuration slots", () => {
+	it.each([
+		"vllm",
+		"llamacpp",
+	])("isolates Default, P1 and P2 and exposes the active %s slot to a fresh CLI manager", (provider) => {
+		const store = manager();
+		store.saveProviderSettings({
+			provider,
+			model: "A",
+			baseUrl: "http://fixture/v1",
+			apiKey: "fixture-secret",
+			localInference: {
+				contextWindow: 150000,
+				maxOutputTokens: 8000,
+				temperature: 0.4,
+			},
+		});
+		const save = (patch: Record<string, unknown>) =>
+			store.saveProviderSettings({
+				...store.getProviderSettings(provider),
+				...patch,
+			});
+		const activate = (slot: "default" | "p1" | "p2") =>
+			store.saveProviderSettings(store.getProviderSettings(provider), {
+				localModelProfile: slot,
+			});
+		activate("p1");
+		expect(store.getLocalModelProfileId(provider)).toBe("p1");
+		expect(
+			store.getProviderSettings(provider)?.localInference?.temperature,
+		).toBe(0.4);
+		save({
+			localInference: {
+				contextWindow: 150000,
+				maxOutputTokens: 16000,
+				temperature: 0.7,
+				compaction: { targetTokens: 61000 },
+			},
+		});
+		activate("p2");
+		// First use copies Default, never the currently active P1.
+		expect(
+			store.getProviderSettings(provider)?.localInference?.temperature,
+		).toBe(0.4);
+		save({
+			localInference: {
+				contextWindow: 150000,
+				maxOutputTokens: 12000,
+				temperature: 0.9,
+			},
+		});
+		activate("default");
+		expect(
+			store.getProviderSettings(provider)?.localInference?.maxOutputTokens,
+		).toBe(8000);
+		activate("p1");
+		expect(
+			store.getProviderSettings(provider)?.localInference?.maxOutputTokens,
+		).toBe(16000);
+		const fresh = new ProviderSettingsManager({
+			filePath: store.getFilePath(),
+		});
+		expect(fresh.getLocalModelProfileId(provider)).toBe("p1");
+		expect(fresh.getLastUsedProviderConfig()).toMatchObject({
+			modelId: "A",
+			maxOutputTokens: 16000,
+			localInference: { temperature: 0.7, compaction: { targetTokens: 61000 } },
+		});
+		save({ model: "B" });
+		expect(store.getLocalModelProfileId(provider)).toBe("default");
+		expect(store.getLocalModelSettings(provider, "A")?.temperature).toBe(0.7);
+		save({ model: "A" });
+		expect(store.getLocalModelProfileId(provider)).toBe("p1");
+		expect(
+			store.getProviderSettings(provider)?.localInference?.temperature,
+		).toBe(0.7);
+		save({ baseUrl: "http://other/v1" });
+		expect(store.getLocalModelProfileId(provider)).toBe("default");
+		save({ baseUrl: "http://fixture/v1" });
+		expect(store.getLocalModelProfileId(provider)).toBe("p1");
+		activate("p2");
+		expect(
+			store.getProviderSettings(provider)?.localInference?.temperature,
+		).toBe(0.9);
+		const entry = store.read().providers[provider];
+		expect(JSON.stringify(entry.localModelProfileSlots)).not.toContain(
+			"fixture-secret",
+		);
+		expect(JSON.stringify(entry.localModelProfiles)).not.toContain(
+			"fixture-secret",
+		);
+	});
+	it("rejects invalid slots or activation without context before modifying persisted state", () => {
+		const store = manager();
+		store.saveProviderSettings({
+			provider: "vllm",
+			model: "unknown",
+			baseUrl: "http://fixture/v1",
+		});
+		const before = readFileSync(store.getFilePath(), "utf8");
+		expect(() =>
+			store.saveProviderSettings(store.getProviderSettings("vllm"), {
+				localModelProfile: "p1",
+			}),
+		).toThrow("Maximum context size is required");
+		expect(() =>
+			store.saveProviderSettings(store.getProviderSettings("vllm"), {
+				localModelProfile: "p3" as "p1",
+			}),
+		).toThrow();
+		expect(readFileSync(store.getFilePath(), "utf8")).toBe(before);
+	});
+});

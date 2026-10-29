@@ -1,4 +1,7 @@
-import { LocalInferenceSettingsSchema } from "@cline/shared";
+import {
+	LocalInferenceSettingsSchema,
+	LocalModelProfileIdSchema,
+} from "@cline/shared";
 import { z } from "zod";
 import {
 	type ProviderClient,
@@ -34,7 +37,17 @@ export interface StoredProviderModes {
 	voiceInput?: VoiceInputSettings;
 }
 
+export const LocalModelProfileSlotsSchema = z.object({
+	selected: LocalModelProfileIdSchema.default("default"),
+	p1: LocalInferenceSettingsSchema.optional(),
+	p2: LocalInferenceSettingsSchema.optional(),
+});
+export type LocalModelProfileSlots = z.infer<
+	typeof LocalModelProfileSlotsSchema
+>;
+
 export interface StoredProviderSettingsEntry {
+	localModelProfileSlots?: Record<string, LocalModelProfileSlots>;
 	settings: ProviderSettings;
 	localModelProfiles?: Record<
 		string,
@@ -75,6 +88,9 @@ export const StoredProviderRepairsSchema: z.ZodType<StoredProviderRepairs> =
 export const StoredProviderSettingsEntrySchema: z.ZodType<StoredProviderSettingsEntry> =
 	z.object({
 		settings: ProviderSettingsSchema,
+		localModelProfileSlots: z
+			.record(z.string(), LocalModelProfileSlotsSchema)
+			.optional(),
 		localModelProfiles: z
 			.record(z.string(), LocalInferenceSettingsSchema)
 			.optional(),

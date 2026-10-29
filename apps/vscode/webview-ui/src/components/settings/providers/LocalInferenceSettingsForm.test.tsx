@@ -205,3 +205,61 @@ describe("native model controls", () => {
 		expect(screen.getByLabelText("Thinking token budget")).toHaveValue(2000)
 	})
 })
+
+describe("model profile buttons", () => {
+	it("activates a saved slot only after acknowledgement and tags subsequent edits with its identity", async () => {
+		const write = vi.fn(async (_patch: unknown) => undefined)
+		const view = render(<LocalInferenceSettingsForm config={config()} selectedModelId="A" write={write} />)
+		expect(screen.getByRole("button", { name: "Default" })).toHaveAttribute("aria-pressed", "true")
+		fireEvent.click(screen.getByRole("button", { name: "Profile 1" }))
+		await waitFor(() => expect(write).toHaveBeenCalledTimes(1))
+		expect(write.mock.calls[0][0]).toEqual({
+			localInferenceModelId: "A",
+			localInferenceScope: "fixture-scope",
+			localInferenceProfile: "p1",
+		})
+		expect(screen.getByRole("button", { name: "Profile 1" })).toHaveAttribute("aria-pressed", "false")
+		const saved = ProviderConfigResponse.create({ ...config(), localInferenceProfile: "p1" })
+		view.rerender(<LocalInferenceSettingsForm config={saved} selectedModelId="A" write={write} />)
+		expect(screen.getByRole("button", { name: "Profile 1" })).toHaveAttribute("aria-pressed", "true")
+		const output = screen.getByLabelText("Normal output tokens (including thinking)")
+		fireEvent.change(output, { target: { value: "16000" } })
+		fireEvent.blur(output)
+		await waitFor(() => expect(write).toHaveBeenCalledTimes(2))
+		expect(write.mock.calls[1][0]).toMatchObject({ localInferenceProfile: "p1" })
+		expect(parse(write.mock.calls[1][0]).maxOutputTokens).toBe(16000)
+	})
+	it("keeps Default active when saving a new profile fails", async () => {
+		const write = vi.fn(async () => {
+			throw new Error("Profile save failed")
+		})
+		render(<LocalInferenceSettingsForm config={config()} selectedModelId="A" write={write} />)
+		fireEvent.click(screen.getByRole("button", { name: "Profile 2" }))
+		expect(await screen.findByRole("alert")).toHaveTextContent("Profile save failed")
+		expect(screen.getByRole("button", { name: "Default" })).toHaveAttribute("aria-pressed", "true")
+	})
+	it("saves an in-focus edit to the current slot before activating another", async () => {
+		const write = vi.fn(async (_patch: unknown) => undefined)
+		render(<LocalInferenceSettingsForm config={config()} selectedModelId="A" write={write} />)
+		fireEvent.change(screen.getByLabelText("Temperature"), { target: { value: "0.8" } })
+		fireEvent.click(screen.getByRole("button", { name: "Profile 1" }))
+		await waitFor(() => expect(write).toHaveBeenCalledTimes(2))
+		expect(parse(write.mock.calls[0][0]).temperature).toBe(0.8)
+		expect(write.mock.calls[0][0]).toMatchObject({ localInferenceProfile: "default" })
+		expect(write.mock.calls[1][0]).toMatchObject({ localInferenceProfile: "p1" })
+		expect((write.mock.calls[1][0] as Record<string, unknown>).localInferenceJson).toBeUndefined()
+	})
+})
+
+it("explains counting discrepancies and shows the larger default without preflight support", () => {
+	render(
+		<LocalInferenceSettingsForm
+			config={config("A", { ...defaults, inputTokenCounting: false })}
+			selectedModelId="A"
+			write={vi.fn()}
+		/>,
+	)
+	expect(screen.getByLabelText("Counting margin (tokens)")).toHaveValue(2048)
+	expect(screen.getByText("Adjustment if preflight and final token counts differ.")).toBeInTheDocument()
+	expect(screen.queryByText("Counting margin (tokens)")).not.toBeInTheDocument()
+})

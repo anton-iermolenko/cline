@@ -321,3 +321,33 @@ describe("ModelPickerWithManualEntry", () => {
 		expect(onSelect).not.toHaveBeenCalled()
 	})
 })
+
+it("shows the saved profile suffix without changing selected or submitted model IDs", () => {
+	const onSelect = vi.fn()
+	const view = render(
+		<ModelPickerWithManualEntry
+			allowsCustomIds={false}
+			isLoading={false}
+			isStale={false}
+			models={models}
+			onSelect={onSelect}
+			selectedModel={selectedModel}
+			selectedModelSuffix=" (P1)"
+		/>,
+	)
+	expect(screen.getByRole("option", { name: "llama3 (P1)" })).toHaveValue("llama3")
+	expect(screen.getByLabelText("Model")).toHaveValue("llama3")
+	fireEvent.change(screen.getByLabelText("Model"), { target: { value: "mistral" } })
+	expect(onSelect.mock.calls[0][0].modelId).toBe("mistral")
+	view.rerender(
+		<ModelPickerWithManualEntry
+			allowsCustomIds={false}
+			isLoading={false}
+			isStale={false}
+			models={models}
+			onSelect={onSelect}
+			selectedModel={selectedModel}
+		/>,
+	)
+	expect(screen.queryByRole("option", { name: "llama3 (P1)" })).not.toBeInTheDocument()
+})
