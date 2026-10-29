@@ -507,6 +507,9 @@ function buildGatewayConfig(config: ProviderConfig) {
 		models: buildGatewayModels(providerId, config),
 		options: {
 			localInference: config.localInference,
+			...(config.continueAssistantMessage !== undefined
+				? { continueAssistantMessage: config.continueAssistantMessage }
+				: {}),
 			region: config.region ?? config.gcp?.region,
 			project: config.gcp?.projectId,
 			projectId: config.gcp?.projectId,

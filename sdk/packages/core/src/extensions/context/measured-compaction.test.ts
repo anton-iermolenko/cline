@@ -57,6 +57,40 @@ function turn(
 	};
 }
 describe("measured compaction", () => {
+	it("rejects a native candidate or fallback that changes an older original user input", async () => {
+		const older: MessageWithMetadata = {
+			id: "older",
+			role: "user",
+			content: "  Keep every original constraint.\n",
+		};
+		const original: MessageWithMetadata[] = [
+			older,
+			{ role: "assistant", content: "Completed work ".repeat(3000) },
+			prompt,
+		];
+		const before = JSON.stringify(original);
+		const prepare = createContextCompactionPrepareTurn({
+			providerId: "vllm",
+			modelId: "local",
+			providerConfig: {
+				providerId: "vllm",
+				modelId: "local",
+				localInference: { contextWindow: 81920, maxOutputTokens: 8192 },
+			},
+			compaction: {
+				enabled: true,
+				compact: async () => ({ messages: [prompt] }),
+			},
+		})!;
+		await expect(
+			prepare(
+				turn(original, async (messages) =>
+					measured(messages === original ? 72000 : 10000),
+				),
+			),
+		).rejects.toThrow("protected_prompt_changed");
+		expect(JSON.stringify(original)).toBe(before);
+	});
 	it("does not compact a measured 26K prompt because JSON or previous usage is large", async () => {
 		const compact = vi.fn();
 		const prepare = createContextCompactionPrepareTurn({

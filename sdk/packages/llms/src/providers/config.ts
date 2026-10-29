@@ -254,6 +254,8 @@ export interface CloudConfig {
  * Provider-specific options that don't fit other categories
  */
 export interface ProviderOptions {
+	/** Continue a supplied assistant prefix on the native vLLM route. Request-scoped. */
+	continueAssistantMessage?: boolean;
 	/** OpenRouter provider sorting preference */
 	openRouterProviderSorting?: string;
 	/** Runtime model catalog refresh configuration */
