@@ -608,8 +608,11 @@ Use the single `wait_for_process` tool for subsequent waiting:
 ```
 
 Then wait sequentially with the returned `revision` as `after_revision`. The tool
-waits internally for log progress, process exit, or the interval to expire;
-routine waits should stay quiet. Omitted `wait_seconds` defaults to 60, values
+batches routine log updates until the requested interval expires, returning the
+latest bounded tail. Log activity, including progress already newer than the
+supplied revision, does not shorten that interval. Process exit, PID identity
+changes, process inspection failures and cancellation still end the wait early.
+Omitted `wait_seconds` defaults to 60, values
 0–60 are accepted, and zero requests an immediate snapshot. There are no managed
 start/wait/cancel tools: launch and termination remain shell operations.
 

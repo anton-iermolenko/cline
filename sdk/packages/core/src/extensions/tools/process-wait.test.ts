@@ -81,31 +81,70 @@ describe("PID-based process waiting", () => {
 		).toMatchObject({ state: "running", revision: 0, changed: false });
 		expect(performance.now() - started).toBeGreaterThanOrEqual(990);
 	});
-	it("wakes on log progress and prevents changing the registered log target", async () => {
+	it.each([
+		undefined,
+		0,
+	])("batches continuous log progress until the deadline (after_revision: %s)", async (afterRevision) => {
 		let reads = 0;
 		const waiter = new ProcessWaiter({
 			probe: async () => found,
 			readLog: async () => {
-				const text = reads++ === 0 ? "batch 1" : "batch 2";
+				const text = `batch ${++reads}`;
 				return { text, signature: text };
 			},
 		});
+		const started = performance.now();
 		const result = await waiter.wait(
-			{ pid: 123, log_path: "run.log", wait_seconds: 2, after_revision: 0 },
+			{
+				pid: 123,
+				log_path: "run.log",
+				wait_seconds: 1,
+				after_revision: afterRevision,
+			},
 			{ ...context, cwd: "/tmp" },
 		);
+		expect(performance.now() - started).toBeGreaterThanOrEqual(990);
+		expect(reads).toBeGreaterThan(1);
 		expect(result).toMatchObject({
 			state: "running",
-			revision: 1,
 			changed: true,
-			output: "batch 2",
+			output: `batch ${reads}`,
 		});
+		expect(result.revision).toBeGreaterThan(0);
 		await expect(
 			waiter.wait(
 				{ pid: 123, log_path: "other.log", wait_seconds: 0 },
 				{ ...context, cwd: "/tmp" },
 			),
 		).rejects.toThrow("original log_path");
+	});
+	it.each([
+		"exited",
+		"identity_changed",
+		"unavailable",
+	] as const)("returns %s before the deadline even with continuous output", async (state) => {
+		let probes = 0,
+			reads = 0;
+		const waiter = new ProcessWaiter({
+			probe: async () =>
+				++probes < 3
+					? found
+					: state === "exited"
+						? { status: "missing" }
+						: state === "unavailable"
+							? { status: "unavailable" }
+							: { ...found, token: "generation-two" },
+			readLog: async () => {
+				const text = `batch ${++reads}`;
+				return { text, signature: text };
+			},
+		});
+		const result = await waiter.wait(
+			{ pid: 123, log_path: "run.log", wait_seconds: 60 },
+			context,
+		);
+		expect(result).toMatchObject({ state, exit_code: null });
+		expect(probes).toBe(3);
 	});
 	it("keeps registrations separate between sessions and stable across executor rebuilds", async () => {
 		const waiter = new ProcessWaiter({ probe: async () => found });
