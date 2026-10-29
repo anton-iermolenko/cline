@@ -4,9 +4,11 @@ import { useDialogPalette } from "../../hooks/use-theme";
 export function ProviderRow({
 	providerName,
 	focused,
+	switchKey = "Tab",
 }: {
 	providerName: string;
 	focused: boolean;
+	switchKey?: string;
 }) {
 	const palette = useDialogPalette();
 	return (
@@ -20,7 +22,7 @@ export function ProviderRow({
 			<text fg="white">{providerName}</text>
 			{!focused && (
 				<text fg="gray" flexShrink={0}>
-					(tab to change provider)
+					({switchKey} to change provider)
 				</text>
 			)}
 			{focused && (

@@ -1,5 +1,6 @@
 import type { ProviderConfigResponse } from "@shared/proto/cline/models"
-import { ApiFormat } from "@shared/proto/cline/models"
+import { ApiFormat, ModelOverrides } from "@shared/proto/cline/models"
+import { toProtobufModelInfo } from "@shared/proto-conversions/models/typeConversion"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type { ChangeEventHandler, ReactNode } from "react"
 import { describe, expect, it, vi } from "vitest"
@@ -53,6 +54,51 @@ vi.mock("@vscode/webview-ui-toolkit/react", async (importOriginal) => {
 })
 
 describe("GenericProviderSettings", () => {
+	it("shows editable native costs and commits them without losing other model overrides", async () => {
+		const commitSelection = vi.fn(async () => undefined)
+		const write = vi.fn(async () => undefined)
+		const info = { supportsPromptCache: false, contextWindow: 150000, inputPrice: 0.01, outputPrice: 0.2 }
+		vi.mocked(useProviderModels).mockReturnValue({
+			models: { A: info },
+			defaultModelId: "A",
+			isLoading: false,
+			isStale: false,
+			error: undefined,
+			refresh: vi.fn(),
+			fingerprint: "fixture",
+		})
+		vi.mocked(useProviderConfig).mockReturnValue({
+			config: providerConfig({
+				providerId: "vllm",
+				localInferenceModelId: "A",
+				localInferenceProfile: "p1",
+				actSelection: {
+					providerId: "vllm",
+					modelId: "A",
+					modelInfo: toProtobufModelInfo(info),
+					overrides: ModelOverrides.create({ inputPrice: 0.01, outputPrice: 0.2, contextWindow: 150000 }),
+				},
+			}),
+			write,
+			commitSelection,
+		})
+		render(
+			<GenericProviderSettings allowsCustomIds currentMode="act" providerId="vllm" providerName="vLLM" showModelOptions />,
+		)
+		expect(screen.getByLabelText("Input cost")).toHaveValue(0.01)
+		expect(screen.getByLabelText("Input cost")).toHaveStyle({ fontStyle: "normal" })
+		fireEvent.change(screen.getByLabelText("Output cost"), { target: { value: "0.3" } })
+		fireEvent.blur(screen.getByLabelText("Output cost"))
+		await waitFor(() =>
+			expect(commitSelection).toHaveBeenCalledWith("act", {
+				providerId: "vllm",
+				modelId: "A",
+				overrides: { contextWindow: 150000, inputPrice: 0.01, outputPrice: 0.3 },
+			}),
+		)
+		expect(write).not.toHaveBeenCalled()
+	})
+
 	it("renders catalog-backed provider settings and commits full model selections", async () => {
 		const commitSelection = vi.fn(async () => undefined)
 		const write = vi.fn(async () => undefined)

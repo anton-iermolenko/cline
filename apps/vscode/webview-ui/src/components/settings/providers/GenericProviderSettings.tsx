@@ -1,3 +1,4 @@
+import { fromProtobufModelOverrides } from "@shared/proto-conversions/models/modelOverrides"
 import { Mode } from "@shared/storage/types"
 import { type ProviderId } from "@/context/ExtensionStateContext"
 import { useProviderConfig } from "@/hooks/useProviderConfig"
@@ -9,6 +10,7 @@ import { ModelInfoView } from "../common/ModelInfoView"
 import ReasoningEffortSelector from "../ReasoningEffortSelector"
 import { useProviderApiKeyField } from "../utils/useProviderApiKeyField"
 import { LocalInferenceSettingsForm } from "./LocalInferenceSettingsForm"
+import { LocalModelCostSettings } from "./LocalModelCostSettings"
 import { type ModelPickerSelection, ModelPickerWithManualEntry } from "./ModelPickerWithManualEntry"
 
 interface GenericProviderBaseUrlFieldConfig {
@@ -45,7 +47,7 @@ export const GenericProviderSettings = ({
 }: GenericProviderSettingsProps) => {
 	const { models, defaultModelId, isLoading, isStale, error } = useProviderModels(providerId)
 	const { config, write, commitSelection } = useProviderConfig(providerId)
-	const { selectedModel, commitModelSelection } = useProviderModelSelection(providerId, currentMode, {
+	const { committedSelection, selectedModel, commitModelSelection } = useProviderModelSelection(providerId, currentMode, {
 		models,
 		defaultModelId,
 		config,
@@ -125,6 +127,15 @@ export const GenericProviderSettings = ({
 							config={config?.providerId === providerId ? config : undefined}
 							selectedModelId={selectedModel.modelId}
 							write={write}
+						/>
+					)}
+					{isLocalInference && (
+						<LocalModelCostSettings
+							disabled={!committedSelection || config?.providerId !== providerId}
+							key={`${providerId}:${selectedModel.modelId}`}
+							modelInfo={selectedModel.modelInfo}
+							onSave={(overrides) => commitModelSelection({ modelId: selectedModel.modelId, overrides })}
+							overrides={fromProtobufModelOverrides(committedSelection?.overrides)}
 						/>
 					)}
 					{!isLocalInference && selectedModel.modelInfo.supportsReasoning === true && (

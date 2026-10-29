@@ -189,6 +189,7 @@ export class ProcessWaiter {
 			request,
 			signal: context.signal,
 			observe: processObservation,
+			wakeOnProgress: false,
 			read: async (_remaining, signal) => {
 				let probe: ProcessStartTokenProbeResult;
 				try {
@@ -275,7 +276,7 @@ export function createWaitForProcessTool(
 		timeoutMs: 65_000,
 		waiting: processWaitCapability,
 		description:
-			"Wait for a process you launched through run_commands using its actual long-lived PID and optional log_path. First call pins its kernel start identity; later calls detect PID reuse. Use wait_seconds=60 and the last after_revision instead of repeated shell sleep/tail/ps checks. Wakes on log progress or exit; quiet timeouts are normal. Returns exited with exit_code=null when the process disappears: this does not prove success. wait_seconds=0 is an immediate snapshot. Cancelling this wait never kills the process. Inspect the log or a launch-written completion record for success/failure.",
+			"Wait for a process you launched through run_commands using its actual long-lived PID and optional log_path. First call pins its kernel start identity; later calls detect PID reuse. Use wait_seconds=60 and the last after_revision instead of repeated shell sleep/tail/ps checks. Batches log progress until the interval expires; process exit, PID identity changes, or process inspection failure return early. New log output does not shorten the requested wait. Returns exited with exit_code=null when the process disappears: this does not prove success. wait_seconds=0 is an immediate snapshot. Cancelling this wait never kills the process. Inspect the log or a launch-written completion record for success/failure.",
 		inputSchema: zodToJsonSchema(ProcessWaitInputSchema),
 		execute: async (input, context) =>
 			executor(ProcessWaitInputSchema.parse(input), {

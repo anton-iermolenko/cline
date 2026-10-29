@@ -1,8 +1,13 @@
 // @jsxImportSource @opentui/react
 import type { Llms } from "@cline/core";
+import type { LocalModelProfileId } from "@cline/shared";
 import type { ChoiceContext } from "@opentui-ui/dialog";
 import { useDialogKeyboard } from "@opentui-ui/dialog/react";
 import { useMemo, useState } from "react";
+import {
+	LOCAL_MODEL_PROFILES,
+	nextLocalModelProfile,
+} from "../../../utils/local-model-profiles";
 import { useDialogPalette } from "../../hooks/use-theme";
 import { ProviderRow } from "./provider-row";
 
@@ -136,6 +141,8 @@ export function ModelSelectorContent(
 		currentProviderName: string;
 		models: ModelOption[];
 		showCustomModelId?: boolean;
+		modelProfiles?: Record<string, LocalModelProfileId>;
+		onProfileSelect?: (modelId: string, profile: LocalModelProfileId) => void;
 	},
 ) {
 	const {
@@ -146,7 +153,17 @@ export function ModelSelectorContent(
 		currentProviderName,
 		models,
 		showCustomModelId = true,
+		modelProfiles,
+		onProfileSelect,
 	} = props;
+	const [draftProfiles, setDraftProfiles] = useState(() => ({
+		...modelProfiles,
+	}));
+	const selectModel = (modelId: string) => {
+		if (modelProfiles)
+			onProfileSelect?.(modelId, draftProfiles[modelId] ?? "default");
+		resolve(modelId);
+	};
 	const [search, setSearch] = useState("");
 	const [selected, setSelected] = useState(() => {
 		const idx = models.findIndex((m) => m.key === currentModel);
@@ -188,7 +205,7 @@ export function ModelSelectorContent(
 			}
 			const model = filtered[safeSelected];
 			if (model) {
-				resolve(model.key);
+				selectModel(model.key);
 				return;
 			}
 			if (showCustomModelId && safeSelected === filtered.length) {
@@ -199,10 +216,14 @@ export function ModelSelectorContent(
 			return;
 		}
 		if (key.name === "tab") {
-			if (onProvider) {
-				setOnProvider(false);
+			const model = filtered[safeSelected];
+			if (modelProfiles && model && !onProvider && !key.shift) {
+				setDraftProfiles((previous) => ({
+					...previous,
+					[model.key]: nextLocalModelProfile(previous[model.key] ?? "default"),
+				}));
 			} else {
-				setOnProvider(true);
+				setOnProvider((value) => !value);
 			}
 			return;
 		}
@@ -251,7 +272,7 @@ export function ModelSelectorContent(
 									setCustomModelError("Enter a model ID");
 									return;
 								}
-								resolve(modelId);
+								selectModel(modelId);
 							}}
 							placeholder=""
 							flexGrow={1}
@@ -272,7 +293,11 @@ export function ModelSelectorContent(
 		<box flexDirection="column" gap={1}>
 			<text>Select Model</text>
 
-			<ProviderRow providerName={currentProviderName} focused={onProvider} />
+			<ProviderRow
+				providerName={currentProviderName}
+				focused={onProvider}
+				switchKey={modelProfiles ? "Shift+Tab" : "Tab"}
+			/>
 
 			<box border borderStyle="rounded" borderColor="gray" paddingX={1}>
 				<input
@@ -292,7 +317,8 @@ export function ModelSelectorContent(
 				selected={safeSelected}
 				dimmed={onProvider}
 				currentModel={currentModel}
-				onSelect={resolve}
+				onSelect={selectModel}
+				modelProfiles={modelProfiles ? draftProfiles : undefined}
 				showCustomModelId={showCustomModelId}
 				onCreateCustomModel={() => {
 					setIsCreatingCustomModel(true);
@@ -302,8 +328,9 @@ export function ModelSelectorContent(
 			/>
 
 			<text fg="gray">
-				Type to search, ↑/↓ navigate, Enter to select, Tab to change provider,
-				Esc to close
+				{modelProfiles
+					? "↑/↓ navigate, Tab profile (D/P1/P2), Shift+Tab provider, Enter to apply, Esc to close"
+					: "Type to search, ↑/↓ navigate, Enter to select, Tab to change provider, Esc to close"}
 			</text>
 		</box>
 	);
@@ -416,6 +443,7 @@ function ModelList(props: {
 	onSelect: (key: string) => void;
 	showCustomModelId: boolean;
 	onCreateCustomModel: () => void;
+	modelProfiles?: Record<string, LocalModelProfileId>;
 }) {
 	const {
 		items,
@@ -425,6 +453,7 @@ function ModelList(props: {
 		onSelect,
 		showCustomModelId,
 		onCreateCustomModel,
+		modelProfiles,
 	} = props;
 	const rows: ({ type: "model"; model: ModelOption } | { type: "custom" })[] = [
 		...items.map((model) => ({ type: "model" as const, model })),
@@ -442,6 +471,11 @@ function ModelList(props: {
 							isSelected={i === selected}
 							dimmed={dimmed}
 							isCurrent={row.model.key === currentModel}
+							profile={
+								modelProfiles
+									? (modelProfiles[row.model.key] ?? "default")
+									: undefined
+							}
 							onSelect={onSelect}
 						/>
 					) : (
@@ -490,6 +524,11 @@ function ModelList(props: {
 						isSelected={itemStart + i === selected}
 						dimmed={dimmed}
 						isCurrent={row.model.key === currentModel}
+						profile={
+							modelProfiles
+								? (modelProfiles[row.model.key] ?? "default")
+								: undefined
+						}
 						onSelect={onSelect}
 					/>
 				) : (
@@ -554,8 +593,9 @@ function ModelRow(props: {
 	dimmed?: boolean;
 	isCurrent: boolean;
 	onSelect: (key: string) => void;
+	profile?: LocalModelProfileId;
 }) {
-	const { model, isSelected, dimmed, isCurrent, onSelect } = props;
+	const { model, isSelected, dimmed, isCurrent, onSelect, profile } = props;
 	const palette = useDialogPalette();
 	const active = isSelected && !dimmed;
 	const bg = active
@@ -591,6 +631,27 @@ function ModelRow(props: {
 				>
 					(current)
 				</text>
+			)}
+			{profile && (
+				<>
+					<box flexGrow={1} />
+					<box flexDirection="row" gap={1} flexShrink={0}>
+						{LOCAL_MODEL_PROFILES.map((slot) => (
+							<text
+								key={slot.id}
+								fg={
+									isSelected
+										? palette.textOnSelection
+										: slot.id === profile
+											? palette.success
+											: "gray"
+								}
+							>
+								{slot.id === profile ? `[${slot.label}]` : slot.label}
+							</text>
+						))}
+					</box>
+				</>
 			)}
 		</box>
 	);
