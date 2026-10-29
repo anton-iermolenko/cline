@@ -27,10 +27,17 @@ capacity rejects model-control saves and native requests; live native counting
 also enforces the server's actual capacity. Normal output defaults to the
 reported server value or 8,000 tokens. Thinking is included in this allowance.
 
-The hard compaction cap is `context - normal output - boundary - counting
-margin`. Native counting reserves one boundary token and defaults to a 128-token
-margin, independently of the preferred compaction target. Neither the hard cap
-nor raw recent-history allocation needs a user-entered limit.
+The input compaction trigger is `context - normal output - boundary - counting
+margin`. The **hard compaction cap** subtracts a further minimum iteration reserve
+of `ceil(context * 2 / 15)` (13⅓% of context): 5,334 tokens at 40K, 20,000 at 150K,
+and 40,000 at 300K. The reserve grows continuously with capacity, including below
+40K and above 300K. It limits post-compaction size, not when normal conversation
+triggers compaction. A preferred target cannot exceed this cap; configurations
+whose output and reserves leave no compaction capacity are rejected.
+
+Native counting reserves one boundary token and defaults to a 128-token counting
+margin. These allowances are separate from the iteration reserve. Neither the
+hard cap nor raw recent-history allocation needs a user-entered limit.
 
 Defaults use continuous linear interpolation between these reference values
 (decimal tokens); from 200K upward they stay at the last allocation. There is no
@@ -46,7 +53,10 @@ message-count threshold.
 | 300,000 | 10,000 | 16,000 | 60,000 | 86,000 |
 
 The context breakdown includes normal output, boundary/margin and the remaining
-iterative problem-solving space. The UI assumes 10K tokens for tools and
+iterative problem-solving space, split into the guaranteed minimum reserve and
+additional space. At 150K with 8K normal output, the trigger is 141,871, the hard
+compaction cap is 121,871 and the default 64K target leaves 77,871 iteration tokens
+(20,000 minimum plus 57,871 additional). The UI assumes 10K tokens for tools and
 instructions; runtime retention substitutes calibrated overhead estimates, and native counting
 verifies the complete assembled request. The
 recent-history budget is `target - summary allowance - actual overhead`, then

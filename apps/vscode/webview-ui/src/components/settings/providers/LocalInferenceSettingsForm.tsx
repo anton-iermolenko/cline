@@ -43,7 +43,8 @@ function ContextBreakdown({ budget }: { budget: LocalModelBudget }) {
 		{ label: "Raw recent history (estimate)", tokens: budget.recentTokens, color: "#2dd4bf" },
 		{ label: "Next normal output (including thinking)", tokens: budget.maxOutputTokens, color: "#fb923c" },
 		{ label: "Counting margin + boundary", tokens: budget.marginTokens + budget.boundaryTokens, color: "#f472b6" },
-		{ label: "Next iterative problem-solving space", tokens: budget.growthTokens, color: "#60a5fa" },
+		{ label: "Minimum iteration reserve", tokens: budget.iterationReserveTokens, color: "#2563eb" },
+		{ label: "Additional iteration space", tokens: budget.growthTokens - budget.iterationReserveTokens, color: "#60a5fa" },
 	]
 	return (
 		<section aria-label="Context budget breakdown" style={{ marginTop: 16 }}>
@@ -72,6 +73,14 @@ function ContextBreakdown({ budget }: { budget: LocalModelBudget }) {
 					<dd style={{ margin: 0 }}>{format(budget.targetTokens)}</dd>
 				</div>
 				<div style={{ display: "contents", fontWeight: 600 }}>
+					<dt>Total iteration space</dt>
+					<dd style={{ margin: 0 }}>{format(budget.growthTokens)}</dd>
+				</div>
+				<div style={{ display: "contents", fontWeight: 600 }}>
+					<dt>Compaction trigger (input)</dt>
+					<dd style={{ margin: 0 }}>{format(budget.inputCapTokens)}</dd>
+				</div>
+				<div style={{ display: "contents", fontWeight: 600 }}>
 					<dt>Hard compaction cap</dt>
 					<dd style={{ margin: 0 }}>{format(budget.hardCapTokens)}</dd>
 				</div>
@@ -80,16 +89,6 @@ function ContextBreakdown({ budget }: { budget: LocalModelBudget }) {
 					<dd style={{ margin: 0 }}>{format(budget.contextWindow)}</dd>
 				</div>
 			</dl>
-			<p style={hint}>
-				Hard cap = context − next output − {budget.boundaryTokens} boundary token − counting margin. The 10,000-token
-				tools/instructions allowance is a preview estimate; runtime retention uses calibrated overhead estimates, and
-				native counting verifies the complete request.
-			</p>
-			<p style={hint}>
-				This is a planning allocation; actual compaction can finish above or below the preferred target within the hard
-				cap. The latest human instruction stays verbatim within the raw-history budget. Older user messages can be
-				summarized. Message/tool boundaries can change the actual retained size; unused summary space is not backfilled.
-			</p>
 			{budget.targetTokens < budget.overheadTokens + budget.summaryTokens && (
 				<p role="status">
 					This target leaves no raw recent history under the 10K overhead estimate. Increase the target or reduce the
@@ -294,11 +293,6 @@ export function LocalInferenceSettingsForm({
 					"Override summarized history",
 				)}
 			</div>
-			<p style={hint}>
-				The compaction target includes tools/instructions, the summary and raw recent history. The summary has its own
-				output limit, independent of normal replies. Defaults increase gradually with context capacity and level off at
-				86K from 200K upward.
-			</p>
 			{budget && <ContextBreakdown budget={budget} />}
 			<details style={{ marginTop: 16 }}>
 				<summary style={{ cursor: "pointer", fontWeight: 600 }}>Advanced settings</summary>

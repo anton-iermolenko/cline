@@ -162,3 +162,39 @@ describe("compaction maximum retention cap", () => {
 		expect(JSON.stringify(original)).toBe(before);
 	});
 });
+
+it("preserves the native iteration reserve when prior usage proves the estimator undercounts", async () => {
+	const compact = vi.fn(async (_context: CoreCompactionContext) => ({
+		messages: [
+			{ role: "assistant" as const, content: "x".repeat(200000) },
+			prompt,
+		],
+	}));
+	const notices = vi.fn();
+	const input = turn(undefined, notices);
+	input.messages = [{ role: "assistant", content: "x".repeat(800000) }, prompt];
+	input.apiMessages = input.messages;
+	input.previousRequestInputTokens = 10000000;
+	const prepare = createContextCompactionPrepareTurn({
+		providerId: "vllm",
+		modelId: "local",
+		providerConfig: {
+			providerId: "vllm",
+			modelId: "local",
+			maxOutputTokens: 8000,
+			localInference: {
+				contextWindow: 150000,
+				maxOutputTokens: 8000,
+				inputTokenCounting: false,
+			},
+		},
+		compaction: { enabled: true, compact },
+	})!;
+	await expect(prepare(input)).rejects.toThrow(
+		"Original context was preserved",
+	);
+	expect(compact.mock.calls[0][0].budget.request.hardCapTokens).toBe(30468);
+	expect(
+		notices.mock.calls.some(([, value]) => value.phase === "completed"),
+	).toBe(false);
+});

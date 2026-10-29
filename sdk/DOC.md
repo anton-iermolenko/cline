@@ -551,8 +551,13 @@ breakdown. `CoreCompactionBudget.request.summaryTokens` carries the reservation
 to the summarizer; normal response output remains independent. Local defaults
 interpolate between the documented 40K–200K anchors and plateau above 200K;
 conversation-pair counts do not choose the target. Native results are accepted
-only below the derived hard cap (`context - normal output - boundary - margin`),
-including semantic checkpoints above the preference. Legacy local
+only at or below the derived hard cap
+(`context - normal output - boundary - margin - ceil(context * 2 / 15)`),
+including semantic checkpoints above the preference. `inputCapTokens` is the
+separate input trigger before subtracting `iterationReserveTokens`; normal
+conversation can use that reserve, while every compacted result leaves it free.
+The reserve scales continuously to 20K at 150K context and 40K at 300K.
+Legacy local
 `maxTargetTokens`/`preserveRecentTokens` fields do not override this policy.
 `disabledOverrides` projects server/calculated defaults without deleting saved
 override numbers; `serverDefaults` retains the context/output discovery baseline.
