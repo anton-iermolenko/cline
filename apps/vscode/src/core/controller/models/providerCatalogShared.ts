@@ -1,4 +1,4 @@
-import { LocalInferenceSettingsSchema } from "@cline/shared"
+import { LocalInferenceSettingsSchema, LocalModelProfileIdSchema } from "@cline/shared"
 import type { ApiConfiguration, ModelInfo } from "@shared/api"
 import { filterChatModelMap, resolveChatModelDefault } from "@/sdk/model-catalog/chat-models"
 import type {
@@ -246,6 +246,7 @@ export function toRedactedProviderConfigResponse(
 		localInferenceJson: config.localInference ? JSON.stringify(config.localInference) : undefined,
 		localInferenceModelId: config.localInferenceModelId,
 		localInferenceScope: config.localInferenceScope,
+		localInferenceProfile: config.localInferenceProfile,
 	})
 }
 
@@ -254,6 +255,13 @@ export function toProviderConfigPatch(protoPatch: WriteProviderConfigPatch | und
 		throw new Error("patch is required")
 	}
 	return {
+		...(protoPatch.localInferenceProfile !== undefined
+			? {
+					localInferenceProfile: LocalModelProfileIdSchema.parse(protoPatch.localInferenceProfile),
+					localInferenceModelId: protoPatch.localInferenceModelId,
+					localInferenceScope: protoPatch.localInferenceScope,
+				}
+			: {}),
 		...(protoPatch.localInferenceJson !== undefined
 			? {
 					localInference: LocalInferenceSettingsSchema.parse(

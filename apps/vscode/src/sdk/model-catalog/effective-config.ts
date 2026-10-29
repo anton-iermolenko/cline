@@ -16,6 +16,7 @@ type ProviderSettingsLike = {
 	readonly localInference?: import("@cline/shared").LocalInferenceSettings
 	readonly localInferenceModelId?: string
 	readonly localInferenceScope?: string
+	readonly localInferenceProfile?: import("@cline/shared").LocalModelProfileId
 	readonly apiKey?: string
 	readonly baseUrl?: string
 	readonly apiLine?: string
@@ -227,6 +228,9 @@ function readProviderSettings(providerId: ProviderId): ConfigParts {
 					}
 				: undefined,
 			localInferenceModelId: readString(settings, "model"),
+			localInferenceProfile: ["vllm", "llamacpp"].includes(providerId.toString())
+				? getProviderSettingsManager().getLocalModelProfileId(toSdkProviderId(providerId))
+				: undefined,
 			localInferenceScope: ["vllm", "llamacpp"].includes(providerId.toString())
 				? localModelProfileKey(readString(settings, "baseUrl"), readString(settings, "model") ?? "")
 				: undefined,
@@ -407,6 +411,7 @@ export function buildEffectiveProviderConfig(providerId: ProviderId): EffectiveP
 		localInference: providerSettings.localInference,
 		localInferenceModelId: providerSettings.localInferenceModelId,
 		localInferenceScope: providerSettings.localInferenceScope,
+		localInferenceProfile: providerSettings.localInferenceProfile,
 	}
 
 	assignIfDefined(merged, "apiKey", stateConfig.apiKey ?? providerSettings.apiKey)

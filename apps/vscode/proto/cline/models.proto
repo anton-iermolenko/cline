@@ -259,6 +259,7 @@ message ProviderConfigResponse {
   optional string local_inference_json = 15;
   optional string local_inference_model_id = 16;
   optional string local_inference_scope = 17;
+  optional string local_inference_profile = 18;
 }
 
 message CommittedModelSelection {
@@ -292,6 +293,7 @@ message WriteProviderConfigPatch {
   optional string local_inference_json = 14;
   optional string local_inference_model_id = 15;
   optional string local_inference_scope = 16;
+  optional string local_inference_profile = 17;
 }
 
 message WriteProviderConfigRequest {

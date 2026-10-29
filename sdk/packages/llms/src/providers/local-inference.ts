@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import {
-	DEFAULT_COMPACTION_BUFFER_TOKENS,
+	DEFAULT_NATIVE_COMPACTION_BUFFER_TOKENS,
 	type LocalInferenceEngine,
 	type LocalInferenceSettings,
 	localInferenceUrl,
@@ -269,7 +269,8 @@ export async function countLocalInferenceRequest(
 		maxInputTokens,
 		maxOutputTokens,
 		compactionBufferTokens:
-			settings.compaction?.bufferTokens ?? DEFAULT_COMPACTION_BUFFER_TOKENS,
+			settings.compaction?.bufferTokens ??
+			DEFAULT_NATIVE_COMPACTION_BUFFER_TOKENS,
 		serverBoundaryTokens,
 	};
 }

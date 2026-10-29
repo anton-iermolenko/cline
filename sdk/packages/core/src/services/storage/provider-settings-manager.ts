@@ -8,7 +8,12 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { basename, dirname } from "node:path";
-import { localInferenceEngine } from "@cline/shared";
+import {
+	localInferenceEngine,
+	type LocalModelProfileId,
+	LocalModelProfileIdSchema,
+	resolveLocalModelBudget,
+} from "@cline/shared";
 import { resolveProviderSettingsPath } from "@cline/shared/storage";
 import { getProviderAuthHandler } from "../../auth/provider-auth-registry";
 import { hashSecret, sdkDebug } from "../../logging/early-logger";
@@ -48,6 +53,8 @@ export interface ProviderSettingsManagerOptions {
 }
 
 export interface SaveProviderSettingsOptions {
+	/** Activate a saved slot for the currently selected native model. */
+	localModelProfile?: LocalModelProfileId;
 	setLastUsed?: boolean;
 	tokenSource?: ProviderTokenSource;
 }
@@ -232,45 +239,79 @@ export class ProviderSettingsManager {
 		const shouldSetLastUsed = options.setLastUsed !== false;
 		const previousEntry = previous.providers[providerId];
 		const localModelProfiles = { ...previousEntry?.localModelProfiles };
+		const localModelProfileSlots = structuredClone(
+			previousEntry?.localModelProfileSlots ?? {},
+		);
+		if (
+			options.localModelProfile !== undefined &&
+			!localInferenceEngine(providerId)
+		)
+			throw new Error("Model profiles require a native local provider");
 		if (localInferenceEngine(providerId)) {
 			const old = previousEntry?.settings;
-			if (old?.model)
-				localModelProfiles[localModelProfileKey(old.baseUrl, old.model)] =
-					old.localInference ?? {};
+			const oldKey = old?.model
+				? localModelProfileKey(old.baseUrl, old.model)
+				: undefined;
+			if (old && oldKey) {
+				const selected = localModelProfileSlots[oldKey]?.selected ?? "default";
+				if (selected === "default")
+					localModelProfiles[oldKey] = old.localInference ?? {};
+				else
+					localModelProfileSlots[oldKey][selected] = old.localInference ?? {};
+			}
 			if (validatedSettings.model) {
+				const model = validatedSettings.model;
 				const key = localModelProfileKey(
 					validatedSettings.baseUrl,
 					validatedSettings.model,
 				);
+				const slots = localModelProfileSlots[key] ?? {
+					selected: "default" as const,
+				};
+				const selected =
+					options.localModelProfile !== undefined
+						? LocalModelProfileIdSchema.parse(options.localModelProfile)
+						: slots.selected;
+				const modelChanged = oldKey !== key;
+				const slotChanged = selected !== slots.selected;
+				const defaults = () =>
+					localModelProfiles[key] ??
+					getLocalModelDefaults(validatedSettings.baseUrl, model, providerId) ??
+					{};
 				if (
-					old &&
-					(old.model !== validatedSettings.model ||
-						old.baseUrl !== validatedSettings.baseUrl)
+					(modelChanged && oldKey !== undefined) ||
+					slotChanged ||
+					!validatedSettings.localInference
 				) {
-					validatedSettings.localInference =
-						localModelProfiles[key] ??
-						getLocalModelDefaults(
-							validatedSettings.baseUrl,
-							validatedSettings.model,
-							providerId,
-						) ??
-						{};
+					validatedSettings.localInference = structuredClone(
+						selected === "default"
+							? defaults()
+							: (slots[selected] ?? defaults()),
+					);
 					delete validatedSettings.reasoning;
 					delete validatedSettings.maxTokens;
 					delete validatedSettings.contextWindow;
-				} else if (!validatedSettings.localInference) {
-					validatedSettings.localInference =
-						localModelProfiles[key] ??
-						getLocalModelDefaults(
+				}
+				if (options.localModelProfile !== undefined)
+					resolveLocalModelBudget({
+						...getLocalModelDefaults(
 							validatedSettings.baseUrl,
 							validatedSettings.model,
 							providerId,
-						) ??
-						{};
-				}
-				localModelProfiles[key] = validatedSettings.localInference;
-			} else if (old?.baseUrl !== validatedSettings.baseUrl) {
-				delete validatedSettings.localInference;
+						),
+						...validatedSettings.localInference,
+					});
+				if (selected === "default")
+					localModelProfiles[key] = validatedSettings.localInference;
+				else slots[selected] = validatedSettings.localInference;
+				slots.selected = selected;
+				if (selected !== "default" || localModelProfileSlots[key])
+					localModelProfileSlots[key] = slots;
+			} else {
+				if (options.localModelProfile !== undefined)
+					throw new Error("Select a model before activating its profile");
+				if (old?.baseUrl !== validatedSettings.baseUrl)
+					delete validatedSettings.localInference;
 			}
 		}
 		const tokenSource =
@@ -281,7 +322,14 @@ export class ProviderSettingsManager {
 				...previous.providers,
 				[providerId]: {
 					settings: validatedSettings,
-					...(localInferenceEngine(providerId) ? { localModelProfiles } : {}),
+					...(localInferenceEngine(providerId)
+						? {
+								localModelProfiles,
+								...(Object.keys(localModelProfileSlots).length
+									? { localModelProfileSlots }
+									: {}),
+							}
+						: {}),
 					updatedAt: nowIso(),
 					tokenSource,
 				},
@@ -377,6 +425,19 @@ export class ProviderSettingsManager {
 		return this.resolveProviderSettings(state, providerId);
 	}
 
+	getLocalModelProfileId(
+		providerId: string,
+		modelId?: string,
+	): LocalModelProfileId {
+		const entry = this.read().providers[providerId];
+		const model = modelId ?? entry?.settings.model;
+		return entry && model && localInferenceEngine(providerId)
+			? (entry.localModelProfileSlots?.[
+					localModelProfileKey(entry.settings.baseUrl, model)
+				]?.selected ?? "default")
+			: "default";
+	}
+
 	hasLocalModelProfile(providerId: string, modelId: string): boolean {
 		const entry = this.read().providers[providerId];
 		return Boolean(
@@ -392,12 +453,15 @@ export class ProviderSettingsManager {
 	): import("@cline/shared").LocalInferenceSettings | undefined {
 		const entry = this.read().providers[providerId];
 		if (!entry || !localInferenceEngine(providerId)) return undefined;
-		return entry.settings.model === modelId
-			? entry.settings.localInference
-			: (entry.localModelProfiles?.[
-					localModelProfileKey(entry.settings.baseUrl, modelId)
-				] ??
-					getLocalModelDefaults(entry.settings.baseUrl, modelId, providerId));
+		if (entry.settings.model === modelId) return entry.settings.localInference;
+		const key = localModelProfileKey(entry.settings.baseUrl, modelId);
+		const slots = entry.localModelProfileSlots?.[key];
+		return (
+			(slots && slots.selected !== "default"
+				? slots[slots.selected]
+				: entry.localModelProfiles?.[key]) ??
+			getLocalModelDefaults(entry.settings.baseUrl, modelId, providerId)
+		);
 	}
 
 	getProviderConfig(

@@ -15,12 +15,19 @@ Verify maximum context and normal output before use. Context, output, thinking, 
 capabilities and compaction controls are saved separately for each provider,
 server and model. Clearing a control restores a reported default where available.
 The main settings are **Maximum context size**, **Normal output (including
-thinking)**, **Compaction target**, and **Compaction: Summarized History Budget**.
+thinking)**, **Compaction: Target Tokens**, and **Compaction: Summarized History Budget**.
 All numeric controls are editable directly. Server/calculated defaults are grey
 italic; editing a value creates an override in normal text. Clearing a value
 returns to its default. Clearing a budget keeps its previous number inactive in
 storage for recoverability, including across model switches. Sampling, penalties,
 normal-turn thinking and **Counting margin** are under **Advanced settings**.
+
+Each native provider/server/model has **Default**, **Profile 1** and **Profile 2**
+buttons. Existing settings become Default. First activation of P1 or P2 creates
+an independent copy of Default; later edits save to that slot. Switching models
+or server URLs restores the selected model's last active slot. The model picker
+adds **(P1)** or **(P2)** only after activation is saved; the actual model ID is
+unchanged. The CLI reads the same active settings from the shared settings file.
 
 Setting **Reasoning support** to **Unsupported** hides the thinking, thinking-budget
 and reasoning-effort controls. Their saved values remain intact, but native
@@ -41,7 +48,10 @@ triggers compaction. A preferred target cannot exceed this cap; configurations
 whose output and reserves leave no compaction capacity are rejected.
 
 Native counting reserves one boundary token and defaults to a 128-token counting
-margin. These allowances are separate from the iteration reserve. Neither the
+margin only for providers with native preflight counting. Configurations that
+declare counting unavailable use a 2,048-token default margin; other providers
+retain their own conservative counting policy. An explicit margin override still
+takes precedence. These allowances are separate from the iteration reserve. Neither the
 hard cap nor raw recent-history allocation needs a user-entered limit.
 
 Defaults use continuous linear interpolation between these reference values

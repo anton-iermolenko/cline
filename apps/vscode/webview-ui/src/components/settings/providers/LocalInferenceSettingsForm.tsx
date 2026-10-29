@@ -1,8 +1,11 @@
 import {
 	DEFAULT_COMPACTION_BUFFER_TOKENS,
+	DEFAULT_NATIVE_COMPACTION_BUFFER_TOKENS,
 	type LocalInferenceOverrideField,
 	type LocalInferenceSettings,
 	type LocalModelBudget,
+	type LocalModelProfileId,
+	LocalModelProfileIdSchema,
 	localInferenceUserOverrides,
 	resolveLocalInferenceSettings,
 	resolveLocalModelBudget,
@@ -106,7 +109,12 @@ export function LocalInferenceSettingsForm({
 }: {
 	config: ProviderConfigResponse | undefined
 	selectedModelId: string
-	write: (patch: { localInferenceJson: string; localInferenceModelId: string; localInferenceScope: string }) => Promise<unknown>
+	write: (patch: {
+		localInferenceJson?: string
+		localInferenceModelId: string
+		localInferenceScope: string
+		localInferenceProfile?: string
+	}) => Promise<unknown>
 }) {
 	const [settings, setSettings] = useState<LocalInferenceSettings>({})
 	const [error, setError] = useState<string>()
@@ -117,8 +125,9 @@ export function LocalInferenceSettingsForm({
 		setSettings(config?.localInferenceJson ? JSON.parse(config.localInferenceJson) : {})
 		setError(undefined)
 		setFieldDrafts({})
-	}, [config?.localInferenceJson, config?.localInferenceModelId, config?.localInferenceScope])
+	}, [config?.localInferenceJson, config?.localInferenceModelId, config?.localInferenceScope, config?.localInferenceProfile])
 	const disabled = saving || !config?.localInferenceModelId || config.localInferenceModelId !== selectedModelId
+	const profile = LocalModelProfileIdSchema.parse(config?.localInferenceProfile ?? "default")
 	const effective = resolveLocalInferenceSettings(settings)
 	const editedFields = localInferenceUserOverrides(settings)
 	const active = (key: LocalInferenceOverrideField) =>
@@ -148,9 +157,31 @@ export function LocalInferenceSettingsForm({
 			setSaving(true)
 			await write({
 				localInferenceJson: JSON.stringify(next),
+				localInferenceProfile: profile,
 				localInferenceModelId: config.localInferenceModelId,
 				localInferenceScope: config.localInferenceScope ?? "",
 			})
+		} catch (e) {
+			setError(e instanceof Error ? e.message : String(e))
+		} finally {
+			setSaving(false)
+		}
+	}
+	const activateProfile = async (selected: LocalModelProfileId) => {
+		if (disabled || selected === profile || !config?.localInferenceModelId) return
+		setError(undefined)
+		setSaving(true)
+		try {
+			const scope = {
+				localInferenceModelId: config.localInferenceModelId,
+				localInferenceScope: config.localInferenceScope ?? "",
+			}
+			if (Object.keys(fieldDrafts).length) {
+				resolveLocalModelBudget(settings)
+				await write({ ...scope, localInferenceJson: JSON.stringify(settings), localInferenceProfile: profile })
+			}
+			await write({ ...scope, localInferenceProfile: selected })
+			setFieldDrafts({})
 		} catch (e) {
 			setError(e instanceof Error ? e.message : String(e))
 		} finally {
@@ -175,7 +206,7 @@ export function LocalInferenceSettingsForm({
 		})
 		void save(settings)
 	}
-	const numeric = (key: LocalInferenceOverrideField, label: string, value: number | undefined) => {
+	const numeric = (key: LocalInferenceOverrideField, label: string, value: number | undefined, caption?: string) => {
 		const custom = active(key)
 		return (
 			<label key={key} style={{ display: "grid", gap: 4, alignContent: "start", minWidth: 0 }}>
@@ -209,7 +240,7 @@ export function LocalInferenceSettingsForm({
 					type="number"
 					value={fieldDrafts[key] ?? value ?? ""}
 				/>
-				<span>{label}</span>
+				<span>{caption ?? label}</span>
 			</label>
 		)
 	}
@@ -243,13 +274,47 @@ export function LocalInferenceSettingsForm({
 	return (
 		<fieldset disabled={disabled} style={{ border: "none", padding: 0, marginTop: 16, minWidth: 0 }}>
 			<legend style={{ fontWeight: 600 }}>Model context & compaction</legend>
+			<div aria-label="Model profiles" role="group" style={{ display: "flex", gap: 8, margin: "8px 0 12px" }}>
+				{(
+					[
+						["default", "Default"],
+						["p1", "Profile 1"],
+						["p2", "Profile 2"],
+					] as const
+				).map(([id, label]) => (
+					<button
+						aria-pressed={profile === id}
+						disabled={disabled || profile === id}
+						key={id}
+						onClick={() => void activateProfile(id)}
+						onMouseDown={(event) => event.preventDefault()}
+						style={{
+							flex: 1,
+							padding: "6px 8px",
+							cursor: "pointer",
+							border: "1px solid var(--vscode-button-border, transparent)",
+							background:
+								profile === id ? "var(--vscode-button-background)" : "var(--vscode-button-secondaryBackground)",
+							color:
+								profile === id ? "var(--vscode-button-foreground)" : "var(--vscode-button-secondaryForeground)",
+						}}
+						title={
+							id === "default"
+								? "Use this model's Default settings"
+								: "Activate saved settings; first use copies Default"
+						}
+						type="button">
+						{label}
+					</button>
+				))}
+			</div>
 			<p style={hint}>Grey italic: server/calculated defaults. Normal: your overrides. Clear a value to use its default.</p>
 			<div style={grid}>
 				{numeric("contextWindow", "Maximum context size (tokens)", effective.contextWindow)}
 				{numeric("maxOutputTokens", "Normal output tokens (including thinking)", effective.maxOutputTokens)}
 				{numeric(
 					"compaction.targetTokens",
-					"Compaction target tokens",
+					"Compaction: Target Tokens",
 					effective.compaction?.targetTokens ?? budget?.targetTokens,
 				)}
 				{numeric(
@@ -303,7 +368,11 @@ export function LocalInferenceSettingsForm({
 				{numeric(
 					"compaction.bufferTokens",
 					"Counting margin (tokens)",
-					effective.compaction?.bufferTokens ?? DEFAULT_COMPACTION_BUFFER_TOKENS,
+					effective.compaction?.bufferTokens ??
+						(effective.inputTokenCounting === false
+							? DEFAULT_COMPACTION_BUFFER_TOKENS
+							: DEFAULT_NATIVE_COMPACTION_BUFFER_TOKENS),
+					"Adjustment if preflight and final token counts differ.",
 				)}
 				<h4>Sampling & penalties</h4>
 				<div style={grid}>{samplingFields.map(([key, label]) => numeric(key, label, effective[key]))}</div>

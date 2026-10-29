@@ -561,6 +561,17 @@ Legacy local
 `maxTargetTokens`/`preserveRecentTokens` fields do not override this policy.
 `disabledOverrides` projects server/calculated defaults without deleting saved
 override numbers; `serverDefaults` retains the context/output discovery baseline.
+`StoredProviderSettingsEntry.localModelProfiles` retains each model's Default
+configuration. Optional `localModelProfileSlots` holds independent `p1`/`p2`
+settings and the selected slot, scoped to the canonical server URL and model ID.
+`saveProviderSettings(..., {localModelProfile})` atomically activates a slot,
+copying Default on first use. Ordinary saves update the active slot; model/server
+switches restore its selection. `getLocalModelProfileId()` reports the active
+identity; `getProviderConfig()` and CLI reads expose the active settings without
+changing model IDs or copying credentials into slots. Native UI writes carry the
+expected profile identity and reject stale edits after a slot switch.
+The default counting margin is 128 tokens for native preflight and 2,048 for
+estimation, with explicit overrides preserved.
 Native local requests with `supportsReasoning: false` omit thinking budgets and
 reasoning effort, including saved or pre-serialized values; stored controls remain
 recoverable. The settings form hides those controls for unsupported models.

@@ -616,13 +616,26 @@ function patchTouchesCredentials(patch: ProviderConfigPatch): boolean {
 function writeProviderSettingsFields(providerId: ProviderId, patch: ProviderConfigPatch): void {
 	const existing = getProviderSettings(providerId)
 	const next: ProviderSettingsRecord = { ...existing }
-	if (patch.localInference !== undefined) {
+	if (patch.localInference !== undefined || patch.localInferenceProfile !== undefined) {
 		if (!["vllm", "llamacpp"].includes(providerId.toString()))
 			throw new Error("Native model controls require a local provider")
 		if (!patch.localInferenceModelId || patch.localInferenceModelId !== existing.model)
 			throw new Error("Selected model changed; reload its configuration before saving")
 		if (patch.localInferenceScope !== localModelProfileKey(existing.baseUrl as string | undefined, existing.model as string))
 			throw new Error("Provider URL changed; reload its configuration before saving")
+		const activeProfile = getProviderSettingsManager().getLocalModelProfileId(providerSettingsProviderId(providerId))
+		if (patch.localInference === undefined) {
+			getProviderSettingsManager().saveProviderSettings(
+				{ ...existing, provider: providerSettingsProviderId(providerId) },
+				{
+					setLastUsed: true,
+					localModelProfile: patch.localInferenceProfile,
+				},
+			)
+			return
+		}
+		if ((patch.localInferenceProfile ?? "default") !== activeProfile)
+			throw new Error("Model profile changed; reload its configuration before saving")
 		next.localInference = {
 			...getLocalModelDefaults(existing.baseUrl as string | undefined, existing.model as string, providerId.toString()),
 			...patch.localInference,
@@ -981,6 +994,14 @@ export function createProviderConfigStore(): ProviderConfigStore {
 
 		write(providerId: ProviderId, patch: ProviderConfigPatch): EffectiveProviderConfig {
 			const sanitizedPatch = sanitizeApiKeyPatch(patch)
+			if (
+				sanitizedPatch.localInferenceProfile !== undefined &&
+				sanitizedPatch.localInference === undefined &&
+				Object.keys(sanitizedPatch).some(
+					(key) => !["localInferenceProfile", "localInferenceModelId", "localInferenceScope"].includes(key),
+				)
+			)
+				throw new Error("Activate a model profile separately from other configuration edits")
 			writeStateFields(providerId, sanitizedPatch)
 			writeProviderSettingsFields(providerId, sanitizedPatch)
 			const config = this.read(providerId)

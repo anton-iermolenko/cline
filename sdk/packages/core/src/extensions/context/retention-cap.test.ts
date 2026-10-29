@@ -193,7 +193,7 @@ it("preserves the native iteration reserve when prior usage proves the estimator
 	await expect(prepare(input)).rejects.toThrow(
 		"Original context was preserved",
 	);
-	expect(compact.mock.calls[0][0].budget.request.hardCapTokens).toBe(30468);
+	expect(compact.mock.calls[0][0].budget.request.hardCapTokens).toBe(29988);
 	expect(
 		notices.mock.calls.some(([, value]) => value.phase === "completed"),
 	).toBe(false);

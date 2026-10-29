@@ -508,3 +508,34 @@ describe("provider model catalog handlers", () => {
 		expect(store.commitSelection).not.toHaveBeenCalled()
 	})
 })
+
+it("round-trips profile activation and keeps model IDs unchanged", async () => {
+	const { writeProviderConfig } = await import("../writeProviderConfig")
+	const providerId = parseProviderId("vllm")
+	const scope = JSON.stringify(["http://fixture/v1", "model-A"])
+	const config: EffectiveProviderConfig = {
+		providerId,
+		localInferenceModelId: "model-A",
+		localInferenceScope: scope,
+		localInferenceProfile: "p1",
+		localInference: { contextWindow: 150000, maxOutputTokens: 8000 },
+	}
+	const store = makeStore(config)
+	const response = await writeProviderConfig(makeController(store, makeCatalog()), {
+		providerId: "vllm",
+		patch: { headers: {}, localInferenceModelId: "model-A", localInferenceScope: scope, localInferenceProfile: "p1" },
+	})
+	expect(store.write).toHaveBeenCalledWith(providerId, {
+		localInferenceModelId: "model-A",
+		localInferenceScope: scope,
+		localInferenceProfile: "p1",
+	})
+	expect(response.localInferenceProfile).toBe("p1")
+	expect(response.localInferenceModelId).toBe("model-A")
+	await expect(
+		writeProviderConfig(makeController(store, makeCatalog()), {
+			providerId: "vllm",
+			patch: { headers: {}, localInferenceModelId: "model-A", localInferenceScope: scope, localInferenceProfile: "p3" },
+		}),
+	).rejects.toThrow()
+})
