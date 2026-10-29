@@ -38,6 +38,21 @@ vi.mock("@/components/ui/button", () => ({
 describe("ContextWindow compact button", () => {
 	beforeEach(() => vi.clearAllMocks())
 
+	it("shows the usable input allowance rather than total context or a catalog fallback", () => {
+		render(
+			<ContextWindow
+				compactDisabled={false}
+				compactTask={vi.fn()}
+				contextWindow={153600}
+				lastApiReqTotalTokens={123500}
+				maxInputTokens={146599}
+				useAutoCondense={false}
+			/>,
+		)
+		expect(screen.getByText("146.6k")).toBeInTheDocument()
+		expect(screen.queryByText("128.0k")).not.toBeInTheDocument()
+		expect(screen.getByRole("progressbar").textContent).toBe(String((123500 / 146599) * 100))
+	})
 	it("runs the shared compact handler after confirmation instead of sending /compact as a message", () => {
 		const compactTask = vi.fn().mockResolvedValue(true)
 		const onSendMessage = vi.fn()

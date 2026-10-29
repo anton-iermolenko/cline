@@ -1,3 +1,4 @@
+import { resolveLocalModelBudget } from "@cline/shared"
 import type { ProviderModelsResult } from "@/sdk/model-catalog/contracts"
 import { providerAllowsCustomModelIds } from "@/sdk/model-catalog/custom-model-ids"
 import { ResolveModelInfoRequest, ResolveModelInfoResponse } from "@/shared/proto/cline/models"
@@ -42,6 +43,29 @@ export async function resolveModelInfo(
 	const requestedModelId = request.modelId?.trim() || ""
 
 	const store = controller.getProviderConfigStore()
+	// Native model limits belong to the selected local profile, not a catalog
+	// fallback (which may fabricate a 128K context for an arbitrary model id).
+	if (["vllm", "llamacpp"].includes(providerId)) {
+		const config = store.read(providerId)
+		const modelId = requestedModelId || config.localInferenceModelId
+		if (modelId && config.localInferenceModelId === modelId && config.localInference?.contextWindow) {
+			const budget = resolveLocalModelBudget(config.localInference)
+			const selection = store.readSelection(providerId, "act") ?? store.readSelection(providerId, "plan")
+			const base = selection?.modelId === modelId ? selection.modelInfo : { supportsPromptCache: false }
+			return ResolveModelInfoResponse.create({
+				providerId,
+				modelId,
+				source: "native-settings",
+				modelInfo: toProtobufModelInfo({
+					...base,
+					contextWindow: budget.contextWindow,
+					maxInputTokens: budget.inputTokens,
+					maxTokens: budget.maxOutputTokens,
+				}),
+			})
+		}
+	}
+
 	// A committed selection whose metadata is pure fallback fabrication (no
 	// catalog/state base and no user overrides) must not shadow the live
 	// catalog below; it is kept only as a last resort before "unknown".

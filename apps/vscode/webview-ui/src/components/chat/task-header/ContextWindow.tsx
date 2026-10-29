@@ -20,6 +20,7 @@ interface ContextWindowProgressProps extends ContextWindowInfoProps {
 	useAutoCondense: boolean
 	lastApiReqTotalTokens?: number
 	contextWindow?: number
+	maxInputTokens?: number
 	compactDisabled: boolean
 	compactTask: () => Promise<boolean>
 	onSendMessage?: (command: string, files: string[], images: string[]) => void
@@ -59,6 +60,7 @@ ConfirmationDialog.displayName = "ConfirmationDialog"
 
 const ContextWindow: React.FC<ContextWindowProgressProps> = ({
 	contextWindow = 0,
+	maxInputTokens,
 	compactDisabled,
 	compactTask,
 	lastApiReqTotalTokens = 0,
@@ -99,15 +101,14 @@ const ContextWindow: React.FC<ContextWindowProgressProps> = ({
 	}, [])
 
 	const tokenData = useMemo(() => {
-		if (!contextWindow) {
-			return null
-		}
+		const allowance = maxInputTokens ?? contextWindow
+		if (!allowance) return null
 		return {
-			percentage: (lastApiReqTotalTokens / contextWindow) * 100,
-			max: contextWindow,
+			percentage: (lastApiReqTotalTokens / allowance) * 100,
+			max: allowance,
 			used: lastApiReqTotalTokens,
 		}
-	}, [contextWindow, lastApiReqTotalTokens])
+	}, [contextWindow, maxInputTokens, lastApiReqTotalTokens])
 
 	const debounceCloseHover = useCallback((e: React.MouseEvent) => {
 		e.preventDefault()

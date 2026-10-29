@@ -120,6 +120,8 @@ message OpenRouterModelInfo {
   optional double temperature = 14;
   optional bool supports_reasoning = 15;
   optional ApiFormat api_format = 16;
+  // Usable prompt allowance, separate from the total input+output context.
+  optional int64 max_input_tokens = 17;
 }
 
 // User-authored per-model metadata stored in models.json.
