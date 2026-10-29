@@ -182,8 +182,16 @@ describe("Request interoperability at the extension fetch boundary", () => {
 		await expect(response.text()).rejects.toThrow()
 	})
 	it("streams a native summarizer response through the real SDK and extension fetch", async () => {
-		const { generateSummary } = await import("../../../../sdk/packages/core/src/extensions/context/summary-generation")
-		const { resolveSummarizerConfig } = await import("../../../../sdk/packages/core/src/extensions/context/compaction-shared")
+		// This runtime integration fixture intentionally loads SDK source outside the
+		// extension root; use built declarations for its compile-time boundary.
+		const contextSource = new URL("../../../../sdk/packages/core/src/extensions/context/", import.meta.url)
+		const { generateSummary }: typeof import("../../../../sdk/packages/core/dist/extensions/context/summary-generation") =
+			await import(new URL("summary-generation.ts", contextSource).href)
+		const {
+			resolveSummarizerConfig,
+		}: typeof import("../../../../sdk/packages/core/dist/extensions/context/compaction-shared") = await import(
+			new URL("compaction-shared.ts", contextSource).href
+		)
 		const config = resolveSummarizerConfig({
 			activeProviderConfig: {
 				providerId: "vllm",
