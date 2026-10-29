@@ -71,6 +71,7 @@ export function createInputTokenCountFetch(
 					JSON.parse(await request.clone().text()),
 					native.engine,
 					native.settings,
+					native.continueAssistantMessage,
 				)
 			: undefined;
 		const nativeCount = native

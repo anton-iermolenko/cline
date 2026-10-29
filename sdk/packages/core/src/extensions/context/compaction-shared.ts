@@ -208,7 +208,10 @@ export function formatToolInput(input: Record<string, unknown>): string {
 		.join(", ");
 }
 
-export function serializeMessage(message: MessageWithMetadata): string {
+export function serializeMessage(
+	message: MessageWithMetadata,
+	options?: { preserveContent?: boolean },
+): string {
 	if (typeof message.content === "string") {
 		return `[${message.role === "user" ? "User" : "Bot"}]: ${message.content}`;
 	}
@@ -231,11 +234,13 @@ export function serializeMessage(message: MessageWithMetadata): string {
 				);
 				break;
 			case "tool_result":
-				lines.push(`[Tool result]: ${flattenToolResultContent(block.content)}`);
+				lines.push(
+					`[Tool result]: ${options?.preserveContent ? normalizeToolResultText(block.content) : flattenToolResultContent(block.content)}`,
+				);
 				break;
 			case "file":
 				lines.push(
-					`[${message.role === "user" ? "User" : "Bot"} file ${block.path}]: ${truncateText(block.content, FILE_CONTENT_CHAR_LIMIT)}`,
+					`[${message.role === "user" ? "User" : "Bot"} file ${block.path}]: ${options?.preserveContent ? block.content : truncateText(block.content, FILE_CONTENT_CHAR_LIMIT)}`,
 				);
 				break;
 			case "image":
@@ -253,8 +258,14 @@ export function serializeMessage(message: MessageWithMetadata): string {
 	return lines.join("\n");
 }
 
-export function serializeConversation(messages: MessageWithMetadata[]): string {
-	return messages.map(serializeMessage).join("\n\n").trim();
+export function serializeConversation(
+	messages: MessageWithMetadata[],
+	options?: { preserveContent?: boolean },
+): string {
+	return messages
+		.map((message) => serializeMessage(message, options))
+		.join("\n\n")
+		.trim();
 }
 
 export function createTokenEstimator(): EstimateMessageTokens {
@@ -857,9 +868,35 @@ export function buildSummaryRequest(options: {
 	previousSummary?: string;
 	conversationText: string;
 	fileOps: FileOperationSummary;
+	append?: boolean;
+	assistantPrefill?: boolean;
+	summaryTokens?: number;
 }): string {
+	if (options.append && options.assistantPrefill) {
+		return [
+			"Write one combined summary of (1) older session notes, already copied verbatim as the assistant prefill, and (2) the NEW historical messages below, which have NOT been summarized yet. The prefill covers only the older notes. Continue with a summary of the new messages; do not repeat the older notes.",
+			"Write only new facts, useful evidence, explicit corrections and unfinished work that belong after the existing notes. If the new messages complete a step marked unfinished in the prefill, explicitly mark it completed. Preserve exact paths and identifiers when useful.",
+			`The final summary-history allowance is ${options.summaryTokens ?? DEFAULT_SUMMARY_MAX_OUTPUT_TOKENS} tokens. Retain useful detail without padding.`,
+			`<new_messages>\n${options.conversationText || "(empty)"}\n</new_messages>`,
+			"Continue directly from the end of the assistant prefill.",
+		].join("\n\n");
+	}
+	if (options.append) {
+		return [
+			"Continue the saved summary by writing ONLY additional information from the new messages below. Do not restate or rewrite the saved summary, paraphrase it, or regenerate its headings: it is already retained verbatim.",
+			"Start directly with new facts or corrections. Preserve concrete decisions, user requirements, observed tool results, exact paths/identifiers and unfinished work. Explicitly correct any outdated statement using the new evidence.",
+			`The final summary-history allowance is ${options.summaryTokens ?? DEFAULT_SUMMARY_MAX_OUTPUT_TOKENS} tokens. Use the available space for useful details, without padding.`,
+			`<saved_summary>\n${options.previousSummary?.trim() ?? ""}\n</saved_summary>`,
+			`<new_messages>\n${options.conversationText || "(empty)"}\n</new_messages>`,
+			"Return only the continuation that will be APPENDED after the saved summary. Do not include any of the saved summary in your response.",
+		].join("\n\n");
+	}
+	const style =
+		options.summaryTokens === undefined
+			? "Be concise and factual."
+			: `Be factual and retain useful detail. The final summary-history allowance is ${options.summaryTokens} tokens; there is no need to pad the notes.`;
 	const parts: string[] = [
-		`Summarize this SAME session for continuation. Be concise and factual. Latest observed tool outcomes and human corrections override earlier plans, claims and summaries.
+		`Summarize this SAME session for continuation. ${style} Latest observed tool outcomes and human corrections override earlier plans, claims and summaries.
 
 ## Goal
 Current objective and scope.

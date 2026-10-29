@@ -120,6 +120,36 @@ describe("target-derived agentic retention", () => {
 		);
 	});
 
+	it("reserves and retains every original human input outside the recent suffix", async () => {
+		const first = { role: "user" as const, content: "  First constraint.\n" };
+		const second = {
+			role: "user" as const,
+			content: "Second correction. " + "context ".repeat(1200),
+		};
+		const messages = [
+			first,
+			...history.slice(1, 50),
+			second,
+			...history.slice(50),
+		];
+		const result = await runAgenticCompaction({
+			context: context(65000, 5000, messages),
+			providerConfig: {
+				providerId: "anthropic",
+				modelId: "mock",
+				modelInfo: { id: "mock", maxInputTokens: 155439 },
+			},
+			estimateMessageTokens: estimate,
+		});
+		expect(result!.messages.filter((m) => m === first)).toHaveLength(1);
+		expect(result!.messages.filter((m) => m === second)).toHaveLength(1);
+		const tokens = result!.messages.reduce(
+			(total, message) => total + estimate(message),
+			0,
+		);
+		expect(tokens).toBeLessThan(61000);
+	});
+
 	it("keeps a tool result with its assistant call when the pair crosses the retention boundary", async () => {
 		const call: MessageWithMetadata = {
 			role: "assistant",

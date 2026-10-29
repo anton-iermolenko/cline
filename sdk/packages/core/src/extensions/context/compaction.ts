@@ -576,10 +576,7 @@ export function createContextCompactionPrepareTurn(
 		// The maximum bounds every compacted request, including default/manual
 		// targets. The message budget already excludes system/tool overhead.
 		const maxResultTokens = localBudget
-			? Math.max(
-					1,
-					Math.floor(localBudget.hardCapTokens / underestimateFactor),
-				)
+			? Math.max(1, Math.floor(localBudget.hardCapTokens / underestimateFactor))
 			: userCompaction.maxTargetTokens === undefined
 				? undefined
 				: Math.max(
@@ -850,18 +847,22 @@ export function createContextCompactionPrepareTurn(
 						)
 					: undefined;
 			afterMeasurement = await measure(result);
-			const protectedPrompt = [...context.messages]
-				.reverse()
-				.find(isTurnStartMessage);
+			const protectedPrompts = isLocal
+				? context.messages.filter(isTurnStartMessage)
+				: [...context.messages]
+						.reverse()
+						.filter(isTurnStartMessage)
+						.slice(0, 1);
 			const protectsCurrentPrompt = (
 				candidate: CoreCompactionResult | undefined,
 			) =>
-				!protectedPrompt ||
-				candidate?.messages.some(
-					(message) =>
-						message.role === protectedPrompt.role &&
-						JSON.stringify(message.content) ===
-							JSON.stringify(protectedPrompt.content),
+				protectedPrompts.every((protectedPrompt) =>
+					candidate?.messages.some(
+						(message) =>
+							message.role === protectedPrompt.role &&
+							JSON.stringify(message.content) ===
+								JSON.stringify(protectedPrompt.content),
+					),
 				);
 			const validCandidate = () =>
 				!!afterMeasurement &&

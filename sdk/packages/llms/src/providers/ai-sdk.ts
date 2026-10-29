@@ -2197,6 +2197,8 @@ function createAiSdkProvider(
 						settings: nativeSettings,
 						baseUrl: config.baseUrl ?? "",
 						timeoutMs: config.timeoutMs,
+						continueAssistantMessage:
+							config.options?.continueAssistantMessage === true,
 					}
 				: undefined;
 			const countEndpoint =

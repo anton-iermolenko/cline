@@ -5,15 +5,16 @@ export async function generateSummary(options: {
 	providerConfig: ProviderConfig;
 	systemPrompt: string;
 	request: string;
+	assistantPrefill?: string;
 	maxOutputChars?: number;
 	signal?: AbortSignal;
 }) {
 	options.signal?.throwIfAborted();
-	const handler = await createHandlerAsync(
-		options.signal
-			? { ...options.providerConfig, abortSignal: options.signal }
-			: options.providerConfig,
-	);
+	const handler = await createHandlerAsync({
+		...options.providerConfig,
+		...(options.signal ? { abortSignal: options.signal } : {}),
+		...(options.assistantPrefill ? { continueAssistantMessage: true } : {}),
+	});
 	options.signal?.throwIfAborted();
 	let text = "";
 	let reasoningChars = 0;
@@ -22,6 +23,9 @@ export async function generateSummary(options: {
 	let incompleteReason: string | undefined;
 	for await (const chunk of handler.createMessage(options.systemPrompt, [
 		{ role: "user", content: options.request },
+		...(options.assistantPrefill
+			? [{ role: "assistant" as const, content: options.assistantPrefill }]
+			: []),
 	])) {
 		options.signal?.throwIfAborted();
 		if (chunk.type === "text") {

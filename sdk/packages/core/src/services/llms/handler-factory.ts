@@ -45,6 +45,9 @@ function buildGatewayProviderOptions(
 		openRouterProviderSorting: config.openRouterProviderSorting,
 		modelCatalog: config.modelCatalog,
 		localInference: config.localInference,
+		...(config.continueAssistantMessage !== undefined
+			? { continueAssistantMessage: config.continueAssistantMessage }
+			: {}),
 	};
 
 	if (usesOpenAICompatibleClient(config)) {

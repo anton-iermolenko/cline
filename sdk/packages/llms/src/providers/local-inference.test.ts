@@ -501,3 +501,45 @@ it.each([
 	).rejects.toThrow("unexpected inference endpoint");
 	expect(delegate).not.toHaveBeenCalled();
 });
+
+describe("native assistant continuation", () => {
+	it("opens the supplied vLLM assistant prefix only when explicitly requested", () => {
+		const prefix = {
+			...body,
+			messages: [
+				{ role: "user", content: "Continue." },
+				{ role: "assistant", content: "Already written.\n\n" },
+			],
+		};
+		const continued = normalizeLocalInferenceRequest(
+			prefix,
+			"vllm",
+			settings,
+			true,
+		);
+		expect(continued.continue_final_message).toBe(true);
+		expect(continued.add_generation_prompt).toBe(false);
+		expect(continued.messages).toBe(prefix.messages);
+		expect(
+			normalizeLocalInferenceRequest(prefix, "vllm", settings),
+		).not.toHaveProperty("continue_final_message");
+	});
+	it.each([
+		"vllm",
+		"llama.cpp",
+	] as const)("rejects an invalid continuation on %s", (engine) => {
+		expect(() =>
+			normalizeLocalInferenceRequest(body, engine, settings, true),
+		).toThrow("Assistant continuation requires");
+	});
+	it("rejects continuation on an unverified engine even with a valid prefix", () => {
+		expect(() =>
+			normalizeLocalInferenceRequest(
+				{ ...body, messages: [{ role: "assistant", content: "Prefix" }] },
+				"llama.cpp",
+				settings,
+				true,
+			),
+		).toThrow("native vLLM");
+	});
+});

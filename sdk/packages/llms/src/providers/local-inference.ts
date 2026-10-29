@@ -11,6 +11,7 @@ import {
 } from "@cline/shared";
 
 export interface NativeCountOptions {
+	continueAssistantMessage?: boolean;
 	engine: LocalInferenceEngine;
 	baseUrl: string;
 	settings: LocalInferenceSettings;
@@ -22,10 +23,29 @@ export function normalizeLocalInferenceRequest(
 	body: Record<string, unknown>,
 	engine: LocalInferenceEngine,
 	settings: LocalInferenceSettings,
+	continueAssistantMessage = false,
 ): Record<string, unknown> {
 	settings = resolveLocalInferenceSettings(settings);
 	resolveLocalModelBudget(settings);
 	const out = { ...body };
+	if (continueAssistantMessage) {
+		const messages = out.messages as
+			| { role?: string; content?: unknown }[]
+			| undefined;
+		const last = messages?.at(-1);
+		if (
+			engine !== "vllm" ||
+			last?.role !== "assistant" ||
+			typeof last.content !== "string" ||
+			!last.content
+		)
+			throw new Error(
+				"Assistant continuation requires an intact final assistant text prefix on native vLLM",
+			);
+		out.continue_final_message = true;
+		out.add_generation_prompt = false;
+	}
+
 	const kwargs = {
 		...((body.chat_template_kwargs as Record<string, unknown>) ?? {}),
 	};
@@ -125,6 +145,7 @@ export function createLocalInferenceFetch(
 			(await request.json()) as Record<string, unknown>,
 			options.engine,
 			options.settings,
+			options.continueAssistantMessage,
 		);
 		return delegate(new Request(request, { body: JSON.stringify(body) }));
 	}) as typeof fetch;

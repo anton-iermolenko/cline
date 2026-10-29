@@ -26,6 +26,7 @@ import {
 	resolveProviderMaxInputTokens,
 	resolveSummarizerConfig,
 	serializeConversation,
+	serializeMessage,
 } from "./compaction-shared";
 import { generateSummary as generateSummaryOnce } from "./summary-generation";
 
@@ -69,68 +70,109 @@ async function generateSummary(
 	return generateSummaryOnce(options);
 }
 
+/** Keep messages and complete tool exchanges intact, including structured output. */
+function summaryUnits(messages: CoreCompactionContext["messages"]): string[] {
+	const units: string[] = [];
+	const pendingCalls = new Set<string>();
+	let exchange: string[] = [];
+	for (const message of messages) {
+		const text = serializeMessage(message, { preserveContent: true });
+		if (text) exchange.push(text);
+		if (Array.isArray(message.content)) {
+			for (const block of message.content) {
+				if (block.type === "tool_use") pendingCalls.add(block.id);
+				if (block.type === "tool_result")
+					pendingCalls.delete(block.tool_use_id);
+			}
+		}
+		if (pendingCalls.size === 0 && exchange.length) {
+			units.push(exchange.join("\n\n"));
+			exchange = [];
+		}
+	}
+	if (exchange.length) units.push(exchange.join("\n\n"));
+	return units;
+}
+
 async function summarizeMeasuredChunks(options: {
 	providerConfig: ProviderConfig;
-	data: string;
+	messages: CoreCompactionContext["messages"];
 	fileOps: ReturnType<typeof extractFileOps>;
+	summaryTokens: number;
 	signal: AbortSignal;
 	logger?: BasicLogger;
 }): Promise<string> {
 	const instruction =
-		"Summarize the provided coding session into a concise continuation note with detailed next steps.";
-	const counter = createAgentModelFromConfig(
-		{
-			providerId: options.providerConfig.providerId,
-			modelId: options.providerConfig.modelId,
-			providerConfig: options.providerConfig,
-			systemPrompt: instruction,
-			tools: [],
-		},
-		undefined,
-	);
-	let position = 0,
-		checkpoint = "",
-		segments = 0;
-	do {
-		options.signal.throwIfAborted();
-		let size = Math.min(80000, options.data.length - position);
-		let request = "";
-		for (let attempt = 0; attempt < 18; attempt++) {
-			request = buildSummaryRequest({
-				previousSummary: checkpoint,
-				conversationText: options.data.slice(position, position + size),
-				fileOps: options.fileOps,
-			});
-			const count = await counter.countInputTokens?.({
+		"Write factual continuation notes for this coding session. Preserve useful details, decisions, user corrections and observed tool outcomes. Do not shorten them into a brief overview.";
+	const makeCounter = (continueAssistantMessage = false) =>
+		createAgentModelFromConfig(
+			{
+				providerId: options.providerConfig.providerId,
+				modelId: options.providerConfig.modelId,
+				providerConfig: { ...options.providerConfig, continueAssistantMessage },
 				systemPrompt: instruction,
-				messages: [
-					{
-						id: "summary-count",
-						createdAt: 0,
-						role: "user",
-						content: [{ type: "text", text: request }],
-					},
-				],
 				tools: [],
-				signal: options.signal,
-				options: {
-					maxTokens: options.providerConfig.maxOutputTokens,
-					thinking: false,
-				},
-			});
-			if (!count)
-				throw new Error(
-					"Summarizer input token counting unavailable; original context was preserved",
-				);
-			if (count.inputTokens <= Math.min(24000, count.maxInputTokens)) break;
-			if (size <= 1 || attempt === 17)
-				throw new Error(
-					"Summarizer instructions and checkpoint cannot fit the measured input allowance",
-				);
-			size = Math.max(1, Math.floor(size / 2));
-		}
+			},
+			undefined,
+		);
+	const counter = makeCounter();
+	const prefillCounter =
+		options.providerConfig.providerId === "vllm"
+			? makeCounter(true)
+			: undefined;
+	let inputAllowance: number | undefined;
+	const count = async (text: string, assistantPrefill?: string) => {
 		options.signal.throwIfAborted();
-		const generated = await generateSummary({
+		const activeCounter = assistantPrefill ? prefillCounter : counter;
+		if (!activeCounter)
+			throw new Error("Assistant prefill counter is unavailable");
+		const measured = await activeCounter.countInputTokens?.({
+			systemPrompt: instruction,
+			messages: [
+				{
+					id: "summary-count",
+					createdAt: 0,
+					role: "user",
+					content: [{ type: "text", text }],
+				},
+				...(assistantPrefill
+					? [
+							{
+								id: "summary-prefill",
+								createdAt: 0,
+								role: "assistant" as const,
+								content: [{ type: "text" as const, text: assistantPrefill }],
+							},
+						]
+					: []),
+			],
+			tools: [],
+			signal: options.signal,
+			options: {
+				maxTokens: options.providerConfig.maxOutputTokens,
+				thinking: false,
+			},
+		});
+		options.signal.throwIfAborted();
+		if (!measured)
+			throw new Error(
+				"Summarizer input token counting unavailable; original context was preserved",
+			);
+		if (
+			inputAllowance !== undefined &&
+			measured.maxInputTokens !== inputAllowance
+		)
+			throw new Error(
+				"Summarizer input allowance changed; original context was preserved",
+			);
+		inputAllowance = measured.maxInputTokens;
+		return measured;
+	};
+	const empty = await count("");
+	const batchInputTokens = Math.max(1, Math.floor(empty.maxInputTokens * 0.4));
+	const generate = async (request: string, assistantPrefill?: string) => {
+		options.signal.throwIfAborted();
+		const result = await generateSummary({
 			providerConfig: {
 				...options.providerConfig,
 				abortSignal: options.signal,
@@ -138,25 +180,114 @@ async function summarizeMeasuredChunks(options: {
 			systemPrompt: instruction,
 			signal: options.signal,
 			request,
+			assistantPrefill,
 			logger: options.logger,
 		});
 		if (
-			!generated.text.trim() ||
-			generated.incompleteReason ||
-			generated.failed ||
-			generated.usedTools
+			!result.text.trim() ||
+			result.incompleteReason ||
+			result.failed ||
+			result.usedTools
 		)
 			throw new Error(
 				"Summarizer returned an empty or incomplete checkpoint; original context was preserved",
 			);
-		checkpoint = generated.text;
-		position += size;
-		if (++segments >= 64 && position < options.data.length)
+		return result.text.trim();
+	};
+	const units = summaryUnits(options.messages);
+	const notes: string[] = [];
+	let position = 0;
+	while (position < units.length) {
+		if (notes.length >= 64)
 			throw new Error(
 				"Compaction exceeded the bounded summary segment limit; original context was preserved",
 			);
-	} while (position < options.data.length);
-	return ensureFilesSection(checkpoint, options.fileOps);
+		const additionHeading =
+			prefillCounter && notes.length
+				? "## Summary of the next historical batch\n"
+				: "";
+		const assistantPrefill = additionHeading
+			? notes.join("\n\n") + "\n\n" + additionHeading
+			: undefined;
+		const requestFor = (end: number) =>
+			buildSummaryRequest({
+				previousSummary: notes.join("\n\n"),
+				conversationText: units.slice(position, end).join("\n\n"),
+				fileOps: options.fileOps,
+				append: notes.length > 0,
+				summaryTokens: options.summaryTokens,
+				assistantPrefill: assistantPrefill !== undefined,
+			});
+		let end = position + 1;
+		let request = requestFor(end);
+		let measured = await count(request, assistantPrefill);
+		if (measured.inputTokens > measured.maxInputTokens)
+			throw new Error(
+				"An intact message/tool exchange and accumulated summary exceed the summarizer input allowance; original context was preserved",
+			);
+		// The 40% batch size is a preference. One oversized exchange remains
+		// whole when it fits the real input allowance.
+		if (measured.inputTokens <= batchInputTokens) {
+			let low = end,
+				high = units.length;
+			while (low < high) {
+				const middle = Math.ceil((low + high) / 2);
+				const candidate = requestFor(middle);
+				const candidateCount = await count(candidate, assistantPrefill);
+				if (candidateCount.inputTokens <= batchInputTokens) {
+					low = middle;
+					request = candidate;
+					measured = candidateCount;
+				} else high = middle - 1;
+			}
+			end = low;
+		}
+		const addition = await generate(request, assistantPrefill);
+		notes.push(additionHeading + addition);
+		options.logger?.log("Compaction summary batch completed", {
+			batch: notes.length,
+			assistantPrefill: assistantPrefill !== undefined,
+			inputTokens: measured.inputTokens,
+			batchInputTokens,
+			units: end - position,
+			additionChars: addition.length,
+			accumulatedChars: notes.join("\n\n").length,
+		});
+		position = end;
+	}
+	let checkpoint = ensureFilesSection(notes.join("\n\n"), options.fileOps);
+	// The model gets a character-size instruction; the tokenizer enforces the
+	// actual quota. Notes below quota are never rewritten just to be shorter.
+	for (let attempt = 0; attempt < 4; attempt++) {
+		const measured = await count(`Context summary:\n\n${checkpoint}`);
+		const summaryTokens = Math.max(0, measured.inputTokens - empty.inputTokens);
+		if (summaryTokens <= options.summaryTokens) {
+			options.logger?.log("Compaction summary quota verified", {
+				summaryTokens,
+				summaryQuotaTokens: options.summaryTokens,
+				batches: notes.length,
+				compressionPasses: attempt,
+			});
+			return checkpoint;
+		}
+		if (attempt === 3) break;
+		const targetChars = Math.max(
+			1,
+			Math.floor(
+				((checkpoint.length * options.summaryTokens) / summaryTokens) * 0.85,
+			),
+		);
+		const request = `Compress the complete continuation notes below to at most ${targetChars} characters (the hard allowance is ${options.summaryTokens} tokens). Preserve user requirements and corrections, confirmed changes, exact paths and identifiers, important tool evidence, unresolved issues and actual next steps. Reconcile contradictions using the latest evidence. Return only the compressed notes.\n\n${checkpoint}`;
+		const compressionCount = await count(request);
+		if (compressionCount.inputTokens > compressionCount.maxInputTokens)
+			throw new Error(
+				"Accumulated summary exceeds the compression input allowance; original context was preserved",
+			);
+		checkpoint = ensureFilesSection(await generate(request), options.fileOps);
+	}
+	throw new Error(
+		"Compaction summary could not fit its token quota; original context was preserved",
+	);
 }
 
 function safeJsonSize(value: unknown): number {
@@ -204,24 +335,29 @@ export async function runAgenticCompaction(options: {
 		preserveRecentTokens,
 		options.estimateMessageTokens,
 	);
-	const latestTypedIndex = messages.map(isTurnStartMessage).lastIndexOf(true);
-	// A user instruction outside the retained tail is reinserted verbatim;
-	// reserve its space separately so it does not silently consume headroom.
-	const protectedPromptTokens =
-		latestTypedIndex >= 0 && latestTypedIndex < cutIndex
-			? options.estimateMessageTokens(messages[latestTypedIndex])
-			: 0;
-	if (protectedPromptTokens > 0) {
-		preserveRecentTokens = Math.max(
-			0,
-			preserveRecentTokens - protectedPromptTokens,
-		);
-		cutIndex = findCutIndex(
+	let protectedPromptTokens = 0;
+	for (;;) {
+		const reserved = messages
+			.slice(0, cutIndex)
+			.filter(isTurnStartMessage)
+			.reduce(
+				(total, message) => total + options.estimateMessageTokens(message),
+				0,
+			);
+		if (reserved === protectedPromptTokens) break;
+		protectedPromptTokens = reserved;
+		const next = findCutIndex(
 			messages,
-			preserveRecentTokens,
+			Math.max(0, preserveRecentTokens - protectedPromptTokens),
 			options.estimateMessageTokens,
 		);
+		if (next === cutIndex) break;
+		cutIndex = next;
 	}
+	preserveRecentTokens = Math.max(
+		0,
+		preserveRecentTokens - protectedPromptTokens,
+	);
 	if (cutIndex <= 0 || cutIndex >= messages.length) {
 		return undefined;
 	}
@@ -236,10 +372,7 @@ export async function runAgenticCompaction(options: {
 	});
 
 	const messagesToSummarize = messages.slice(0, cutIndex);
-	const protectedPrompt =
-		latestTypedIndex >= 0 && latestTypedIndex < cutIndex
-			? messages[latestTypedIndex]
-			: undefined;
+	const protectedPrompts = messagesToSummarize.filter(isTurnStartMessage);
 	const latestSummaryIndex = findLatestSummaryIndex(messagesToSummarize);
 	const previousSummary =
 		latestSummaryIndex >= 0
@@ -263,14 +396,12 @@ export async function runAgenticCompaction(options: {
 		(["vllm", "llamacpp"].includes(summarizerProviderConfig.providerId) &&
 			summarizerProviderConfig.localInference?.inputTokenCounting !== false)
 	) {
-		const folded = messagesToSummarize.filter(
-			(message) => message !== protectedPrompt,
-		);
+		const folded = messagesToSummarize;
 		const fileOps = extractFileOps(folded);
-		const data = serializeConversation(folded);
 		const checkpoint = await summarizeMeasuredChunks({
 			providerConfig: summarizerProviderConfig,
-			data,
+			messages: folded,
+			summaryTokens: summaryReserveTokens,
 			fileOps,
 			signal: options.context.abortSignal ?? new AbortController().signal,
 			logger: options.logger,
@@ -281,9 +412,11 @@ export async function runAgenticCompaction(options: {
 					summary: checkpoint,
 					fileOps,
 					tokensBefore: options.context.budget.request.inputTokens,
-					userRunSpan: countUserRunMessages(folded),
+					userRunSpan: countUserRunMessages(
+						folded.filter((message) => !isTurnStartMessage(message)),
+					),
 				}),
-				...(protectedPrompt ? [protectedPrompt] : []),
+				...protectedPrompts,
 				...messages.slice(cutIndex),
 			],
 		};
@@ -434,10 +567,10 @@ export async function runAgenticCompaction(options: {
 			fileOps,
 			tokensBefore,
 			userRunSpan: countUserRunMessages(
-				messagesToSummarize.filter((message) => message !== protectedPrompt),
+				messagesToSummarize.filter((message) => !isTurnStartMessage(message)),
 			),
 		}),
-		...(protectedPrompt ? [protectedPrompt] : []),
+		...protectedPrompts,
 		...messages.slice(cutIndex),
 	];
 	const tokensAfter = resultMessages.reduce(
