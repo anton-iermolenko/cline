@@ -429,7 +429,7 @@ describe("createAgentModelFromConfig", () => {
 		);
 	});
 
-	it("projects the configured input allowance while preserving the model context window", async () => {
+	it("projects providers.json contextWindow (maxInputTokens) onto the selected gateway model", async () => {
 		const { createAgentModelFromConfig } = await import("./handler-factory");
 
 		createAgentModelFromConfig(
@@ -463,8 +463,50 @@ describe("createAgentModelFromConfig", () => {
 						models: [
 							expect.objectContaining({
 								id: "llama3.1",
-								contextWindow: 131072,
+								contextWindow: 8192,
 								maxInputTokens: 8192,
+							}),
+						],
+					}),
+				],
+			}),
+		);
+	});
+
+	it.each([
+		"vllm",
+		"llamacpp",
+	])("keeps %s total context separate from its measured input allowance", async (providerId) => {
+		const { createAgentModelFromConfig } = await import("./handler-factory");
+		createAgentModelFromConfig(
+			{
+				providerId,
+				modelId: "fixture-qwen",
+				systemPrompt: "",
+				tools: [],
+				providerConfig: {
+					providerId,
+					modelId: "fixture-qwen",
+					maxInputTokens: 146599,
+					maxOutputTokens: 7000,
+					localInference: { contextWindow: 153600, maxOutputTokens: 7000 },
+					knownModels: {
+						"fixture-qwen": { id: "fixture-qwen", contextWindow: 131072 },
+					},
+				},
+			},
+			undefined,
+		);
+		expect(gatewayMock.createGateway).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				providerConfigs: [
+					expect.objectContaining({
+						providerId,
+						models: [
+							expect.objectContaining({
+								id: "fixture-qwen",
+								contextWindow: 153600,
+								maxInputTokens: 146599,
 							}),
 						],
 					}),

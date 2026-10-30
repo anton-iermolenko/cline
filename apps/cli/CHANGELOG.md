@@ -4,6 +4,7 @@
 
 - Compaction summarizes complete chronological history windows, retaining user requirements, actions/results, code and documentation knowledge, corrections, and unfinished work. Capped notes are retained; bounded fallback passes and balanced adjacent reductions keep summary work within limits without repeatedly crushing the oldest note.
 - Resume, repeated Undo/checkpoint restore, edited-message regeneration, and native prepared-request counting preserve validated compaction state and the selected model's actual input limits. VS Code resume cleanup preserves message metadata required to reuse saved compaction.
+- Explicit Ollama context overrides still control `num_ctx`; native vLLM/llama.cpp keep their total context separate from the usable input allowance, including when catalog metadata is stale.
 - Native local providers gain Default/P1/P2 settings per provider/server/model, a full context budget breakdown, editable token-cost estimates, and model IDs/profile labels in CLI and editor controls.
 - Native/headless commands that exceed the foreground wait continue under the same PID with captured output and a log; process waits batch progress until their deadline.
 - Refresh fork documentation, configuration screenshots, and branding around sustained local-model workflows. Desktop backend bundles now carry the same SDK runtime fingerprint as the CLI; CI checks cover separate context/input allowances, sanitized corrupt-history failures, and an explicitly installed Python runtime.

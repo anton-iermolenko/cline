@@ -127,10 +127,18 @@ export function resolveKnownModelsFromConfig(
 	// the right limits (e.g. Ollama's num_ctx derives from the resolved
 	// model's context window):
 	//  - `maxInputTokens` is where `ProviderSettings.contextWindow` lands via
-	//    `toProviderConfig` (the providers.json path used by CLI/Core hosts).
+	//    `toProviderConfig` for general providers (including Ollama num_ctx).
+	//    Native providers instead put the prepared input allowance here and
+	//    keep their total context in localInference/model metadata.
 	//  - `modelInfo` is an explicit per-model override (the VS Code path);
 	//    it wins over the generic limit.
 	const configuredContextWindow = readPositiveInteger(pc?.maxInputTokens);
+	const nativeInputAllowance =
+		config.providerId === "vllm" || config.providerId === "llamacpp";
+	const nativeContextWindow = nativeInputAllowance
+		? (readPositiveInteger(pc?.localInference?.contextWindow) ??
+			knownModels?.[config.modelId]?.contextWindow)
+		: undefined;
 	const modelInfo =
 		pc?.modelInfo && pc.modelInfo.id === config.modelId
 			? pc.modelInfo
@@ -144,9 +152,7 @@ export function resolveKnownModelsFromConfig(
 			...knownModels?.[config.modelId],
 			...(configuredContextWindow !== undefined
 				? {
-						contextWindow:
-							knownModels?.[config.modelId]?.contextWindow ??
-							configuredContextWindow,
+						contextWindow: nativeContextWindow ?? configuredContextWindow,
 						maxInputTokens: configuredContextWindow,
 					}
 				: {}),
