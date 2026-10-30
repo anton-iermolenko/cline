@@ -28,6 +28,8 @@ class ReleaseTests(unittest.TestCase):
             (root / "apps/vscode/assets").mkdir()
             (root / "assets/branding").mkdir(parents=True)
             (root / "assets/branding/ai-local-banner.png").write_text("<svg/>")
+            (root / "assets/screenshots").mkdir()
+            (root / "assets/screenshots/local-model-settings.png").write_bytes(b"settings screenshot")
             (root / "README.md").write_text("What this fork provides\nassets/branding/ai-local-banner.png\n")
             metadata = {"version": "2026.10.1", "displayName": "Cline / AI Local", "description": "Local models"}
             with self.assertRaisesRegex(RuntimeError, "compiler failed"):
@@ -36,10 +38,12 @@ class ReleaseTests(unittest.TestCase):
                     self.assertEqual(extension["version"], "2026.10.1")
                     self.assertEqual(extension["publisher"], "preserved")
                     self.assertIn("assets/branding/ai-local-banner.png", readme.read_text())
+                    self.assertEqual((root / "apps/vscode/assets/screenshots/local-model-settings.png").read_bytes(), b"settings screenshot")
                     raise RuntimeError("compiler failed")
             for path, expected in originals.items():
                 self.assertEqual(path.read_bytes(), expected)
             self.assertFalse((root / "apps/vscode/assets/branding/ai-local-banner.png").exists())
+            self.assertFalse((root / "apps/vscode/assets/screenshots/local-model-settings.png").exists())
 
     def test_only_explicit_development_build_can_reuse_a_tagged_version(self):
         with tempfile.TemporaryDirectory() as directory:
