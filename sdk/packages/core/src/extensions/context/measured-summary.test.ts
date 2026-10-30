@@ -158,7 +158,24 @@ describe("measured summary checkpoints", () => {
 			expect(containing).toHaveLength(1);
 			expect(source(containing[0])).toContain(`END-${i}`);
 		}
-		expect(result!.messages[0].metadata!.summary).toContain("UNIQUE-NOTE-1");
+		const summary = result!.messages[0].metadata!.summary as string;
+		const sections = summary.split(
+			/\n\n### Next chronological history section \(round \d+\)\n\n/,
+		);
+		expect(sections[0]).toContain("Old checkpoint evidence");
+		expect(sections).toHaveLength(requests.length + 1);
+		for (let i = 0; i < requests.length; i++)
+			expect(sections[i + 1]).toContain(`UNIQUE-NOTE-${i + 1}`);
+		for (let i = 0; i < requests.length; i++)
+			expect(sections[i + 1]).toContain(
+				`And these are all the notes from round ${i + 2}.`,
+			);
+		const content = (result!.messages[0].content as { text: string }[])[0].text;
+		expect(content).toContain("oldest first");
+		expect(content.indexOf("End of summarized history.")).toBeGreaterThan(
+			content.lastIndexOf(`UNIQUE-NOTE-${requests.length}`),
+		);
+		expect(content).toContain("The messages below continue the investigation");
 		expect(JSON.stringify(options.context.messages)).toBe(original);
 	});
 	it("does not use assistant prefill, including on native vLLM", async () => {
@@ -172,7 +189,7 @@ describe("measured summary checkpoints", () => {
 			expect(messages[0].content).not.toContain("<saved_summary>");
 		}
 		expect(mocks.configs.every((c) => !c.continueAssistantMessage)).toBe(true);
-		expect(mocks.configs[0].maxOutputTokens).toBe(5000);
+		expect(mocks.configs[0].maxOutputTokens).toBe(3000);
 		expect(mocks.configs[0].localInference).toMatchObject({
 			temperature: 0.7,
 			topP: 0.8,
@@ -315,71 +332,54 @@ describe("measured summary checkpoints", () => {
 			generationRequests().every((r) => !r.includes("x".repeat(1000))),
 		).toBe(true);
 	});
-	it("retries a truncated primary with smaller intact source and a lower target", async () => {
-		let n = 0;
+	it.each([
+		"max_output_tokens",
+		"max-tokens",
+		"length",
+	])("keeps capped notes and closes each round without retrying (%s)", async (reason) => {
 		mocks.generate.mockImplementation(async function* () {
-			if (++n === 1) {
-				yield { type: "text", text: "Partial" };
-				yield {
-					type: "done",
-					success: true,
-					incompleteReason: "max_output_tokens",
-				};
-			} else {
-				yield { type: "text", text: factualNotes(`BACKUP-${n}`) };
-				yield { type: "done", success: true };
-			}
-		});
-		await runAgenticCompaction(input());
-		const requests = generationRequests();
-		expect(requests[0]).toContain("1200 words");
-		expect(requests[1]).toContain("600 words");
-		const first = source(requests[0])!;
-		let rebuilt = "",
-			i = 1;
-		while (rebuilt.length < first.length) {
-			rebuilt += (rebuilt ? "\n\n" : "") + source(requests[i++]);
-			expect(mocks.configs[i - 1].maxOutputTokens).toBe(4000);
-		}
-		expect(rebuilt).toBe(first);
-	});
-	it("rejects the whole operation when the second backup fails", async () => {
-		let n = 0;
-		mocks.generate.mockImplementation(async function* () {
-			n++;
 			yield {
 				type: "text",
-				text: n === 2 ? factualNotes("Valid first backup") : "Partial",
+				text: factualNotes("CAPPED evidence") + "\n```py\nunfinished =",
 			};
-			yield {
-				type: "done",
-				success: true,
-				incompleteReason: n === 2 ? undefined : "max_output_tokens",
-			};
+			yield { type: "done", success: true, incompleteReason: reason };
 		});
 		const options = input(),
 			original = JSON.stringify(options.context.messages);
-		await expect(runAgenticCompaction(options)).rejects.toThrow(
-			"empty or incomplete",
+		const result = await runAgenticCompaction(options);
+		const requests = generationRequests();
+		for (let i = 0; i < 6; i++)
+			expect(
+				requests.filter((r) => source(r)?.includes(`BEGIN-${i}`)),
+			).toHaveLength(1);
+		expect(requests.every((r) => r.includes("1200 words"))).toBe(true);
+		expect(mocks.configs.every((c) => c.maxOutputTokens === 3000)).toBe(true);
+		const summary = result!.messages[0].metadata!.summary as string;
+		expect(summary).toContain("CAPPED evidence");
+		expect(summary).toContain(
+			"unfinished =\n```\n\nAnd these are all the notes from round 2.",
 		);
-		expect(mocks.generate).toHaveBeenCalledTimes(3);
 		expect(JSON.stringify(options.context.messages)).toBe(original);
 	});
 	it.each([
 		"empty",
 		"incomplete",
 		"tiny",
-	])("preserves history after a bounded %s failure", async (failure) => {
+		"tools",
+		"transport",
+	])("preserves history without retrying a genuine %s failure", async (failure) => {
 		mocks.generate.mockImplementation(async function* () {
+			if (failure === "transport") throw new Error("transport failed");
 			yield {
 				type: "text",
 				text: failure === "empty" ? "" : "- Tiny next step.",
 			};
+			if (failure === "tools") yield { type: "tool_calls", tool_calls: [] };
 			yield {
 				type: "done",
 				success: true,
 				incompleteReason:
-					failure === "incomplete" ? "max_output_tokens" : undefined,
+					failure === "incomplete" ? "content_filter" : undefined,
 			};
 		});
 		const options = input();
@@ -392,9 +392,13 @@ describe("measured summary checkpoints", () => {
 		];
 		const original = JSON.stringify(options.context.messages);
 		await expect(runAgenticCompaction(options)).rejects.toThrow(
-			failure === "tiny" ? "usable factual notes" : "empty or incomplete",
+			failure === "transport"
+				? "transport failed"
+				: failure === "tiny"
+					? "usable factual notes"
+					: "empty or incomplete",
 		);
-		expect(mocks.generate).toHaveBeenCalledTimes(2);
+		expect(mocks.generate).toHaveBeenCalledTimes(1);
 		expect(JSON.stringify(options.context.messages)).toBe(original);
 	});
 	it("keeps a short legitimate factual correction", async () => {
@@ -433,6 +437,10 @@ describe("measured summary checkpoints", () => {
 			const result = await runAgenticCompaction(options);
 			const next = result!.messages[0].metadata!.summary as string;
 			expect(next.startsWith(previous)).toBe(true);
+			const content = (result!.messages[0].content as { text: string }[])[0]
+				.text;
+			expect(content.match(/End of summarized history\./g)).toHaveLength(1);
+			expect(next).not.toContain("End of summarized history.");
 			previous = next;
 		}
 	});
@@ -479,25 +487,93 @@ describe("measured summary checkpoints", () => {
 				"\n\n- NEWEST detail\n  - nested detail",
 		);
 		expect(final.length).toBeLessThan(4000);
+		expect(final).toContain("### Next chronological history section");
+		expect(
+			(result!.messages[0].content as { text: string }[])[0].text.length,
+		).toBeLessThanOrEqual(4000);
 	});
-	it("rejects non-shrinking pair reductions rather than looping or discarding context", async () => {
+	it("bounds an oversized reduction response locally instead of retrying its source", async () => {
 		mocks.generate.mockImplementation(async function* (_system, messages) {
 			const request = messages[0].content;
 			yield {
 				type: "text",
 				text: request.startsWith("Merge these adjacent")
-					? request.split("<source_notes>\n")[1].split("\n</source_notes>")[0]
+					? "- Condensed observations " + "x".repeat(8000)
 					: factualNotes("NEW"),
 			};
-			yield { type: "done", success: true };
+			yield {
+				type: "done",
+				success: true,
+				incompleteReason: "max_output_tokens",
+			};
 		});
 		const options = input();
-		options.context.budget.request.summaryTokens = 2000;
+		options.context.budget.request.summaryTokens = 4000;
 		const original = JSON.stringify(options.context.messages);
-		await expect(runAgenticCompaction(options)).rejects.toThrow(
-			/did not shrink|token quota/,
+		const result = await runAgenticCompaction(options);
+		const requests = generationRequests();
+		const reductions = requests.filter((r) =>
+			r.startsWith("Merge these adjacent"),
+		);
+		expect(reductions.length).toBeGreaterThan(0);
+		expect(new Set(reductions).size).toBe(reductions.length);
+		const content = (result!.messages[0].content as { text: string }[])[0].text;
+		expect(content.length).toBeLessThanOrEqual(4000);
+		expect(content).toMatch(
+			/And these are all the notes from rounds? 1(?:[ &–]+\d+)?\./,
 		);
 		expect(JSON.stringify(options.context.messages)).toBe(original);
+	});
+	it("carries original round spans through reductions and later compactions", async () => {
+		mocks.generate.mockImplementation(async function* (_system, messages) {
+			yield {
+				type: "text",
+				text: messages[0].content.startsWith("Merge these adjacent")
+					? "- MERGED first two rounds " + "m".repeat(850)
+					: factualNotes("NEW WINDOW"),
+			};
+			yield {
+				type: "done",
+				success: true,
+				incompleteReason: "max_output_tokens",
+			};
+		});
+		const options = input();
+		options.context.budget.request.summaryTokens = 4000;
+		const earlier = [1, 2]
+			.map(
+				(n) =>
+					`### Next chronological history section (round ${n})\n\n- SOURCE-${n} ${"x".repeat(1800)}\n\nAnd these are all the notes from round ${n}.`,
+			)
+			.join("\n\n");
+		options.context.messages = [
+			buildSummaryMessage({
+				summary: earlier,
+				fileOps: { readFiles: [], modifiedFiles: [] },
+				tokensBefore: 20000,
+				userRunSpan: 1,
+			}),
+			{ role: "assistant", content: "New completed work." },
+			{ role: "assistant", content: "Recent" },
+		];
+		const first = await runAgenticCompaction(options);
+		const summary = first!.messages[0].metadata!.summary as string;
+		expect(summary).toContain(
+			"### Next chronological history section (rounds 1 & 2)",
+		);
+		expect(summary).toContain("And these are all the notes from rounds 1 & 2.");
+		expect(summary).toContain("And these are all the notes from round 3.");
+		options.context.budget.request.summaryTokens = 16000;
+		options.context.messages = [
+			first!.messages[0],
+			{ role: "assistant", content: "Next completed work." },
+			{ role: "assistant", content: "Recent" },
+		];
+		const second = await runAgenticCompaction(options);
+		const next = second!.messages[0].metadata!.summary as string;
+		expect(next.startsWith(summary)).toBe(true);
+		expect(next).toContain("And these are all the notes from rounds 1 & 2.");
+		expect(next).toContain("And these are all the notes from round 4.");
 	});
 	it("does not split nested bullets or fenced code while partitioning summaries", () => {
 		const text =
@@ -583,37 +659,23 @@ it("reserves recent history using the actual full-request cost before summarizin
 	expect(result!.messages.some((m) => m.id === "latest")).toBe(true);
 });
 
-it("checks reduction across the combined backup, allowing a small piece to grow within headroom", async () => {
+it("accepts a capped first reduction and meets the complete summary quota", async () => {
 	mocks.count.mockReset().mockImplementation(async (request) => count(request));
-	let failed = false;
-	const expanded: boolean[] = [];
 	mocks.generate
 		.mockReset()
 		.mockImplementation(async function* (_system, messages) {
-			const request = messages[0].content as string;
-			if (request.startsWith("Merge these adjacent")) {
-				const body = request
-					.split("<source_notes>\n")[1]
-					.split("\n</source_notes>")[0];
-				if (!failed) {
-					failed = true;
-					yield { type: "text", text: "Partial" };
-					yield {
-						type: "done",
-						success: true,
-						incompleteReason: "max_output_tokens",
-					};
-					return;
-				}
-				const size =
-					request.includes("600 words") && body.length < 1600 ? 1600 : 1000;
-				if (request.includes("600 words")) expanded.push(size > body.length);
-				yield {
-					type: "text",
-					text: "- Condensed verified findings " + "x".repeat(size),
-				};
-			} else yield { type: "text", text: factualNotes("New completed work") };
-			yield { type: "done", success: true };
+			const reducing = messages[0].content.startsWith("Merge these adjacent");
+			yield {
+				type: "text",
+				text: reducing
+					? "- Condensed verified findings " + "x".repeat(1000)
+					: factualNotes("New completed work"),
+			};
+			yield {
+				type: "done",
+				success: true,
+				incompleteReason: reducing ? "max_output_tokens" : undefined,
+			};
 		});
 	const options = input();
 	options.context.budget.request.summaryTokens = 4000;
@@ -631,10 +693,10 @@ it("checks reduction across the combined backup, allowing a small piece to grow 
 		{ role: "assistant", content: "Recent" },
 	];
 	const result = await runAgenticCompaction(options);
-	expect(expanded).toContain(true);
-	expect((result!.messages[0].metadata!.summary as string).length).toBeLessThan(
-		4000,
-	);
+	const content = (result!.messages[0].content as { text: string }[])[0].text;
+	expect(content.length).toBeLessThanOrEqual(4000);
+	expect(content).toContain("Verified field 13");
+	expect(content).toContain("End of summarized history.");
 });
 
 it("keeps an outer four-backtick fence intact around nested three-backtick examples", () => {

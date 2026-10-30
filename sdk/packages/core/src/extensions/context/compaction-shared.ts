@@ -1048,6 +1048,11 @@ export function resolveSummarizerConfig(options: {
 	});
 }
 
+/** Keep presentation outside saved notes so repeated compactions do not nest it. */
+export function formatSummaryContent(summary: string): string {
+	return `Context summary:\n\nThe following history sections are chronological, oldest first. Each records what was known at that stage; later sections may revise earlier conclusions.\n\n${summary}\n\nEnd of summarized history. The messages below continue the investigation from here and may update or resolve the earlier findings. Follow the latest user instructions and evidence.`;
+}
+
 export function buildSummaryMessage(options: {
 	summary: string;
 	fileOps: FileOperationSummary;
@@ -1059,7 +1064,7 @@ export function buildSummaryMessage(options: {
 		content: [
 			{
 				type: "text",
-				text: `Context summary:\n\n${options.summary}`,
+				text: formatSummaryContent(options.summary),
 			},
 		],
 		metadata: {
