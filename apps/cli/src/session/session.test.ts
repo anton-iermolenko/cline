@@ -40,9 +40,10 @@ describe("createCliCore", () => {
 		CLINE_VCR: process.env.CLINE_VCR,
 	};
 
+	// Cold SDK source imports can exceed the default hook budget on CI.
 	beforeAll(async () => {
 		sessionModule = await import("./session");
-	});
+	}, 30000);
 
 	beforeEach(() => {
 		createCore.mockReset();

@@ -15,6 +15,8 @@ bun install --frozen-lockfile
 
 Build the SDK before tests that consume its exports. Run focused tests and type checks for the changed surfaces, with isolated data and hub discovery for executable smoke tests. Review every staged change and commit message for credentials, personal paths, private hosts and saved transcripts. Run `gitleaks git --pre-commit --staged --redact`. New commits use the repository-local identity documented in `AGENTS.md`.
 
+On a workstation, run suites with `CLINE_DIR` pointing to a fresh temporary directory, and use bounded worker counts appropriate to the host. Keep the temporary state until all test processes have stopped. In-memory Hub discovery alone does not isolate session, SQLite, provider, or plugin state; fixtures that start real runtime services must isolate those stores too.
+
 Once the feature is committed and verified, integrate it from the primary checkout:
 
 ```sh
