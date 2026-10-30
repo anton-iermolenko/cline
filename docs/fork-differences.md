@@ -45,6 +45,10 @@ Command handoff applies to the native CLI/headless path. Visible VS Code termina
 
 Bootstrap rules, expert tools and notification hooks are opt-in setup material. Building the clients does not activate them, configure provider accounts, or install a user's credentials. Application/package identifiers and upstream authorship/license remain intact.
 
+## Release validation
+
+The 2026.10.3 release also stamps source-bundled desktop backends with the same SDK fingerprint as the CLI ([build definitions](../apps/examples/desktop-app/scripts/runtime-define-args.ts)). The compiled startup suite checks starting and reusing a Hub, proxy handling, and discovery recovery. CI provisions Python explicitly for real hook execution; model-limit and corrupt-history assertions follow the current runtime contracts.
+
 ## Keep this inventory current
 
 For a user-facing fork change, review the merged commits and final source, then update the relevant entry here. Update the root README when the public feature set or positioning changes; keep implementation details and supporting commit references here. Replace obsolete descriptions when an approach is superseded. A bug-fix commit does not automatically warrant another headline feature.

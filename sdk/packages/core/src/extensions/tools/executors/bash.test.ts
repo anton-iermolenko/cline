@@ -13,7 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { AgentToolContext } from "@cline/shared";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
 	CommandExitError,
 	CommandSpawnError,
@@ -770,23 +770,40 @@ describe("createShellExecutor", () => {
 			const directory = await mkdtemp(join(tmpdir(), "cline-timeout-proof-"));
 			const started = join(directory, "started"),
 				completed = join(directory, "completed");
-			const script = `require('node:fs').writeFileSync(${JSON.stringify(started)},'started'); require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify("setTimeout(()=>require('node:fs').writeFileSync(" + JSON.stringify(completed) + ", 'completed'),1200)")}],{stdio:'inherit'}); setTimeout(()=>{},5000)`;
+			const descendant = `require('node:fs').writeFileSync(${JSON.stringify(started)},'started'); setTimeout(()=>require('node:fs').writeFileSync(${JSON.stringify(completed)},'completed'),1200)`;
+			const script = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'inherit'}); setTimeout(()=>{},5000)`;
+			const controller = new AbortController();
+			// Advance the foreground deadline only after the descendant has actually
+			// started. Process startup speed is not the cancellation contract.
+			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 			try {
 				const shell = createShellExecutor({
 					timeoutMs: 600,
 					processStartTokenProbe: async () => ({ status: "unavailable" }),
 				});
-				await expect(
-					shell(
-						{ command: process.execPath, args: ["-e", script] },
-						process.cwd(),
-						ctx,
-					),
-				).rejects.toThrow("handoff unavailable");
+				const result = shell(
+					{ command: process.execPath, args: ["-e", script] },
+					process.cwd(),
+					{ ...ctx, signal: controller.signal },
+				).then(
+					() => undefined,
+					(error: unknown) => error,
+				);
+				const startupDeadline = Date.now() + 5000;
+				while (!(await fileExists(started)) && Date.now() < startupDeadline) {
+					await new Promise<void>((resolve) => setImmediate(resolve));
+				}
 				expect(existsSync(started)).toBe(true);
+				await vi.advanceTimersByTimeAsync(600);
+				expect(await result).toMatchObject({
+					message: expect.stringContaining("handoff unavailable"),
+				});
+				vi.useRealTimers();
 				await new Promise((resolve) => setTimeout(resolve, 1400));
 				expect(existsSync(completed)).toBe(false);
 			} finally {
+				controller.abort();
+				vi.useRealTimers();
 				await rm(directory, { recursive: true, force: true });
 			}
 		},

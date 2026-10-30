@@ -229,15 +229,15 @@ describe("HubServerTransport boundaries", () => {
 			},
 		});
 		try {
-			const reply = await transport.handleCommand({
-				version: "v1",
-				command: "session.resume",
-				payload: { sessionConfig: resumeConfig },
-			});
-			expect(reply).toMatchObject({
-				ok: false,
-				error: { code: "session_messages_not_found" },
-			});
+			await expect(
+				transport.handleCommand({
+					version: "v1",
+					command: "session.resume",
+					payload: { sessionConfig: resumeConfig },
+				}),
+			).rejects.toThrow(
+				"The saved conversation transcript contains invalid JSON.",
+			);
 			expect(startSession).not.toHaveBeenCalled();
 		} finally {
 			await transport.stop();

@@ -1,5 +1,13 @@
 # Cline CLI Changelog
 
+## AI Local 2026.10.3
+
+- Compaction summarizes complete chronological history windows, retaining user requirements, actions/results, code and documentation knowledge, corrections, and unfinished work. Capped notes are retained; bounded fallback passes and balanced adjacent reductions keep summary work within limits without repeatedly crushing the oldest note.
+- Resume, repeated Undo/checkpoint restore, edited-message regeneration, and native prepared-request counting preserve validated compaction state and the selected model's actual input limits. VS Code resume cleanup preserves message metadata required to reuse saved compaction.
+- Native local providers gain Default/P1/P2 settings per provider/server/model, a full context budget breakdown, editable token-cost estimates, and model IDs/profile labels in CLI and editor controls.
+- Native/headless commands that exceed the foreground wait continue under the same PID with captured output and a log; process waits batch progress until their deadline.
+- Refresh fork documentation, configuration screenshots, and branding around sustained local-model workflows. Desktop backend bundles now carry the same SDK runtime fingerprint as the CLI; CI checks cover separate context/input allowances, sanitized corrupt-history failures, and an explicitly installed Python runtime.
+
 ## 3.0.74
 
 - Opening a task that's already running in another Cline app now attaches to that run instead of starting a second one that couldn't be stopped. If an app closes mid-task, requests waiting on it now fail with a clear message instead of hanging

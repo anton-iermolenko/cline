@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import {
 	closeSync,
 	copyFileSync,
+	existsSync,
 	cpSync,
 	mkdirSync,
 	mkdtempSync,
@@ -17,6 +18,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compileCliBinary } from "../../../cli/script/compile-binary";
+import { runtimeDefineArgs } from "./runtime-define-args";
 
 // Exercise the shipped runtime artifacts: the compiled Cline CLI that starts
 // the Hub and the backend bundle that runs on its embedded runtime. Source-only
@@ -66,6 +68,7 @@ function resolveBackendBundle(): string {
 				fileURLToPath(new URL("../sidecar/index.ts", import.meta.url)),
 				"--target",
 				"bun",
+				...runtimeDefineArgs(),
 				"--outdir",
 				outdir,
 			],
@@ -282,9 +285,14 @@ async function runStartupScenario(
 		expect(await health.json()).toMatchObject({ ok: true, pid: child.pid });
 		// The backend publishes its endpoint before starting the Hub and reports
 		// Hub startup over the transport, replaying the current state on connect.
-		expect(await waitForHubStartup(String(wsEndpoint)), stderrPath).toBe(
-			"ready",
-		);
+		const hubState = await waitForHubStartup(String(wsEndpoint));
+		const logPath = join(root, "data", "logs", "code.log");
+		expect(
+			hubState,
+			existsSync(logPath)
+				? readFileSync(logPath, "utf8")
+				: readFileSync(stderrPath, "utf8"),
+		).toBe("ready");
 		const hub = JSON.parse(readFileSync(discoveryPath, "utf8"));
 		hubPid = hub.pid;
 		if (existingHub) {
@@ -502,6 +510,9 @@ test.each([
 					BUN_BE_BUN: "1",
 					CLINE_DESKTOP_CLI_PATH: cli,
 					CLINE_PLUGIN_MODE: mode,
+					// Match the standalone resource probe: cold sandbox startup is not
+					// the behavior this test measures.
+					CLINE_PLUGIN_IMPORT_TIMEOUT_MS: "20000",
 					JITI_FS_CACHE: "false",
 				},
 			},

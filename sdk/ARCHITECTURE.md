@@ -411,6 +411,11 @@ user to update and restart. Hubs that are older, unordered, or missing build
 metadata are retired and replaced as before, so two concurrently running
 installations converge on the newest build instead of repeatedly replacing
 each other's daemons.
+Desktop backend bundles resolve SDK source through TypeScript aliases, so their
+build path explicitly embeds the same source fingerprint and a build epoch as
+the compiled CLI. The packaged startup tests use those same definitions; a
+plain source bundle would identify itself as an unrelated build and could
+retire the matching CLI-managed daemon during connection.
 Explicit endpoints, including loopback URLs such as
 `ws://127.0.0.1:<port>/hub`, are sticky exact targets and remain protocol-only:
 reconnects may retry the same socket URL, but command recovery and
