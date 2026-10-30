@@ -15,6 +15,7 @@ import {
 } from "@cline/shared/storage";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocketServer } from "ws";
+import { SqliteSessionStore } from "../../services/storage/sqlite-session-store";
 import { createLocalHubScheduleRuntimeHandlers } from "../daemon/runtime-handlers";
 import {
 	clearHubDiscovery,
@@ -87,6 +88,9 @@ function requireServer(
 
 describe("hub server startup", () => {
 	const servers = new Set<HubWebSocketServer>();
+	const stores = new Set<SqliteSessionStore>();
+	const getRawDb = SqliteSessionStore.prototype.getRawDb;
+	let restoreStoreProbe = () => {};
 
 	const originalHome = dirname(dirname(resolveDocumentsClineDirectoryPath()));
 	const originalClineDir = resolveClineDir();
@@ -115,6 +119,13 @@ describe("hub server startup", () => {
 		process.env.CLINE_DATA_DIR = join(root, "data");
 		setHomeDir(root);
 		setClineDir(join(root, ".cline"));
+		const probe = vi
+			.spyOn(SqliteSessionStore.prototype, "getRawDb")
+			.mockImplementation(function (this: SqliteSessionStore) {
+				stores.add(this);
+				return getRawDb.call(this);
+			});
+		restoreStoreProbe = () => probe.mockRestore();
 	});
 
 	afterEach(async () => {
@@ -122,6 +133,11 @@ describe("hub server startup", () => {
 			await server.close();
 		}
 		servers.clear();
+		// Runtime shutdown does not close the session service's store. Release
+		// every fixture connection before removing SQLite files on Windows.
+		for (const store of stores) store.close();
+		stores.clear();
+		restoreStoreProbe();
 		setHomeDir(originalHome);
 		setClineDir(originalClineDir);
 		for (const key of storageKeys) {
