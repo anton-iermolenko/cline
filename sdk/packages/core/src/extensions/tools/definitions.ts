@@ -220,11 +220,13 @@ async function executeShellCommands(
 						}
 					: executionContext;
 				try {
-					const output = await withTimeout(
-						executor(command, cwd, commandContext),
-						timeoutMs,
-						`Command timed out after ${timeoutMs}ms`,
-					);
+					const output = executor.managesForegroundDeadline
+						? await executor(command, cwd, commandContext, timeoutMs)
+						: await withTimeout(
+								executor(command, cwd, commandContext),
+								timeoutMs,
+								`Command timed out after ${timeoutMs}ms`,
+							);
 					return {
 						query,
 						result: output,
@@ -458,8 +460,11 @@ export function buildRunCommandsDescription(
 	shell: string,
 	isWindows: boolean,
 	timeoutMs = 30_000,
+	managedHandoff = false,
 ): string {
-	const deadline = `Each foreground command has a ${timeoutMs / 1000}-second deadline (${timeoutMs} ms). At the deadline foreground cancellation is requested; it does not continue as a managed background job. Do not use shell sleep to wait for background work. Launch long work with redirected output and capture its PID, then use wait_for_process(pid, log_path, wait_seconds=60); a quiet wait leaves the process running. Remote jobs require their remote status/log or a local watcher PID, not a remote PID passed to the local wait tool. `;
+	const deadline = managedHandoff
+		? `Each command has a ${timeoutMs / 1000}-second foreground wait limit (${timeoutMs} ms). If it is still running, execution moves to background and returns the same process PID and log_path. This is a running job, not a completed command: use wait_for_process with that PID, log_path and wait_seconds=60; do not rerun it or use shell sleep to wait. A quiet wait never kills the job. Cancellation before the handoff still stops foreground execution. If a safe handoff cannot be created, the command fails and cancellation is requested. Remote PIDs need remote status/logs; only a local process PID works with the local wait tool. `
+		: `Each foreground command has a ${timeoutMs / 1000}-second deadline (${timeoutMs} ms). At the deadline foreground cancellation is requested; it does not continue as a managed background job. Do not use shell sleep to wait for background work. Launch long work with redirected output and capture its PID, then use wait_for_process(pid, log_path, wait_seconds=60); a quiet wait leaves the process running. Remote jobs require their remote status/log or a local watcher PID, not a remote PID passed to the local wait tool. `;
 	const shellKind = getShellKind(shell);
 	if (shellKind === "powershell" || shellKind === "cmd") {
 		const edition = getPowerShellEdition(shell);
@@ -543,7 +548,12 @@ export function createShellTool(
 			? configShell
 			: () => configShell ?? getDefaultShell(process.platform);
 	const describe = () =>
-		buildRunCommandsDescription(resolveShell(), isWindows, timeoutMs);
+		buildRunCommandsDescription(
+			resolveShell(),
+			isWindows,
+			timeoutMs,
+			executor.managesForegroundDeadline === true,
+		);
 
 	const tool = createTool<unknown, ToolOperationResult[]>({
 		name: "run_commands",

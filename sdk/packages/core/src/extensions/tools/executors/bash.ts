@@ -11,6 +11,7 @@ import {
 	type Dirent,
 	existsSync,
 	mkdtempSync,
+	openSync,
 	renameSync,
 	rmSync,
 	writeFileSync,
@@ -392,7 +393,7 @@ export interface ShellExecutorOptions {
 	shell?: string;
 
 	/**
-	 * Timeout for command execution in milliseconds
+	 * Foreground waiting limit in milliseconds; a running command moves to a PID/log handoff
 	 * @default 30000 (30 seconds)
 	 */
 	timeoutMs?: number;
@@ -634,13 +635,20 @@ function createDetachedLog(retentionMs: number, marker: DetachedCommandMarker) {
 		DETACHED_LOG_ACTIVE_COMMAND_FILENAME,
 	);
 	const completedAtPath = join(directory, DETACHED_LOG_COMPLETED_FILENAME);
+	let fd: number;
 	try {
 		writeLifecycleMarker(activeCommandPath, `${JSON.stringify(marker)}\n`);
+		// Open before reporting the handoff so its log path is already usable.
+		fd = openSync(path, "wx", 0o600);
 	} catch (error) {
 		rmSync(directory, { recursive: true, force: true });
 		throw error;
 	}
-	const stream = createWriteStream(path, { encoding: "utf8" });
+	const stream = createWriteStream(path, {
+		fd,
+		autoClose: true,
+		encoding: "utf8",
+	});
 	let bytesWritten = 0;
 	let capped = false;
 	let writable = true;
@@ -745,9 +753,6 @@ function spawnAndCollect(
 		const stdout = createRollingCollector(maxOutputChars);
 		const stderr = createRollingCollector(maxOutputChars);
 		const executionId = randomUUID();
-		const supportsDetachment = Boolean(
-			executionController && context.sessionId,
-		);
 		let detachable = false;
 		let processStartToken: string | undefined;
 		let killed = false;
@@ -834,20 +839,30 @@ function spawnAndCollect(
 			void killProcessTree().finally(() => settle(() => reject(error)));
 		};
 
-		timeout = setTimeout(
-			() =>
-				killAndReject(
-					new TimeoutError(`Command timed out after ${timeoutMs}ms`, timeoutMs),
+		timeout = setTimeout(() => {
+			if (killed || settled) return;
+			// An exited command may still be draining pipes; its exit/grace path
+			// owns completion and must not be misreported as a background job.
+			if (child.exitCode !== null || child.signalCode !== null) return;
+			try {
+				if (detach(true)) return;
+			} catch {
+				// Never leave an untracked job running if creating its log fails.
+			}
+			killAndReject(
+				new TimeoutError(
+					`Foreground wait limit reached after ${timeoutMs}ms; background handoff unavailable, cancelling command`,
+					timeoutMs,
 				),
-			timeoutMs,
-		);
+			);
+		}, timeoutMs);
 
 		if (context.signal) {
 			context.signal.addEventListener("abort", abortHandler, { once: true });
 			if (context.signal.aborted) abortHandler();
 		}
 
-		const detach = (): boolean => {
+		const detach = (automatic = false): boolean => {
 			if (
 				!detachable ||
 				killed ||
@@ -885,6 +900,11 @@ function spawnAndCollect(
 			)?.unref?.();
 			const notice = [
 				`[Command is still running. Output will continue in ${detachedLog.path}]`,
+				...(automatic
+					? [
+							`[Foreground wait limit of ${timeoutMs}ms reached; execution moved to background. The command has not completed.]`,
+						]
+					: []),
 				`[Background PID: ${childPid}. Use wait_for_process with this pid and log_path; do not rerun the command.]`,
 				combineOutput
 					? currentOut.text +
@@ -906,12 +926,7 @@ function spawnAndCollect(
 				detachable: false,
 			});
 			const sessionId = context.sessionId;
-			if (
-				!supportsDetachment ||
-				!childPid ||
-				!sessionId ||
-				!executionController
-			) {
+			if (!childPid) {
 				return;
 			}
 			void (async () => {
@@ -927,12 +942,15 @@ function spawnAndCollect(
 				}
 				processStartToken = probe.token;
 				detachable = true;
-				unregisterExecution = executionController.register({
-					executionId,
-					sessionId,
-					toolCallId: context.toolCallId,
-					detach,
-				});
+				unregisterExecution =
+					executionController && sessionId
+						? executionController.register({
+								executionId,
+								sessionId,
+								toolCallId: context.toolCallId,
+								detach,
+							})
+						: () => {};
 				context.emitUpdate?.({
 					stream: "stdout",
 					chunk: "",
@@ -1150,7 +1168,12 @@ export function createShellExecutor(
 		options.maxOutputBytes ??
 		MAX_COMMAND_OUTPUT_CHARS;
 
-	return (command, cwd, context) => {
+	const executor: ShellExecutor = (
+		command,
+		cwd,
+		context,
+		foregroundWaitMs = timeoutMs,
+	) => {
 		// Spawn without a shell only when the args key is present (even
 		// empty), marking input the caller already split. An object with no
 		// args key, like { command: "echo hello" }, holds a full command
@@ -1172,7 +1195,7 @@ export function createShellExecutor(
 				input: invocation.input,
 			},
 			context,
-			timeoutMs,
+			foregroundWaitMs,
 			maxOutputChars,
 			combineOutput,
 			detachedLogRetentionMs,
@@ -1180,4 +1203,6 @@ export function createShellExecutor(
 			processStartTokenProbe,
 		);
 	};
+	executor.managesForegroundDeadline = true;
+	return executor;
 }

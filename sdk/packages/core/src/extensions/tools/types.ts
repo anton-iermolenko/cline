@@ -80,11 +80,16 @@ export type SearchExecutor = (
  * @param context - Tool execution context
  * @returns Command output (stdout)
  */
-export type ShellExecutor = (
+export type ShellExecutor = ((
 	command: string | StructuredCommandInput,
 	cwd: string,
 	context: AgentToolContext,
-) => Promise<string>;
+	/** Native executors use this per-call foreground wait limit. */
+	foregroundWaitMs?: number,
+) => Promise<string>) & {
+	/** Executor owns its deadline, handing off or failing before returning. */
+	managesForegroundDeadline?: boolean;
+};
 
 /**
  * Executor for editing files
