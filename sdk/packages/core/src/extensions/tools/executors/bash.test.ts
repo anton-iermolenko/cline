@@ -765,21 +765,24 @@ describe("createShellExecutor", () => {
 	});
 
 	it.skipIf(process.platform === "win32")(
-		"terminates foreground descendants at the deadline instead of silently leaving work running",
+		"cancels foreground descendants when background handoff cannot capture identity",
 		async () => {
 			const directory = await mkdtemp(join(tmpdir(), "cline-timeout-proof-"));
 			const started = join(directory, "started"),
 				completed = join(directory, "completed");
 			const script = `require('node:fs').writeFileSync(${JSON.stringify(started)},'started'); require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify("setTimeout(()=>require('node:fs').writeFileSync(" + JSON.stringify(completed) + ", 'completed'),1200)")}],{stdio:'inherit'}); setTimeout(()=>{},5000)`;
 			try {
-				const shell = createShellExecutor({ timeoutMs: 600 });
+				const shell = createShellExecutor({
+					timeoutMs: 600,
+					processStartTokenProbe: async () => ({ status: "unavailable" }),
+				});
 				await expect(
 					shell(
 						{ command: process.execPath, args: ["-e", script] },
 						process.cwd(),
 						ctx,
 					),
-				).rejects.toThrow("timed out");
+				).rejects.toThrow("handoff unavailable");
 				expect(existsSync(started)).toBe(true);
 				await new Promise((resolve) => setTimeout(resolve, 1400));
 				expect(existsSync(completed)).toBe(false);
@@ -789,10 +792,13 @@ describe("createShellExecutor", () => {
 		},
 	);
 
-	it("rejects on timeout", async () => {
-		const shell = createShellExecutor({ timeoutMs: 50 });
+	it("rejects at the deadline when background identity is unavailable", async () => {
+		const shell = createShellExecutor({
+			timeoutMs: 50,
+			processStartTokenProbe: async () => ({ status: "unavailable" }),
+		});
 		await expect(shell(longRunningCommand, process.cwd(), ctx)).rejects.toThrow(
-			"timed out",
+			"handoff unavailable",
 		);
 	});
 

@@ -73,9 +73,8 @@ export interface VscodeRunCommandsToolOptions {
 	/**
 	 * Registry of in-flight foreground executions, owned by SdkController.
 	 * When provided, each foreground command can be detached via the
-	 * "Proceed While Running" button. Foreground-only: background (SDK
-	 * child_process) executions cannot be detached — their abort signal
-	 * kills the process tree.
+	 * "Proceed While Running" button. Headless SDK executions automatically
+	 * hand off their PID/log at the foreground wait limit.
 	 */
 	foregroundCommands?: SdkForegroundCommandCoordinator
 }
@@ -552,7 +551,7 @@ function createVscodeShellExecutor(options: VscodeRunCommandsToolOptions, state:
 	// Lazy-init terminal manager reference
 	let terminalManager: VscodeTerminalManager | undefined
 
-	return async (command, commandCwd, context): Promise<string> => {
+	const executor: ShellExecutor = async (command, commandCwd, context, foregroundWaitMs): Promise<string> => {
 		Logger.log(`[VscodeRunCommands] Executing command in ${executionMode} mode`)
 
 		// Execute with the shell named in the model request that produced this
@@ -575,9 +574,9 @@ function createVscodeShellExecutor(options: VscodeRunCommandsToolOptions, state:
 			// Record execution outcomes so background mode is comparable with
 			// foreground mode in the same task.terminal_execution event.
 			try {
-				const result = await bgExecutor(command, commandCwd || cwd, context)
+				const result = await bgExecutor(command, commandCwd || cwd, context, foregroundWaitMs)
 				telemetryService.captureTerminalExecution(true, terminalType, "child_process", {
-					exitCode: 0,
+					...(result.startsWith("[Command is still running.") ? {} : { exitCode: 0 }),
 					terminalExecutionMode: "backgroundExec",
 				})
 				return result
@@ -604,4 +603,6 @@ function createVscodeShellExecutor(options: VscodeRunCommandsToolOptions, state:
 			profileId,
 		)
 	}
+	executor.managesForegroundDeadline = executionMode === "backgroundExec"
+	return executor
 }

@@ -127,3 +127,28 @@ describe.each([
 		}
 	})
 })
+
+it("forwards the configured foreground limit without reporting background handoff as exit zero", async () => {
+	const output =
+		"[Command is still running. Output will continue in /tmp/example.log]\n[Background PID: 12345. Use wait_for_process with this pid and log_path; do not rerun the command.]"
+	mocks.executeBackground.mockResolvedValueOnce(output)
+	const tool = createVscodeRunCommandsTool({
+		cwd: "/workspace",
+		getTerminalManager: () => {
+			throw new Error("No terminal")
+		},
+		vscodeTerminalExecutionMode: "backgroundExec",
+		bashTimeoutMs: 250,
+	})
+	expect(tool.description).toContain("250 ms")
+	expect(tool.description).toContain("foreground wait limit")
+	const result = await tool.execute({ commands: ["long-work"] }, { agentId: "test", iteration: 1 })
+	expect(mocks.executeBackground).toHaveBeenCalledWith(
+		"long-work",
+		"/workspace",
+		expect.objectContaining({ agentId: "test" }),
+		250,
+	)
+	expect(result).toEqual([expect.objectContaining({ success: true, result: output })])
+	expect(mocks.log.mock.calls[0][1]).not.toHaveProperty("exitCode")
+})
