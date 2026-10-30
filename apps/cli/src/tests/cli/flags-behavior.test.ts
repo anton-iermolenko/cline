@@ -28,7 +28,7 @@ test.describe("cline --model (interactive mode, flag ignored)", () => {
 
 	test("starts interactive mode", async ({ terminal }) => {
 		await waitForChatReady(terminal);
-		await expectVisible(terminal, "GPT-5.3 Codex");
+		await expectVisible(terminal, "openai/gpt-5.3-codex");
 	});
 });
 
@@ -71,7 +71,7 @@ test.describe("cline --config (claude-sonnet-4.6)", () => {
 	test("starts interactive mode with custom config directory", async ({
 		terminal,
 	}) => {
-		await expectVisible(terminal, "Claude Sonnet 4.6");
+		await expectVisible(terminal, "anthropic/claude-sonnet-4.6");
 	});
 });
 
