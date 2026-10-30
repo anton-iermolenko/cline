@@ -214,6 +214,7 @@ describe("createShellExecutor", () => {
 		if (!logPath) throw new Error("Expected detached command log path");
 		const commandPid = result.match(/started:(\d+)/)?.[1];
 		if (!commandPid) throw new Error("Expected detached command pid");
+		expect(result).toContain(`Background PID: ${commandPid}.`);
 		try {
 			expect(await fileExists(dirname(logPath))).toBe(true);
 			const activeCommand = JSON.parse(
@@ -762,6 +763,31 @@ describe("createShellExecutor", () => {
 		);
 		expect(output.trim()).toBe("ok");
 	});
+
+	it.skipIf(process.platform === "win32")(
+		"terminates foreground descendants at the deadline instead of silently leaving work running",
+		async () => {
+			const directory = await mkdtemp(join(tmpdir(), "cline-timeout-proof-"));
+			const started = join(directory, "started"),
+				completed = join(directory, "completed");
+			const script = `require('node:fs').writeFileSync(${JSON.stringify(started)},'started'); require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify("setTimeout(()=>require('node:fs').writeFileSync(" + JSON.stringify(completed) + ", 'completed'),1200)")}],{stdio:'inherit'}); setTimeout(()=>{},5000)`;
+			try {
+				const shell = createShellExecutor({ timeoutMs: 600 });
+				await expect(
+					shell(
+						{ command: process.execPath, args: ["-e", script] },
+						process.cwd(),
+						ctx,
+					),
+				).rejects.toThrow("timed out");
+				expect(existsSync(started)).toBe(true);
+				await new Promise((resolve) => setTimeout(resolve, 1400));
+				expect(existsSync(completed)).toBe(false);
+			} finally {
+				await rm(directory, { recursive: true, force: true });
+			}
+		},
+	);
 
 	it("rejects on timeout", async () => {
 		const shell = createShellExecutor({ timeoutMs: 50 });
