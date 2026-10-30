@@ -61,6 +61,8 @@ Use Shift+Tab to select the provider row. Other providers retain Tab for provide
 selection. A profile's first use copies that model's Default settings; a model
 needs a known maximum context size before a profile can be activated.
 
+CLI footers, model selectors and settings show model IDs. Native CLI and VS Code footers append the selected local slot as `(D)`, `(P1)` or `(P2)`. The profile belongs to the selected server/model; it is not inferred from the model name.
+
 Token cost estimates are editable in native provider settings, in USD per million
 tokens. Prices belong to the provider/model and apply across its three profiles.
 Explicit prices use normal text; inherited values use grey italics. A missing

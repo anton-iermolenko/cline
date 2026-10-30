@@ -57,7 +57,10 @@ function turn(
 	};
 }
 describe("measured compaction", () => {
-	it("rejects a native candidate or fallback that changes an older original user input", async () => {
+	it.each([
+		false,
+		true,
+	])("protects the latest native user input while allowing older inputs to be summarized (changes latest: %s)", async (changesLatest) => {
 		const older: MessageWithMetadata = {
 			id: "older",
 			role: "user",
@@ -79,16 +82,26 @@ describe("measured compaction", () => {
 			},
 			compaction: {
 				enabled: true,
-				compact: async () => ({ messages: [prompt] }),
+				strategy: "agentic",
+				compact: async () => ({ messages: [changesLatest ? older : prompt] }),
 			},
 		})!;
-		await expect(
-			prepare(
-				turn(original, async (messages) =>
-					measured(messages === original ? 72000 : 10000),
-				),
+		const result = prepare(
+			turn(original, async (messages) =>
+				measured(messages === original ? 72000 : 10000),
 			),
-		).rejects.toThrow("protected_prompt_changed");
+		);
+		const accepted = await result;
+		if (changesLatest) {
+			// A custom compactor may fall back to basic projection; its invalid
+			// candidate must never be accepted without the current instruction.
+			expect(accepted?.budget?.policyIntent).toBe(
+				"basic_compaction_projection",
+			);
+			expect(accepted?.messages.filter((m) => m.id === prompt.id)).toEqual([
+				prompt,
+			]);
+		} else expect(accepted?.messages).toEqual([prompt]);
 		expect(JSON.stringify(original)).toBe(before);
 	});
 	it("does not compact a measured 26K prompt because JSON or previous usage is large", async () => {

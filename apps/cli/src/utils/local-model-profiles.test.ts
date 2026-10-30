@@ -70,6 +70,7 @@ describe("CLI native model profiles", () => {
 	])("loads complete %s slots, restores them per model, and keeps pricing shared", (providerId) => {
 		const { manager, config } = fixture(providerId);
 		activateLocalModelProfile(config, manager, "A", "p1");
+		expect(config.localModelProfile).toBe("p1");
 		expect(config.providerConfig?.localInference?.temperature).toBe(0.4);
 		manager.saveProviderSettings({
 			...manager.getProviderSettings(providerId),

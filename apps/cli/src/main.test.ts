@@ -37,6 +37,7 @@ const authMocks = vi.hoisted(() => ({
 	runAuthCommand: vi.fn(),
 }));
 const providerSettingsMocks = vi.hoisted(() => ({
+	getLocalModelProfileId: vi.fn(() => "default" as "default" | "p1" | "p2"),
 	getLastUsedProviderSettings: vi.fn<(options?: unknown) => unknown>(
 		() => undefined,
 	),
@@ -181,6 +182,7 @@ vi.mock("@cline/core", async () => {
 	>("../../../sdk/packages/core/src/services/global-settings");
 	return {
 		readGlobalSettings,
+		applyLocalModelLimits: vi.fn(),
 		setSdkLogger: vi.fn(),
 		resolveProviderConfig: llmMocks.resolveProviderConfig,
 		createUserInstructionConfigService: vi.fn(() => ({
@@ -193,6 +195,9 @@ vi.mock("@cline/core", async () => {
 			}
 			getProviderSettings(providerId: string) {
 				return providerSettingsMocks.getProviderSettings(providerId);
+			}
+			getLocalModelProfileId() {
+				return providerSettingsMocks.getLocalModelProfileId();
 			}
 			getProviderConfig(providerId: string, options?: unknown) {
 				return providerSettingsMocks.getProviderConfig(providerId, options);
@@ -303,6 +308,9 @@ describe("runCli lightweight command dispatch", () => {
 		);
 		authMocks.parseAuthCommandArgs.mockReset();
 		authMocks.runAuthCommand.mockReset();
+		providerSettingsMocks.getLocalModelProfileId
+			.mockReset()
+			.mockReturnValue("default");
 		providerSettingsMocks.getLastUsedProviderSettings.mockReset();
 		providerSettingsMocks.getLastUsedProviderSettings.mockReturnValue(
 			undefined,
@@ -889,6 +897,24 @@ describe("runCli lightweight command dispatch", () => {
 		expect(
 			migrationNoticeMocks.markClineCliMigrationNoticeShown,
 		).toHaveBeenCalledWith(undefined, notice.id);
+	});
+
+	it("loads the saved native profile into the CLI footer configuration at startup", async () => {
+		const settings = { provider: "vllm", model: "qwen-27b-max-context" };
+		providerSettingsMocks.getLastUsedProviderSettings.mockReturnValue(settings);
+		providerSettingsMocks.getProviderSettings.mockReturnValue(settings);
+		providerSettingsMocks.getLocalModelProfileId.mockReturnValue("p1");
+		authMocks.normalizeProviderId.mockImplementation(
+			(provider) => provider ?? "vllm",
+		);
+		process.argv = ["bun", "src/index.ts"];
+		const { runCli } = await import("./main");
+		await expect(runCli()).resolves.toBeUndefined();
+		expect(runtimeMocks.runInteractive.mock.calls[0]?.[0]).toMatchObject({
+			providerId: "vllm",
+			modelId: "qwen-27b-max-context",
+			localModelProfile: "p1",
+		});
 	});
 
 	it("passes the active ClinePass provider into the migration notice gate", async () => {

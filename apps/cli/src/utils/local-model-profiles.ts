@@ -55,6 +55,7 @@ export function activateLocalModelProfile(
 	const resolved = manager.getProviderConfig(config.providerId);
 	if (!resolved) throw new Error("Could not load the selected model profile");
 	config.modelId = modelId;
+	config.localModelProfile = profile;
 	config.providerConfig = resolved;
 	config.knownModels = { ...config.knownModels, ...resolved.knownModels };
 	config.baseUrl = resolved.baseUrl;

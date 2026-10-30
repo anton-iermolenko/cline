@@ -101,10 +101,13 @@ export function resolveModelDisplayName(config: {
 	knownModels?: Record<string, unknown>;
 	thinking?: boolean;
 	reasoningEffort?: string;
+	localModelProfile?: "default" | "p1" | "p2";
 }): string {
-	const info = lookupModelInfo(config.modelId, config.knownModels);
-	const modelIdTail = config.modelId.split("/").pop() ?? config.modelId;
-	let displayName = info?.name ?? modelIdTail;
+	let displayName = config.modelId;
+	if (config.providerId === "vllm" || config.providerId === "llamacpp") {
+		const profile = config.localModelProfile;
+		displayName += ` (${profile === "p1" ? "P1" : profile === "p2" ? "P2" : "D"})`;
+	}
 	if (config.thinking && config.reasoningEffort) {
 		displayName = `${displayName} (${config.reasoningEffort})`;
 	}

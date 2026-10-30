@@ -4,13 +4,21 @@ import { countUserRunMessages } from "../../session/user-run-messages";
 import type { CoreCompactionContext } from "../../types/config";
 import { runAgenticCompaction } from "./agentic-compaction";
 import { buildSummaryMessage, createTokenEstimator } from "./compaction-shared";
+import { summarySections } from "./measured-summary";
 
-const mocks = vi.hoisted(() => ({ count: vi.fn(), generate: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+	count: vi.fn(),
+	generate: vi.fn(),
+	configs: [] as Record<string, any>[],
+}));
 vi.mock("../../services/llms/handler-factory", () => ({
 	createAgentModelFromConfig: () => ({ countInputTokens: mocks.count }),
 }));
 vi.mock("@cline/llms", () => ({
-	createHandlerAsync: async () => ({ createMessage: mocks.generate }),
+	createHandlerAsync: async (config: Record<string, any>) => {
+		mocks.configs.push(config);
+		return { createMessage: mocks.generate };
+	},
 }));
 const providerConfig = {
 	providerId: "openai-compatible",
@@ -42,7 +50,7 @@ function input(signal = new AbortController().signal) {
 		...Array.from({ length: 6 }, (_, i) => ({
 			id: `step-${i}`,
 			role: "assistant" as const,
-			content: `BEGIN-${i} ` + "evidence ".repeat(3000) + ` END-${i}`,
+			content: `BEGIN-${i} ` + "evidence ".repeat(750) + ` END-${i}`,
 		})),
 		{
 			id: "latest",
@@ -116,142 +124,149 @@ function generationRequests(): string[] {
 }
 describe("measured summary checkpoints", () => {
 	beforeEach(() => {
+		mocks.configs.length = 0;
 		mocks.count
 			.mockReset()
 			.mockImplementation(async (request) => count(request));
-		let index = 0;
+		let n = 0;
 		mocks.generate.mockReset().mockImplementation(async function* () {
 			yield {
 				type: "text",
-				text: factualNotes(`UNIQUE-NOTE-${++index}: confirmed evidence.`),
+				text: factualNotes(`UNIQUE-NOTE-${++n}: confirmed evidence.`),
 			};
 			yield { type: "done", success: true };
 		});
 	});
-	it("uses 40% of input capacity and carries every earlier addition unchanged", async () => {
-		const options = input();
-		const original = JSON.stringify(options.context.messages);
-		const result = await runAgenticCompaction(options);
-		const requests = generationRequests();
+	const source = (request: string) =>
+		request.split("<new_messages>\n")[1]?.split("\n</new_messages>")[0];
+	it("batches whole new history toward 16K and appends additions to read-only reference notes", async () => {
+		const options = input(),
+			original = JSON.stringify(options.context.messages);
+		const result = await runAgenticCompaction(options),
+			requests = generationRequests();
 		expect(requests.length).toBeGreaterThan(2);
 		for (let i = 0; i < requests.length; i++) {
-			expect(requests[i].length).toBeLessThanOrEqual(48000);
-			for (let prior = 1; prior <= i; prior++)
-				expect(requests[i]).toContain(
-					`UNIQUE-NOTE-${prior}: confirmed evidence.`,
-				);
-			if (i) expect(requests[i]).toContain("Do not restate or rewrite");
+			expect(source(requests[i])!.length).toBeLessThanOrEqual(16000);
+			for (let earlier = 1; earlier <= i; earlier++)
+				expect(requests[i]).toContain(`UNIQUE-NOTE-${earlier}:`);
 		}
-		const summary = result!.messages[0].metadata!.summary as string;
-		for (let i = 1; i <= requests.length; i++)
-			expect(summary).toContain(`UNIQUE-NOTE-${i}: confirmed evidence.`);
-		expect(requests.some((r) => r.length > 24000)).toBe(true);
-		expect(JSON.stringify(options.context.messages)).toBe(original);
-		// Every original message is included whole in exactly one conversation batch.
 		for (let i = 0; i < 6; i++) {
-			const containing = requests.filter((r) => r.includes(`BEGIN-${i}`));
+			const containing = requests.filter((r) =>
+				source(r)?.includes(`BEGIN-${i}`),
+			);
 			expect(containing).toHaveLength(1);
-			expect(containing[0]).toContain(`END-${i}`);
+			expect(source(containing[0])).toContain(`END-${i}`);
 		}
+		expect(result!.messages[0].metadata!.summary).toContain("UNIQUE-NOTE-1");
+		expect(JSON.stringify(options.context.messages)).toBe(original);
 	});
-	it("uses every earlier addition as a native vLLM assistant prefill and counts the exact prefix", async () => {
+	it("does not use assistant prefill, including on native vLLM", async () => {
 		const options = input();
 		options.providerConfig = { ...options.providerConfig, providerId: "vllm" };
 		await runAgenticCompaction(options);
-		const generations = mocks.generate.mock.calls;
-		expect(generations.length).toBeGreaterThan(2);
-		const saved = options.context.messages[0].metadata!.summary as string;
-		for (let i = 0; i < generations.length; i++) {
-			const messages = generations[i][1];
-			expect(messages).toHaveLength(2);
-			expect(messages[1].role).toBe("assistant");
-			const prefix = messages[1].content;
-			expect(prefix.startsWith(saved + "\n\n")).toBe(true);
-			expect(prefix.endsWith("- ")).toBe(true);
-			for (let prior = 1; prior <= i; prior++)
-				expect(prefix).toContain(`UNIQUE-NOTE-${prior}: confirmed evidence.`);
-			expect(messages[0].content).not.toContain("UNIQUE-NOTE-");
-			expect(
-				mocks.count.mock.calls.some(
-					([request]) =>
-						request.messages.at(-1)?.role === "assistant" &&
-						request.messages.at(-1)?.content[0].text === prefix &&
-						request.messages[0].content[0].text === messages[0].content,
-				),
-			).toBe(true);
+		for (const [, messages] of mocks.generate.mock.calls) {
+			expect(messages).toHaveLength(1);
+			expect(messages[0].role).toBe("user");
+			expect(messages[0].content).toContain("<saved_summary>");
 		}
-	});
-	it.each([
-		20000, 60000, 150000,
-	])("scales batches down and up for a %i input allowance", async (limit) => {
-		mocks.count.mockImplementation(async (request) => count(request, limit));
-		mocks.generate.mockImplementation(async function* () {
-			yield {
-				type: "text",
-				text:
-					limit >= 60000
-						? factualNotes("Retained observed result.")
-						: "- Retained observed result.",
-			};
-			yield { type: "done", success: true };
+		expect(mocks.configs.every((c) => !c.continueAssistantMessage)).toBe(true);
+		expect(mocks.configs[0].maxOutputTokens).toBe(5000);
+		expect(mocks.configs[0].localInference).toMatchObject({
+			temperature: 0.7,
+			topP: 0.8,
+			topK: 20,
+			minP: 0,
+			presencePenalty: 1.5,
+			repeatPenalty: 1,
+			thinking: false,
 		});
-		const options = input();
-		options.context.messages = [
-			{ role: "user", content: "Preserve every result." },
-			...Array.from({ length: 20 }, (_, i) => ({
-				role: "assistant" as const,
-				content: `Record ${i} ` + "x".repeat(4000),
-			})),
-			{ role: "assistant", content: "Recent" },
-		];
-		await runAgenticCompaction(options);
-		for (const request of generationRequests())
-			expect(request.length).toBeLessThanOrEqual(Math.floor(limit * 0.4));
 	});
-	it("includes past and latest user messages in the summary input and retains their originals once", async () => {
+	it("summarizes older human inputs with their replies and retains only the latest folded instruction", async () => {
 		const options = input();
-		const humans = options.context.messages.filter(
-			(m) => m.id === "first" || m.id === "latest",
-		);
+		const first = options.context.messages.find((m) => m.id === "first")!;
+		const latest = options.context.messages.find((m) => m.id === "latest")!;
 		const result = await runAgenticCompaction(options);
-		const requests = generationRequests().join("\n");
-		for (const human of humans) {
-			expect(requests).toContain(human.content);
-			expect(result!.messages.filter((m) => m.id === human.id)).toEqual([
-				human,
-			]);
-		}
+		const sources = generationRequests().map(source).join("\n");
+		expect(sources).toContain(first.content);
+		expect(sources.indexOf(first.content as string)).toBeLessThan(
+			sources.indexOf("BEGIN-0"),
+		);
+		expect(result!.messages.some((m) => m.id === first.id)).toBe(false);
+		expect(result!.messages.filter((m) => m.id === latest.id)).toEqual([
+			latest,
+		]);
 		expect(countUserRunMessages(result!.messages)).toBe(
 			countUserRunMessages(options.context.messages),
 		);
-		const again = await runAgenticCompaction({
-			...options,
-			context: {
-				...options.context,
-				messages: [
-					...result!.messages.slice(0, -1),
-					{
-						role: "assistant",
-						content: "Additional completed work ".repeat(2000),
-					},
-					...result!.messages.slice(-1),
-				],
+	});
+	it("compacts accumulated large user messages without splitting or reinserting them", async () => {
+		const options = input();
+		const older = Array.from({ length: 4 }, (_, i) => [
+			{
+				id: `large-user-${i}`,
+				role: "user" as const,
+				content:
+					`USER-START-${i} ` +
+					"attached evidence ".repeat(1300) +
+					` USER-END-${i}`,
 			},
+			{ role: "assistant" as const, content: `REPLY-${i}` },
+		]).flat();
+		options.context.messages.splice(1, 1, ...older);
+		const before = JSON.stringify(options.context.messages);
+		const result = await runAgenticCompaction(options);
+		const sources = generationRequests().map(source).join("\n");
+		for (let i = 0; i < 4; i++) {
+			const containing = generationRequests().filter((r) =>
+				source(r)?.includes(`USER-START-${i}`),
+			);
+			expect(containing).toHaveLength(1);
+			expect(source(containing[0])).toContain(`USER-END-${i}`);
+			expect(sources.indexOf(`USER-END-${i}`)).toBeLessThan(
+				sources.indexOf(`REPLY-${i}`),
+			);
+			expect(result!.messages.some((m) => m.id === `large-user-${i}`)).toBe(
+				false,
+			);
+		}
+		expect(result!.messages.filter((m) => m.id === "latest")).toHaveLength(1);
+		expect(countUserRunMessages(result!.messages)).toBe(
+			countUserRunMessages(options.context.messages),
+		);
+		expect(JSON.stringify(options.context.messages)).toBe(before);
+	});
+	it("retains recent user messages in their normal chronological positions", async () => {
+		const options = input();
+		const recent = {
+			id: "recent-user",
+			role: "user" as const,
+			content: "Recent correction",
+		};
+		options.context.messages.splice(-2, 0, recent, {
+			role: "assistant",
+			content: "Recent correction acknowledged",
 		});
-		for (const human of humans)
-			expect(again!.messages.filter((m) => m.id === human.id)).toEqual([human]);
-		expect(countUserRunMessages(again!.messages)).toBe(
-			countUserRunMessages(result!.messages),
+		options.preserveRecentTokens = 200;
+		const result = await runAgenticCompaction(options);
+		const recentIndex = result!.messages.indexOf(recent);
+		expect(recentIndex).toBeGreaterThan(0);
+		expect(result!.messages[recentIndex + 1].content).toBe(
+			"Recent correction acknowledged",
+		);
+		expect(result!.messages[recentIndex + 2].id).toBe("latest");
+		expect(result!.messages.filter((m) => m.id === "latest")).toHaveLength(1);
+		expect(countUserRunMessages(result!.messages)).toBe(
+			countUserRunMessages(options.context.messages),
 		);
 	});
-	it("keeps full tool output and its call together, including evidence in the middle", async () => {
-		const options = input();
-		const output =
-			"BEGIN-TOOL " +
-			"a".repeat(6000) +
-			"CRITICAL-MIDDLE-CONTRACT" +
-			"z".repeat(6000) +
-			" END-TOOL";
+	it("keeps a full oversized tool exchange intact, including middle evidence", async () => {
+		const options = input(),
+			output =
+				"BEGIN-TOOL " +
+				"a".repeat(18000) +
+				"CRITICAL-MIDDLE-CONTRACT" +
+				"z".repeat(18000) +
+				" END-TOOL";
 		options.context.messages.splice(
 			2,
 			0,
@@ -280,29 +295,13 @@ describe("measured summary checkpoints", () => {
 		);
 		await runAgenticCompaction(options);
 		const requests = generationRequests().filter((r) =>
-			r.includes("BEGIN-TOOL"),
+			source(r)?.includes("BEGIN-TOOL"),
 		);
 		expect(requests).toHaveLength(1);
 		expect(requests[0]).toContain(output);
 		expect(requests[0]).toContain("[Bot tool calls]: read_files");
 	});
-	it("keeps an oversized message intact when it fits the hard input allowance", async () => {
-		const options = input();
-		options.context.messages = [
-			{
-				role: "assistant",
-				content: "BEGIN-OVERSIZED " + "x".repeat(60000) + " END-OVERSIZED",
-			},
-			{ role: "assistant", content: "Recent" },
-		];
-		await runAgenticCompaction(options);
-		expect(generationRequests()[0]).toContain(
-			options.context.messages[0].content,
-		);
-		expect(generationRequests()[0].length).toBeGreaterThan(48000);
-		expect(generationRequests()[0].length).toBeLessThan(120000);
-	});
-	it("rejects an indivisible message above the hard limit without generating or mutating history", async () => {
+	it("rejects an indivisible exchange above the real allowance without modifying history", async () => {
 		const options = input();
 		options.context.messages[2].content = "x".repeat(130000);
 		const original = JSON.stringify(options.context.messages);
@@ -314,54 +313,66 @@ describe("measured summary checkpoints", () => {
 			generationRequests().every((r) => !r.includes("x".repeat(1000))),
 		).toBe(true);
 	});
-	it("compresses only after all additions exceed the summary quota and verifies the result", async () => {
-		let index = 0;
-		mocks.generate.mockImplementation(async function* (_system, messages) {
-			const request = messages[0].content as string;
+	it("retries a truncated primary with smaller intact source and a lower target", async () => {
+		let n = 0;
+		mocks.generate.mockImplementation(async function* () {
+			if (++n === 1) {
+				yield { type: "text", text: "Partial" };
+				yield {
+					type: "done",
+					success: true,
+					incompleteReason: "max_output_tokens",
+				};
+			} else {
+				yield { type: "text", text: factualNotes(`BACKUP-${n}`) };
+				yield { type: "done", success: true };
+			}
+		});
+		await runAgenticCompaction(input());
+		const requests = generationRequests();
+		expect(requests[0]).toContain("1200 words");
+		expect(requests[1]).toContain("600 words");
+		const first = source(requests[0])!;
+		let rebuilt = "",
+			i = 1;
+		while (rebuilt.length < first.length) {
+			rebuilt += (rebuilt ? "\n\n" : "") + source(requests[i++]);
+			expect(mocks.configs[i - 1].maxOutputTokens).toBe(4000);
+		}
+		expect(rebuilt).toBe(first);
+	});
+	it("rejects the whole operation when the second backup fails", async () => {
+		let n = 0;
+		mocks.generate.mockImplementation(async function* () {
+			n++;
 			yield {
 				type: "text",
-				text: request.startsWith("Edit the complete checkpoint")
-					? factualNotes(
-							"Compressed notes retaining important evidence.",
-						).slice(0, 900)
-					: `- NOTE-${++index} ` + "z".repeat(2200),
+				text: n === 2 ? factualNotes("Valid first backup") : "Partial",
 			};
-			yield { type: "done", success: true };
+			yield {
+				type: "done",
+				success: true,
+				incompleteReason: n === 2 ? undefined : "max_output_tokens",
+			};
 		});
-		const options = input();
-		options.context.budget.request.summaryTokens = 4000;
-		const result = await runAgenticCompaction(options);
-		const requests = generationRequests();
-		const compression = requests.at(-1)!;
-		expect(compression).toMatch(/^Edit the complete checkpoint remainder/);
-		for (let i = 1; i <= index; i++) expect(compression).toContain(`NOTE-${i}`);
-		expect(result!.messages[0].metadata!.summary).toContain("Compressed notes");
-		expect(
-			requests.filter((r) => r.startsWith("Edit the complete checkpoint")),
-		).toHaveLength(1);
-	});
-	it("rejects a compressor that keeps exceeding quota after bounded retries", async () => {
-		mocks.generate.mockImplementation(async function* () {
-			yield { type: "text", text: "- Large notes ".repeat(500) };
-			yield { type: "done", success: true };
-		});
-		const options = input();
-		options.context.budget.request.summaryTokens = 2000;
+		const options = input(),
+			original = JSON.stringify(options.context.messages);
 		await expect(runAgenticCompaction(options)).rejects.toThrow(
-			"could not fit its token quota",
+			"empty or incomplete",
 		);
-		expect(
-			generationRequests().filter((r) =>
-				r.startsWith("Edit the complete checkpoint"),
-			),
-		).toHaveLength(3);
+		expect(mocks.generate).toHaveBeenCalledTimes(3);
+		expect(JSON.stringify(options.context.messages)).toBe(original);
 	});
 	it.each([
 		"empty",
 		"incomplete",
-	])("rejects an %s checkpoint without changing context", async (failure) => {
+		"tiny",
+	])("preserves history after a bounded %s failure", async (failure) => {
 		mocks.generate.mockImplementation(async function* () {
-			yield { type: "text", text: failure === "empty" ? "" : "Partial" };
+			yield {
+				type: "text",
+				text: failure === "empty" ? "" : "- Tiny next step.",
+			};
 			yield {
 				type: "done",
 				success: true,
@@ -370,59 +381,129 @@ describe("measured summary checkpoints", () => {
 			};
 		});
 		const options = input();
+		options.context.messages = [
+			{
+				role: "assistant",
+				content: "A large intact record " + "x".repeat(20000),
+			},
+			{ role: "assistant", content: "Recent" },
+		];
 		const original = JSON.stringify(options.context.messages);
 		await expect(runAgenticCompaction(options)).rejects.toThrow(
-			"empty or incomplete",
+			failure === "tiny" ? "usable factual notes" : "empty or incomplete",
 		);
+		expect(mocks.generate).toHaveBeenCalledTimes(2);
 		expect(JSON.stringify(options.context.messages)).toBe(original);
 	});
-	it("retries a complete empty checkpoint once with the identical request", async () => {
-		let attempt = 0;
+	it("keeps a short legitimate factual correction", async () => {
 		mocks.generate.mockImplementation(async function* () {
 			yield {
 				type: "text",
-				text: ++attempt === 1 ? "   " : factualNotes("Recovered checkpoint."),
+				text: "- Correction: deployment completed; no restart remains.",
 			};
 			yield { type: "done", success: true };
 		});
-		await runAgenticCompaction(input());
-		expect(mocks.generate.mock.calls[0]).toEqual(mocks.generate.mock.calls[1]);
-	});
-	it("makes exactly two attempts for an empty first checkpoint", async () => {
-		mocks.generate.mockImplementation(async function* () {
-			yield { type: "reasoning", reasoning: "A thought without a summary." };
-			yield { type: "done", success: true };
-		});
-		await expect(runAgenticCompaction(input())).rejects.toThrow(
-			"empty or incomplete",
+		const options = input();
+		options.context.messages = [
+			options.context.messages[0],
+			{ role: "assistant", content: "Deployment exit 0." },
+			{ role: "assistant", content: "Recent" },
+		];
+		const result = await runAgenticCompaction(options);
+		expect(result!.messages[0].metadata!.summary).toContain(
+			"deployment completed",
 		);
-		expect(mocks.generate).toHaveBeenCalledTimes(2);
 	});
-	it("does not retry an incomplete checkpoint", async () => {
-		mocks.generate.mockImplementation(async function* () {
-			yield { type: "text", text: "Partial checkpoint" };
+	it("keeps prior checkpoints verbatim below quota across repeated compactions", async () => {
+		const options = input();
+		let previous = "Old checkpoint retained verbatim.";
+		for (let round = 0; round < 3; round++) {
+			options.context.messages = [
+				buildSummaryMessage({
+					summary: previous,
+					fileOps: { readFiles: [], modifiedFiles: [] },
+					tokensBefore: 10000,
+					userRunSpan: 1,
+				}),
+				{ role: "assistant", content: `Completed step ${round}.` },
+				{ role: "assistant", content: "Recent" },
+			];
+			const result = await runAgenticCompaction(options);
+			const next = result!.messages[0].metadata!.summary as string;
+			expect(next.startsWith(previous)).toBe(true);
+			previous = next;
+		}
+	});
+	it("reduces oldest adjacent notes only when over quota and keeps newer notes unchanged", async () => {
+		mocks.generate.mockImplementation(async function* (_system, messages) {
+			const request = messages[0].content;
 			yield {
-				type: "done",
-				success: true,
-				incompleteReason: "max_output_tokens",
+				type: "text",
+				text: request.startsWith("Merge these adjacent")
+					? "- MERGED old facts " + "m".repeat(850)
+					: "- NEWEST evidence " +
+						"n".repeat(1800) +
+						"\n\n- NEWEST detail\n  - nested detail",
 			};
-		});
-		await expect(runAgenticCompaction(input())).rejects.toThrow(
-			"empty or incomplete",
-		);
-		expect(mocks.generate).toHaveBeenCalledTimes(1);
-	});
-	it("does not retry after cancellation following an empty response", async () => {
-		const abort = new AbortController();
-		mocks.generate.mockImplementation(async function* () {
-			yield { type: "text", text: "" };
 			yield { type: "done", success: true };
-			abort.abort();
 		});
-		await expect(
-			runAgenticCompaction(input(abort.signal)),
-		).rejects.toMatchObject({ name: "AbortError" });
-		expect(mocks.generate).toHaveBeenCalledTimes(1);
+		const options = input();
+		const old = Array.from(
+			{ length: 6 },
+			(_, i) => `- OLD-${i} ` + "x".repeat(1300),
+		).join("\n\n");
+		options.context.messages = [
+			buildSummaryMessage({
+				summary: old,
+				fileOps: { readFiles: [], modifiedFiles: [] },
+				tokensBefore: 20000,
+				userRunSpan: 1,
+			}),
+			{ role: "assistant", content: "New completed work." },
+			{ role: "assistant", content: "Recent" },
+		];
+		options.context.budget.request.summaryTokens = 4000;
+		const result = await runAgenticCompaction(options),
+			edits = generationRequests().filter((r) =>
+				r.startsWith("Merge these adjacent"),
+			);
+		expect(edits.length).toBeGreaterThan(0);
+		expect(edits[0]).toContain("OLD-0");
+		expect(edits[0]).not.toContain("NEWEST evidence");
+		const final = result!.messages[0].metadata!.summary as string;
+		expect(final).toContain(
+			"- NEWEST evidence " +
+				"n".repeat(1800) +
+				"\n\n- NEWEST detail\n  - nested detail",
+		);
+		expect(final.length).toBeLessThan(4000);
+	});
+	it("rejects non-shrinking pair reductions rather than looping or discarding context", async () => {
+		mocks.generate.mockImplementation(async function* (_system, messages) {
+			const request = messages[0].content;
+			yield {
+				type: "text",
+				text: request.startsWith("Merge these adjacent")
+					? request.split("<source_notes>\n")[1].split("\n</source_notes>")[0]
+					: factualNotes("NEW"),
+			};
+			yield { type: "done", success: true };
+		});
+		const options = input();
+		options.context.budget.request.summaryTokens = 2000;
+		const original = JSON.stringify(options.context.messages);
+		await expect(runAgenticCompaction(options)).rejects.toThrow(
+			/did not shrink|token quota/,
+		);
+		expect(JSON.stringify(options.context.messages)).toBe(original);
+	});
+	it("does not split nested bullets or fenced code while partitioning summaries", () => {
+		const text =
+			"- Parent\n  - child\n```ts\n- code, not a note\n```\n\n- Second\n";
+		const parts = summarySections(text);
+		expect(parts).toHaveLength(2);
+		expect(parts.join("")).toBe(text);
+		expect(parts[0]).toContain("- code, not a note");
 	});
 	it("does not generate after cancellation during counting", async () => {
 		const abort = new AbortController();
@@ -435,118 +516,129 @@ describe("measured summary checkpoints", () => {
 		).rejects.toMatchObject({ name: "AbortError" });
 		expect(mocks.generate).not.toHaveBeenCalled();
 	});
-	it("rejects a changing input allowance", async () => {
-		let index = 0;
+	it("does not retry after cancellation during generation", async () => {
+		const abort = new AbortController();
+		mocks.generate.mockImplementation(async function* () {
+			yield { type: "text", text: "" };
+			abort.abort();
+			yield { type: "done", success: true };
+		});
+		await expect(
+			runAgenticCompaction(input(abort.signal)),
+		).rejects.toMatchObject({ name: "AbortError" });
+		expect(mocks.generate).toHaveBeenCalledTimes(1);
+	});
+	it("rejects changing or unavailable native input limits", async () => {
+		let n = 0;
 		mocks.count.mockImplementation(async (request) =>
-			count(request, ++index === 1 ? 120000 : 100000),
+			count(request, ++n === 1 ? 120000 : 100000),
 		);
 		await expect(runAgenticCompaction(input())).rejects.toThrow(
 			"input allowance changed",
 		);
 		expect(mocks.generate).not.toHaveBeenCalled();
-	});
-
-	it("keeps previous checkpoint bytes across three independent compactions below quota", async () => {
-		const options = input();
-		options.providerConfig = { ...options.providerConfig, providerId: "vllm" };
-		let previous = options.context.messages[0].metadata!.summary as string;
-		for (let round = 0; round < 3; round++) {
-			options.context.messages = [
-				buildSummaryMessage({
-					summary: previous,
-					fileOps: { readFiles: [], modifiedFiles: [] },
-					tokensBefore: 100000,
-					userRunSpan: 2,
-				}),
-				{ id: "first", role: "user", content: "Keep the original constraint." },
-				{
-					role: "assistant",
-					content:
-						`Round ${round}: completed change and observed evidence. `.repeat(
-							500,
-						),
-				},
-				{ role: "assistant", content: "Recent response" },
-			];
-			const firstGeneration = mocks.generate.mock.calls.length;
-			const result = await runAgenticCompaction(options);
-			const next = result!.messages[0].metadata!.summary as string;
-			expect(next.startsWith(previous)).toBe(true);
-			expect(
-				mocks.generate.mock.calls[firstGeneration][1][1].content,
-			).toContain(previous);
-			expect(
-				generationRequests().some((r) =>
-					r.startsWith("Edit the complete checkpoint"),
-				),
-			).toBe(false);
-			previous = next;
-		}
-	});
-	it.each([
-		"Now I have finished that. Next I will check the files.",
-		"- All done.",
-	])("rejects a task reply or implausibly small summary: %s", async (reply) => {
-		mocks.generate.mockImplementation(async function* () {
-			yield { type: "text", text: reply };
-			yield { type: "done", success: true };
-		});
-		const options = input();
-		const original = JSON.stringify(options.context.messages);
-		await expect(runAgenticCompaction(options)).rejects.toThrow(
-			"usable factual notes",
-		);
-		expect(JSON.stringify(options.context.messages)).toBe(original);
-	});
-	it("allows a short factual correction when only a small new delta is folded", async () => {
-		mocks.generate.mockImplementation(async function* () {
-			yield {
-				type: "text",
-				text: "- Correction: the deployment finished successfully; no restart remains.",
-			};
-			yield { type: "done", success: true };
-		});
-		const options = input();
-		options.context.messages = [
-			options.context.messages[0],
-			{ role: "assistant", content: "Deployment returned exit 0." },
-			{ role: "assistant", content: "Recent response" },
-		];
-		const result = await runAgenticCompaction(options);
-		expect(result!.messages[0].metadata!.summary).toContain(
-			"Correction: the deployment finished",
+		mocks.count.mockResolvedValue(undefined);
+		await expect(runAgenticCompaction(input())).rejects.toThrow(
+			"counting unavailable",
 		);
 	});
+});
 
-	it("retries the original remainder without stacking failed edit candidates", async () => {
-		let note = 0;
-		mocks.generate.mockImplementation(async function* (_system, messages) {
+it("reserves recent history using the actual full-request cost before summarizing", async () => {
+	mocks.count.mockReset().mockImplementation(async (request) => count(request));
+	mocks.generate.mockReset().mockImplementation(async function* () {
+		yield { type: "text", text: factualNotes("Measured retained evidence") };
+		yield { type: "done", success: true };
+	});
+	const options = input();
+	options.preserveRecentTokens = 20000;
+	options.context.budget.request.targetTokens = 15000;
+	options.context.budget.request.summaryTokens = 4000;
+	options.context.budget.messages.targetTokens = 14000;
+	const measure = async (messages: MessageWithMetadata[]) => ({
+		inputTokens:
+			500 +
+			messages.reduce(
+				(n, m) =>
+					n +
+					(typeof m.content === "string"
+						? m.content.length
+						: m.content
+								.filter((b) => b.type === "text")
+								.map((b) => b.text)
+								.join("").length),
+				0,
+			),
+		maxInputTokens: 120000,
+	});
+	const result = await runAgenticCompaction({
+		...options,
+		context: { ...options.context, countRequestInputTokens: measure },
+	});
+	expect((await measure(result!.messages)).inputTokens).toBeLessThanOrEqual(
+		15000,
+	);
+	expect(result!.messages.some((m) => m.id === "latest")).toBe(true);
+});
+
+it("checks reduction across the combined backup, allowing a small piece to grow within headroom", async () => {
+	mocks.count.mockReset().mockImplementation(async (request) => count(request));
+	let failed = false;
+	const expanded: boolean[] = [];
+	mocks.generate
+		.mockReset()
+		.mockImplementation(async function* (_system, messages) {
 			const request = messages[0].content as string;
-			yield {
-				type: "text",
-				text: request.startsWith("Edit the complete checkpoint")
-					? factualNotes("A shortened candidate that lost earlier facts.")
-					: `- FULL-NOTE-${++note} ` + "verified detail ".repeat(160),
-			};
+			if (request.startsWith("Merge these adjacent")) {
+				const body = request
+					.split("<source_notes>\n")[1]
+					.split("\n</source_notes>")[0];
+				if (!failed) {
+					failed = true;
+					yield { type: "text", text: "Partial" };
+					yield {
+						type: "done",
+						success: true,
+						incompleteReason: "max_output_tokens",
+					};
+					return;
+				}
+				const size =
+					request.includes("600 words") && body.length < 1600 ? 1600 : 1000;
+				if (request.includes("600 words")) expanded.push(size > body.length);
+				yield {
+					type: "text",
+					text: "- Condensed verified findings " + "x".repeat(size),
+				};
+			} else yield { type: "text", text: factualNotes("New completed work") };
 			yield { type: "done", success: true };
 		});
-		const options = input();
-		options.context.budget.request.summaryTokens = 4000;
-		const original = JSON.stringify(options.context.messages);
-		await expect(runAgenticCompaction(options)).rejects.toThrow(
-			"without excessive information reduction",
-		);
-		const edits = generationRequests().filter((r) =>
-			r.startsWith("Edit the complete checkpoint"),
-		);
-		expect(edits).toHaveLength(3);
-		for (const request of edits) {
-			expect(request).toContain("FULL-NOTE-1");
-			expect(request).toContain(`FULL-NOTE-${note}`);
-			expect(request).not.toContain(
-				"A shortened candidate that lost earlier facts.",
-			);
-		}
-		expect(JSON.stringify(options.context.messages)).toBe(original);
-	});
+	const options = input();
+	options.context.budget.request.summaryTokens = 4000;
+	options.context.messages = [
+		buildSummaryMessage({
+			summary: Array.from(
+				{ length: 8 },
+				(_, i) => `- Old note ${i} ` + "a".repeat(650),
+			).join("\n\n"),
+			fileOps: { readFiles: [], modifiedFiles: [] },
+			tokensBefore: 20000,
+			userRunSpan: 1,
+		}),
+		{ role: "assistant", content: "A completed step." },
+		{ role: "assistant", content: "Recent" },
+	];
+	const result = await runAgenticCompaction(options);
+	expect(expanded).toContain(true);
+	expect((result!.messages[0].metadata!.summary as string).length).toBeLessThan(
+		4000,
+	);
+});
+
+it("keeps an outer four-backtick fence intact around nested three-backtick examples", () => {
+	const text = "- Parent\n````md\n```ts\n- Inside code\n```\n````\n\n- Next\n";
+	const sections = summarySections(text);
+	expect(sections).toHaveLength(2);
+	expect(sections.join("")).toBe(text);
+	expect(sections[0]).toContain("- Inside code");
 });

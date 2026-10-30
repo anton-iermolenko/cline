@@ -1,6 +1,7 @@
 import {
 	getCurrentContextSize,
 	type ManagedHubBuildMismatchEvent,
+	ProviderSettingsManager,
 	summarizeUsageFromMessages,
 	upgradeManagedHub,
 	watchManagedHubBuildMismatch,
@@ -20,6 +21,7 @@ import {
 	shouldSuppressClineCliMigrationNoticeForActiveProvider,
 } from "../kanban-migration/notice";
 import { MigrationNoticeContent } from "../kanban-migration/notice-dialog";
+import { readLocalModelProfiles } from "../utils/local-model-profiles";
 import {
 	isSameRepoStatus,
 	type RepoStatus,
@@ -225,6 +227,11 @@ function App(props: TuiProps) {
 	}, [props, session]);
 
 	const handleModelChange = useCallback(async () => {
+		props.config.localModelProfile = readLocalModelProfiles(
+			new ProviderSettingsManager(),
+			props.config.providerId,
+			[props.config.modelId],
+		)?.[props.config.modelId];
 		await props.onModelChange();
 	}, [props]);
 

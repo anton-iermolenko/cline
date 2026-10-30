@@ -120,7 +120,7 @@ describe("target-derived agentic retention", () => {
 		);
 	});
 
-	it("reserves and retains every original human input outside the recent suffix", async () => {
+	it("summarizes older human inputs and reserves only the latest instruction", async () => {
 		const first = { role: "user" as const, content: "  First constraint.\n" };
 		const second = {
 			role: "user" as const,
@@ -141,7 +141,10 @@ describe("target-derived agentic retention", () => {
 			},
 			estimateMessageTokens: estimate,
 		});
-		expect(result!.messages.filter((m) => m === first)).toHaveLength(1);
+		expect(result!.messages.filter((m) => m === first)).toHaveLength(0);
+		expect(handler.createMessage.mock.calls[0][1][0].content).toContain(
+			first.content,
+		);
 		expect(result!.messages.filter((m) => m === second)).toHaveLength(1);
 		const tokens = result!.messages.reduce(
 			(total, message) => total + estimate(message),

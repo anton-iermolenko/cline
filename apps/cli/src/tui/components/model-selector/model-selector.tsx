@@ -617,7 +617,7 @@ function ModelRow(props: {
 				{isSelected ? "\u276f" : " "}
 			</text>
 			<text fg={isSelected ? palette.textOnSelection : undefined}>
-				{model.name}
+				{model.key}
 			</text>
 			{model.maxInputTokens && (
 				<text fg={isSelected ? palette.textOnSelection : "gray"} flexShrink={0}>
@@ -666,7 +666,7 @@ export function buildModelOptions(
 	return Object.entries(knownModels)
 		.map(([key, info]) => ({
 			key,
-			name: info.name ?? key,
+			name: key,
 			maxInputTokens: info.maxInputTokens ?? info.contextWindow,
 			family: info.family,
 			supportsReasoning: info.capabilities?.includes("reasoning") ?? false,

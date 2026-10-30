@@ -3,6 +3,8 @@ import { ApiFormat } from "./proto/cline/models"
 import type { ApiHandlerSettings } from "./storage/state-keys"
 
 export type ApiProvider =
+	| "vllm"
+	| "llamacpp"
 	| "anthropic"
 	| "claude-code"
 	| "openrouter"

@@ -1784,13 +1784,13 @@ describe("createContextCompactionPrepareTurn", () => {
 				iteration: 1,
 			}),
 		);
-		expect(result?.messages).toHaveLength(5);
+		expect(result?.messages).toHaveLength(3);
 		expect(result?.messages[0]).toMatchObject({
 			role: "user",
 			metadata: expect.objectContaining({
 				kind: "compaction_summary",
 				displayRole: "system",
-				userRunSpan: 0,
+				userRunSpan: 2,
 				details: {
 					readFiles: ["/tmp/example.ts"],
 					modifiedFiles: [],
@@ -1807,17 +1807,11 @@ describe("createContextCompactionPrepareTurn", () => {
 			: "";
 		expect(summaryContent).toContain("Context summary:");
 		expect(summaryContent).toContain("## Files");
-		expect(result?.messages[1]).toMatchObject({
-			content: "Old turn to compact",
-		});
-		expect(result?.messages[2]).toMatchObject({
-			content: "Older follow-up to compact",
-		});
-		expect(result?.messages[3]).toEqual({
+		expect(result?.messages[1]).toEqual({
 			role: "user",
 			content: "Implement the change",
 		});
-		expect(result?.messages[4]).toEqual({
+		expect(result?.messages[2]).toEqual({
 			role: "assistant",
 			content: "Recent assistant state",
 		});
@@ -4056,13 +4050,13 @@ describe("createContextCompactionPrepareTurn", () => {
 				kind: "compaction_summary",
 			}),
 		});
-		expect(result?.messages).toHaveLength(4);
+		expect(result?.messages).toHaveLength(3);
 		expect(result?.messages[1]).toMatchObject({
-			content: `Old request ${repeatedText}`,
-		});
-		expect(result?.messages[2]).toMatchObject({
 			content: `Latest request ${repeatedText}`,
 		});
+		expect(JSON.stringify(result?.messages)).not.toContain(
+			`Old request ${repeatedText}`,
+		);
 		expect(JSON.stringify(result?.messages)).not.toContain(
 			`Old reply ${repeatedText}`,
 		);

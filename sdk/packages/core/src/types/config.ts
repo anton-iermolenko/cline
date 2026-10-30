@@ -11,6 +11,7 @@ import type {
 	HookErrorMode,
 	ITelemetryService,
 	MessageWithMetadata,
+	RequestInputTokenCount,
 	SessionExecutionConfig,
 	SessionPromptConfig,
 	SessionWorkspaceConfig,
@@ -91,6 +92,12 @@ export interface CoreCompactionBudget {
 }
 
 export interface CoreCompactionContext {
+	/** Preview the actual prepared request when reserving recent history. */
+	countRequestInputTokens?: (
+		messages: MessageWithMetadata[],
+	) => Promise<
+		Pick<RequestInputTokenCount, "inputTokens" | "maxInputTokens"> | undefined
+	>;
 	agentId: string;
 	conversationId: string;
 	parentAgentId: string | null;

@@ -459,7 +459,7 @@ export function findCutIndex(
 	}
 
 	// Completed work inside the active turn is compactable. The caller
-	// reinserts its human instructions verbatim, independently of the tail.
+	// reinserts the latest human instruction verbatim, independently of the tail.
 	let cut = candidate;
 	while (cut > 0 && !isSafeCutBoundary(messages[cut])) {
 		cut -= 1;

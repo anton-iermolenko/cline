@@ -1,9 +1,12 @@
-import { fireEvent, render, screen } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import ChatTextArea from "./ChatTextArea"
 
 const mocks = vi.hoisted(() => ({
 	supportsImages: true as boolean | undefined,
+	provider: "anthropic",
+	model: "text-only-model",
+	readProviderConfig: vi.fn(),
 	navigateToSettingsModelPicker: vi.fn(),
 	cloudState: {} as Record<string, unknown>,
 }))
@@ -30,13 +33,14 @@ vi.mock("@/context/PlatformContext", () => ({
 
 vi.mock("@/hooks/useNormalizedApiConfiguration", () => ({
 	useNormalizedApiConfiguration: () => ({
-		selectedProvider: "anthropic",
-		selectedModelId: "text-only-model",
+		selectedProvider: mocks.provider,
+		selectedModelId: mocks.model,
 		selectedModelInfo: { supportsImages: mocks.supportsImages },
 	}),
 }))
 
 vi.mock("@/services/grpc-client", () => ({
+	ModelsServiceClient: { readProviderConfig: mocks.readProviderConfig },
 	FileServiceClient: {
 		searchCommits: vi.fn(async () => ({ commits: [] })),
 		searchFiles: vi.fn(async () => ({ results: [] })),
@@ -88,6 +92,8 @@ function pasteImage(target: HTMLElement) {
 describe("ChatTextArea model label", () => {
 	beforeEach(() => {
 		mocks.cloudState = {}
+		mocks.provider = "anthropic"
+		mocks.model = "text-only-model"
 	})
 
 	it("shows the local provider, model, and local-only controls for a local task", () => {
@@ -123,6 +129,8 @@ describe("ChatTextArea image attachments vs. model capability", () => {
 	beforeEach(() => {
 		mocks.supportsImages = true
 		mocks.cloudState = {}
+		mocks.provider = "anthropic"
+		mocks.model = "text-only-model"
 		mocks.navigateToSettingsModelPicker.mockReset()
 	})
 
@@ -185,5 +193,33 @@ describe("ChatTextArea image attachments vs. model capability", () => {
 		renderTextArea()
 
 		expect(screen.queryByTestId("images-unsupported-notice")).not.toBeInTheDocument()
+	})
+})
+
+describe("ChatTextArea native profile label", () => {
+	beforeEach(() => {
+		mocks.cloudState = {}
+		mocks.provider = "vllm"
+		mocks.model = "qwen-27b-max-context"
+		mocks.readProviderConfig.mockReset()
+	})
+	it("shows the current per-model profile", async () => {
+		mocks.readProviderConfig.mockResolvedValue({
+			providerId: "vllm",
+			localInferenceModelId: mocks.model,
+			localInferenceProfile: "p1",
+		})
+		renderTextArea()
+		await waitFor(() => expect(screen.getByTitle("Open API Settings")).toHaveTextContent("vllm:qwen-27b-max-context (P1)"))
+	})
+	it("does not attach another model's profile", async () => {
+		mocks.readProviderConfig.mockResolvedValue({
+			providerId: "vllm",
+			localInferenceModelId: "different-model",
+			localInferenceProfile: "p2",
+		})
+		renderTextArea()
+		await waitFor(() => expect(mocks.readProviderConfig).toHaveBeenCalled())
+		expect(screen.getByTitle("Open API Settings")).not.toHaveTextContent("(P2)")
 	})
 })
