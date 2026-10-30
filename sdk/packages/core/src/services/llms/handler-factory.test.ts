@@ -429,7 +429,7 @@ describe("createAgentModelFromConfig", () => {
 		);
 	});
 
-	it("projects providers.json contextWindow (maxInputTokens) onto the selected gateway model", async () => {
+	it("projects the configured input allowance while preserving the model context window", async () => {
 		const { createAgentModelFromConfig } = await import("./handler-factory");
 
 		createAgentModelFromConfig(
@@ -463,7 +463,7 @@ describe("createAgentModelFromConfig", () => {
 						models: [
 							expect.objectContaining({
 								id: "llama3.1",
-								contextWindow: 8192,
+								contextWindow: 131072,
 								maxInputTokens: 8192,
 							}),
 						],
@@ -538,7 +538,7 @@ describe("createAgentModelFromConfig", () => {
 				providerConfigs: [
 					expect.objectContaining({
 						providerId: "ollama",
-						models: undefined,
+						models: [],
 					}),
 				],
 			}),

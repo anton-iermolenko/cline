@@ -5,6 +5,7 @@ import {
 	compileCliBinary,
 	installOpenTuiNativeVariants,
 } from "../../../cli/script/compile-binary";
+import { runtimeDefineArgs } from "./runtime-define-args";
 import { telemetryDefineArgs } from "./telemetry-define-args";
 
 // The desktop app ships two runtime artifacts and no app-specific executable:
@@ -102,7 +103,7 @@ const bundleDesktopBackend = async (): Promise<void> => {
 	cpSync(`${REPO_ROOT}/sdk/packages/core/dist/plugin-runtime`, runtime, {
 		recursive: true,
 	});
-	const defines = telemetryDefineArgs();
+	const defines = [...telemetryDefineArgs(), ...runtimeDefineArgs()];
 	await $`bun build ./sidecar/index.ts --target bun --minify ${defines} --outfile ${DESKTOP_BACKEND_BUNDLE}`;
 };
 

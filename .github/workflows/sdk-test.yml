@@ -78,6 +78,10 @@ jobs:
                       node-version: "24.x"
         runs-on: ${{ matrix.os }}
         name: Test (${{ matrix.os }}, Node ${{ matrix.node-version }})
+        env:
+            # py -3 otherwise selects the newest image-provided Python instead
+            # of the version installed below.
+            PY_PYTHON3: "3.12"
         steps:
             - name: Checkout code
               uses: actions/checkout@v4
@@ -91,6 +95,13 @@ jobs:
               uses: actions/setup-node@v4
               with:
                   node-version: ${{ matrix.node-version }}
+
+            # Hook integration tests execute real Python scripts. Do not depend on
+            # the hosted image's launcher/store aliases or automatic installation.
+            - name: Setup Python for hook tests
+              uses: actions/setup-python@v5
+              with:
+                  python-version: "3.12"
 
             - name: Install dependencies
               run: bun install
@@ -109,6 +120,10 @@ jobs:
             - name: Run Tests
               if: ${{ !cancelled() && steps.build_sdk_step.outcome == 'success' && steps.build_cli_step.outcome == 'success' && matrix.os != 'windows-latest' }}
               run: bun run test
+
+            - name: Verify Windows Python launcher
+              if: matrix.os == 'windows-latest'
+              run: py -3 --version
 
             - name: Run SDK Tests (Windows)
               if: ${{ !cancelled() && steps.build_sdk_step.outcome == 'success' && steps.build_cli_step.outcome == 'success' && matrix.os == 'windows-latest' }}
