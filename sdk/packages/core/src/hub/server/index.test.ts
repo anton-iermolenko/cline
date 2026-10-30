@@ -6,8 +6,14 @@ import {
 	type Socket,
 } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { dirname, join } from "node:path";
+import {
+	resolveClineDir,
+	resolveDocumentsClineDirectoryPath,
+	setClineDir,
+	setHomeDir,
+} from "@cline/shared/storage";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocketServer } from "ws";
 import { createLocalHubScheduleRuntimeHandlers } from "../daemon/runtime-handlers";
 import {
@@ -82,11 +88,53 @@ function requireServer(
 describe("hub server startup", () => {
 	const servers = new Set<HubWebSocketServer>();
 
+	const originalHome = dirname(dirname(resolveDocumentsClineDirectoryPath()));
+	const originalClineDir = resolveClineDir();
+	const storageKeys = [
+		"CLINE_DATA_DIR",
+		"CLINE_DB_DATA_DIR",
+		"CLINE_SESSION_DATA_DIR",
+		"CLINE_TASKS_DB_PATH",
+		"CLINE_CRON_DB_PATH",
+		"CLINE_CONNECTORS_DB_PATH",
+		"CLINE_PROVIDER_SETTINGS_PATH",
+		"CLINE_GLOBAL_SETTINGS_PATH",
+		"CLINE_MCP_SETTINGS_PATH",
+	] as const;
+	let root = "";
+	let storageEnv: Record<string, string | undefined> = {};
+
+	beforeEach(async () => {
+		// A memory-backed discovery owner does not isolate the scheduler's
+		// real session/SQLite stores. Never scan or migrate developer history.
+		root = await mkdtemp(join(tmpdir(), "hub-server-storage-"));
+		storageEnv = Object.fromEntries(
+			storageKeys.map((key) => [key, process.env[key]]),
+		);
+		for (const key of storageKeys) delete process.env[key];
+		process.env.CLINE_DATA_DIR = join(root, "data");
+		setHomeDir(root);
+		setClineDir(join(root, ".cline"));
+	});
+
 	afterEach(async () => {
 		for (const server of servers) {
 			await server.close();
 		}
 		servers.clear();
+		setHomeDir(originalHome);
+		setClineDir(originalClineDir);
+		for (const key of storageKeys) {
+			const value = storageEnv[key];
+			if (value === undefined) delete process.env[key];
+			else process.env[key] = value;
+		}
+		await rm(root, {
+			recursive: true,
+			force: true,
+			maxRetries: 5,
+			retryDelay: 100,
+		});
 	});
 
 	it("starts on the requested port instead of drifting to a random port", async () => {

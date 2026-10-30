@@ -47,7 +47,7 @@ Bootstrap rules, expert tools and notification hooks are opt-in setup material. 
 
 ## Release validation
 
-The 2026.10.3 release also stamps source-bundled desktop backends with the same SDK fingerprint as the CLI ([build definitions](../apps/examples/desktop-app/scripts/runtime-define-args.ts)). The compiled startup suite checks starting and reusing a Hub, proxy handling, and discovery recovery. CI provisions Python explicitly for real hook execution; model-limit and corrupt-history assertions follow the current runtime contracts.
+The 2026.10.3 release also stamps source-bundled desktop backends with the same SDK fingerprint as the CLI ([build definitions](../apps/examples/desktop-app/scripts/runtime-define-args.ts)). The compiled startup suite checks starting and reusing a Hub, proxy handling, and discovery recovery. Hub server fixtures isolate their real session/SQLite stores as well as discovery; cold CLI module-import checks have explicit startup budgets. CI provisions Python explicitly for real hook execution; model-limit and corrupt-history assertions follow the current runtime contracts.
 
 ## Keep this inventory current
 
