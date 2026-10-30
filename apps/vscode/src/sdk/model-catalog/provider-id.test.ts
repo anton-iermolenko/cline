@@ -66,6 +66,8 @@ describe("parseProviderId", () => {
 describe("isKnownProviderId", () => {
 	it("returns true for known provider ids after parsing", () => {
 		expect(isKnownProviderId(parseProviderId("anthropic"))).toBe(true)
+		expect(isKnownProviderId(parseProviderId("vllm"))).toBe(true)
+		expect(isKnownProviderId(parseProviderId("llamacpp"))).toBe(true)
 		expect(isKnownProviderId(parseProviderId("openai"))).toBe(true)
 		expect(isKnownProviderId(parseProviderId("deepseek"))).toBe(true)
 		expect(isKnownProviderId(parseProviderId("nousResearch"))).toBe(true)

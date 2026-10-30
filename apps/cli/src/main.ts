@@ -2,7 +2,6 @@ import { fstatSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename } from "node:path";
 import type { ToolPolicy } from "@cline/core";
-import { applyLocalModelLimits } from "@cline/core";
 import { CLINE_DEFAULT_MODEL_ID, registerDisposable } from "@cline/shared";
 import type { Command } from "commander";
 import { createDashboardCommand } from "./commands/dashboard-command";
@@ -37,6 +36,7 @@ import {
 	normalizeAutoApproveArgs,
 	resolveWorkspaceRoot,
 } from "./utils/helpers";
+import { readLocalModelProfiles } from "./utils/local-model-profiles";
 import {
 	c,
 	installStreamErrorGuards,
@@ -1115,7 +1115,12 @@ export async function runCli(): Promise<void> {
 			},
 			teamName: !isYoloMode ? args.teamName?.trim() || undefined : undefined,
 		};
-		applyLocalModelLimits(config, providerSettingsManager);
+		coreServer.applyLocalModelLimits(config, providerSettingsManager);
+		config.localModelProfile = readLocalModelProfiles(
+			providerSettingsManager,
+			config.providerId,
+			[config.modelId],
+		)?.[config.modelId];
 		try {
 			// For OAuth providers, don't write the resolved key into apiKey;
 			// the token lives in auth.accessToken and apiKey is reserved for

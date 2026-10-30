@@ -592,6 +592,10 @@ export function createContextCompactionPrepareTurn(
 		}
 
 		const compactionContext = {
+			countRequestInputTokens: beforeMeasurement
+				? (messages: CoreCompactionContext["messages"]) =>
+						countRequest(messages)
+				: undefined,
 			agentId: context.agentId,
 			conversationId: context.conversationId,
 			parentAgentId: context.parentAgentId,

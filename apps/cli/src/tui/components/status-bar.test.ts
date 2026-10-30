@@ -103,7 +103,7 @@ describe("formatStatusBarUsageText", () => {
 });
 
 describe("resolveModelDisplayName", () => {
-	it("uses the friendly model name with a ClinePass prefix", () => {
+	it("uses the full model id with a ClinePass prefix", () => {
 		expect(
 			resolveModelDisplayName({
 				providerId: "cline-pass",
@@ -112,16 +112,16 @@ describe("resolveModelDisplayName", () => {
 					"zai/glm-5.2": { name: "GLM 5.2" },
 				},
 			}),
-		).toBe("ClinePass: GLM 5.2");
+		).toBe("ClinePass: zai/glm-5.2");
 	});
 
-	it("falls back to the bare model id with a ClinePass prefix when unknown", () => {
+	it("keeps the full unknown model id with a ClinePass prefix", () => {
 		expect(
 			resolveModelDisplayName({
 				providerId: "cline-pass",
 				modelId: "zai/glm-5.2",
 			}),
-		).toBe("ClinePass: glm-5.2");
+		).toBe("ClinePass: zai/glm-5.2");
 	});
 
 	it("keeps the reasoning effort next to the model name", () => {
@@ -135,10 +135,10 @@ describe("resolveModelDisplayName", () => {
 				thinking: true,
 				reasoningEffort: "high",
 			}),
-		).toBe("ClinePass: GLM 5.2 (high)");
+		).toBe("ClinePass: zai/glm-5.2 (high)");
 	});
 
-	it("uses the friendly model name for non-ClinePass providers", () => {
+	it("uses the model id for non-ClinePass providers", () => {
 		expect(
 			resolveModelDisplayName({
 				providerId: "cline",
@@ -147,6 +147,23 @@ describe("resolveModelDisplayName", () => {
 					"zai/glm-5.2": { name: "GLM 5.2" },
 				},
 			}),
-		).toBe("GLM 5.2");
+		).toBe("zai/glm-5.2");
+	});
+});
+
+describe("native footer profile", () => {
+	it.each([
+		["default", "D"],
+		["p1", "P1"],
+		["p2", "P2"],
+	] as const)("shows the selected %s slot beside the exact id", (profile, label) => {
+		expect(
+			resolveModelDisplayName({
+				providerId: "vllm",
+				modelId: "qwen-27b-max-context",
+				knownModels: { "qwen-27b-max-context": { name: "Friendly name" } },
+				localModelProfile: profile,
+			}),
+		).toBe(`qwen-27b-max-context (${label})`);
 	});
 });

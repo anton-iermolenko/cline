@@ -20,7 +20,7 @@ import { useExtensionState } from "@/context/ExtensionStateContext"
 import { usePlatform } from "@/context/PlatformContext"
 import { useNormalizedApiConfiguration } from "@/hooks/useNormalizedApiConfiguration"
 import { cn } from "@/lib/utils"
-import { FileServiceClient, StateServiceClient } from "@/services/grpc-client"
+import { FileServiceClient, ModelsServiceClient, StateServiceClient } from "@/services/grpc-client"
 import {
 	ContextMenuOptionType,
 	getContextMenuOptionIndex,
@@ -215,6 +215,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 	) => {
 		const {
 			mode: selectedMode,
+			showSettings,
 			apiConfiguration,
 			openRouterModels,
 			platform,
@@ -271,6 +272,37 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 		const [searchLoading, setSearchLoading] = useState(false)
 		const [, metaKeyChar] = useMetaKeyDetection(platform)
 		const { selectedProvider, selectedModelId, selectedModelInfo } = useNormalizedApiConfiguration(mode)
+		const localProfileConfigurationKey = JSON.stringify(apiConfiguration)
+		const [localModelProfile, setLocalModelProfile] = useState<{
+			providerId: string
+			modelId: string
+			profile: string
+		}>()
+		useEffect(() => {
+			let cancelled = false
+			setLocalModelProfile(undefined)
+			if (selectedProvider === "vllm" || selectedProvider === "llamacpp") {
+				void ModelsServiceClient.readProviderConfig(StringRequest.create({ value: selectedProvider }))
+					.then((config) => {
+						if (
+							!cancelled &&
+							config.providerId === selectedProvider &&
+							config.localInferenceModelId === selectedModelId
+						) {
+							setLocalModelProfile({
+								providerId: selectedProvider,
+								modelId: selectedModelId,
+								profile: config.localInferenceProfile ?? "default",
+							})
+						}
+					})
+					.catch(() => {})
+			}
+			return () => {
+				cancelled = true
+			}
+		}, [selectedProvider, selectedModelId, localProfileConfigurationKey, showSettings])
+
 		// Images are attached regardless; when the selected model has no image input the thumbnails get a warning
 		// badge and a notice offers to switch models. Unknown capability data fails open, like core does.
 		const modelSupportsImages = selectedModelInfo.supportsImages !== false
@@ -1176,6 +1208,15 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 					return selectedModelId.startsWith("cline-pass/")
 						? `${selectedProvider}:${selectedModelId.replace(/^cline-pass\//, "")}`
 						: `cline:${selectedModelId}`
+				case "vllm":
+				case "llamacpp": {
+					const profile =
+						localModelProfile?.providerId === selectedProvider && localModelProfile.modelId === selectedModelId
+							? localModelProfile.profile
+							: undefined
+					const suffix = profile ? ` (${profile === "p1" ? "P1" : profile === "p2" ? "P2" : "D"})` : ""
+					return `${selectedProvider}:${selectedModelId}${suffix}`
+				}
 				case "openai":
 					return `openai-compat:${selectedModelId}`
 				case "vscode-lm":
@@ -1197,7 +1238,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 				default:
 					return `${selectedProvider}:${selectedModelId}`
 			}
-		}, [apiConfiguration, mode, selectedProvider, selectedModelId, cloudActOnly, cloudModelId])
+		}, [apiConfiguration, mode, selectedProvider, selectedModelId, cloudActOnly, cloudModelId, localModelProfile])
 
 		// Function to show error message for unsupported files for drag and drop
 		const showUnsupportedFileErrorMessage = () => {

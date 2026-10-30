@@ -8,7 +8,7 @@ import type {
 	SessionManifest,
 	ToolPolicy,
 } from "@cline/core";
-import type { Message } from "@cline/shared";
+import type { LocalModelProfileId, Message } from "@cline/shared";
 
 export type CliOutputMode = "text" | "json";
 export type CliAgentMode = AgentMode;
@@ -19,6 +19,7 @@ export type CliCompactionMode = "agentic" | "basic" | "off";
 
 export interface Config extends Omit<CoreSessionConfig, "apiKey" | "mode"> {
 	apiKey: string;
+	localModelProfile?: LocalModelProfileId;
 	knownModels?: Record<string, Llms.ModelInfo>;
 	loggerConfig?: RuntimeLoggerConfig;
 	verbose: boolean;

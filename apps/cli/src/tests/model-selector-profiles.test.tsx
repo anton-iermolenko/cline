@@ -50,7 +50,7 @@ async function picker(native = true) {
 		{ width: 100, height: 30 },
 	);
 	renderers.push(setup.renderer);
-	await setup.waitForFrame((frame) => frame.includes("Model A"));
+	await setup.waitForFrame((frame) => frame.includes("Fixture"));
 	async function key(press: () => void) {
 		await act(async () => {
 			press();
@@ -63,10 +63,10 @@ async function picker(native = true) {
 describe("native /model profile keyboard", () => {
 	it("shows right-hand profile labels, cycles the highlighted model only, and applies on Enter", async () => {
 		const ui = await picker();
-		expect(ui.captureCharFrame()).toMatch(/Model A[^\n]*\[D\] P1 P2/);
-		expect(ui.captureCharFrame()).toMatch(/Model B[^\n]*D P1 \[P2\]/);
+		expect(ui.captureCharFrame()).toMatch(/A[^\n]*\[D\] P1 P2/);
+		expect(ui.captureCharFrame()).toMatch(/B[^\n]*D P1 \[P2\]/);
 		await ui.key(() => ui.mockInput.pressTab());
-		expect(ui.captureCharFrame()).toMatch(/Model A[^\n]*D \[P1\] P2/);
+		expect(ui.captureCharFrame()).toMatch(/A[^\n]*D \[P1\] P2/);
 		expect(ui.selections).toEqual([]);
 		await ui.key(() => ui.mockInput.pressEnter());
 		expect(ui.selections).toEqual([["A", "p1"]]);
