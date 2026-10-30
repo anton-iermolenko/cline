@@ -15,7 +15,34 @@ const ROUND_HEADING =
 	/^### Next chronological history section(?: \(rounds? \d+(?:(?: & |–)\d+)?\))?$/gm;
 const ROUND_END =
 	/^And these are all the notes from rounds? (\d+)(?:(?: & |–)(\d+))?\.$/gm;
-type HistoryNotes = { text: string; firstRound: number; lastRound: number };
+const MERGE_LEVEL = /^<!-- compaction-merge-level: (\d+) -->$/m;
+type HistoryNotes = {
+	text: string;
+	firstRound: number;
+	lastRound: number;
+	mergeLevel: number;
+};
+
+/** Finish the oldest available pair at the lowest equal level before revisiting it. */
+function findMergePair(notes: HistoryNotes[]): number {
+	let equal = -1;
+	for (let i = 0; i < notes.length - 1; i++) {
+		if (notes[i].mergeLevel !== notes[i + 1].mergeLevel) continue;
+		if (equal < 0 || notes[i].mergeLevel < notes[equal].mergeLevel) equal = i;
+	}
+	if (equal >= 0) return equal;
+	// An odd/mixed legacy tree can run out of equal neighbors while still over
+	// quota. Merge the shallowest adjacent pair only when it cannot otherwise fit.
+	let best = 0;
+	for (let i = 1; i < notes.length - 1; i++) {
+		if (
+			Math.max(notes[i].mergeLevel, notes[i + 1].mergeLevel) <
+			Math.max(notes[best].mergeLevel, notes[best + 1].mergeLevel)
+		)
+			best = i;
+	}
+	return best;
+}
 
 function renderHistoryRound(notes: HistoryNotes): string {
 	const { text, firstRound, lastRound } = notes;
@@ -35,11 +62,15 @@ function renderHistoryRound(notes: HistoryNotes): string {
 		)
 			fence = undefined;
 	}
-	return `### Next chronological history section (${label})\n\n${text.trim()}${fence ? `\n${fence}` : ""}\n\nAnd these are all the notes from ${label}.`;
+	return `### Next chronological history section (${label})\n\n<!-- compaction-merge-level: ${notes.mergeLevel} -->\n\n${text.trim()}${fence ? `\n${fence}` : ""}\n\nAnd these are all the notes from ${label}.`;
 }
 
 function stripRoundMarkers(notes: string): string {
-	return notes.replace(ROUND_HEADING, "").replace(ROUND_END, "");
+	return notes
+		.replace(ROUND_HEADING, "")
+		.replace(ROUND_END, "")
+		.replace(MERGE_LEVEL, "")
+		.trim();
 }
 
 function savedHistoryNotes(summary: string): HistoryNotes[] {
@@ -55,15 +86,24 @@ function savedHistoryNotes(summary: string): HistoryNotes[] {
 			text: stripRoundMarkers(prefix),
 			firstRound: 1,
 			lastRound: 1,
+			mergeLevel: 0,
 		});
 	for (let i = 0; i < headings.length; i++) {
 		const heading = headings[i];
+		const section = summary.slice(heading.index, headings[i + 1]?.index);
+		const firstRound = Number(heading[1]);
+		const lastRound = Number(heading[2] ?? heading[1]);
+		// Older checkpoints recorded spans but not actual merge depth. Preserve
+		// that best-effort estimate once; new checkpoints retain the exact level.
+		const mergeLevel = section.match(MERGE_LEVEL)?.[1];
 		notes.push({
-			text: stripRoundMarkers(
-				summary.slice(heading.index, headings[i + 1]?.index),
-			),
-			firstRound: Number(heading[1]),
-			lastRound: Number(heading[2] ?? heading[1]),
+			text: stripRoundMarkers(section),
+			firstRound,
+			lastRound,
+			mergeLevel:
+				mergeLevel === undefined
+					? Math.ceil(Math.log2(Math.max(1, lastRound - firstRound + 1)))
+					: Number(mergeLevel),
 		});
 	}
 	return notes;
@@ -384,7 +424,12 @@ export async function summarizeMeasuredChunks(options: {
 			false,
 		);
 		const unitCount = end - start;
-		const note = { text: addition, firstRound: ++round, lastRound: round };
+		const note = {
+			text: addition,
+			firstRound: ++round,
+			lastRound: round,
+			mergeLevel: 0,
+		};
 		notes.push(note);
 		additions.push(renderHistoryRound(note));
 		start = end;
@@ -403,7 +448,7 @@ export async function summarizeMeasuredChunks(options: {
 	if (
 		(await tokens(formatSummaryContent(checkpoint))) > options.summaryTokens
 	) {
-		// Split over-quota accumulated notes into complete ~3K sections; keep newer sections unchanged.
+		// Split over-quota notes into complete ~3K sections, retaining their merge levels.
 		// Repartition chronological notes without treating old presentation markers
 		// as evidence. Reinsert boundaries around the resulting ordered sections.
 		const leaves: HistoryNotes[] = [];
@@ -422,25 +467,36 @@ export async function summarizeMeasuredChunks(options: {
 		) {
 			if (leaves.length < 2 || ++reductions > 64)
 				throw new Error(
-					"Summary could not fit its token quota after bounded oldest-pair reductions; original context was preserved",
+					"Summary could not fit its token quota after bounded balanced-pair reductions; original context was preserved",
 				);
-			const source = leaves[0].text + leaves[1].text;
+			const pairIndex = findMergePair(leaves);
+			const left = leaves[pairIndex];
+			const right = leaves[pairIndex + 1];
+			const source = [left.text.trimEnd(), right.text.trimStart()].join("\n\n");
 			const merged = await generate(source, true);
 			if ((await tokens(merged)) >= (await tokens(source)))
 				throw new Error(
 					"Summary pair did not shrink; original context was preserved",
 				);
-			leaves.splice(0, 2, {
+			const mergeLevel = Math.max(left.mergeLevel, right.mergeLevel) + 1;
+			leaves.splice(pairIndex, 2, {
 				text: merged + (leaves.length > 2 ? "\n\n" : ""),
-				firstRound: leaves[0].firstRound,
-				lastRound: leaves[1].lastRound,
+				firstRound: left.firstRound,
+				lastRound: right.lastRound,
+				mergeLevel,
 			});
 			checkpoint = ensureFilesSection(
 				leaves.map(renderHistoryRound).join("\n\n"),
 				options.fileOps,
 			);
-			options.logger?.log("Compaction oldest summary pair reduced", {
+			options.logger?.log("Compaction balanced summary pair reduced", {
 				reduction: reductions,
+				pairIndex,
+				firstRound: left.firstRound,
+				lastRound: right.lastRound,
+				leftMergeLevel: left.mergeLevel,
+				rightMergeLevel: right.mergeLevel,
+				mergeLevel,
 				pairInputTokens: await tokens(source),
 				pairOutputTokens: await tokens(merged),
 				remainingSections: leaves.length,

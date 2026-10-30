@@ -444,7 +444,7 @@ describe("measured summary checkpoints", () => {
 			previous = next;
 		}
 	});
-	it("reduces oldest adjacent notes only when over quota and keeps newer notes unchanged", async () => {
+	it("reduces balanced old pairs only when over quota and keeps an unpaired newer note unchanged", async () => {
 		mocks.generate.mockImplementation(async function* (_system, messages) {
 			const request = messages[0].content;
 			yield {
@@ -459,7 +459,7 @@ describe("measured summary checkpoints", () => {
 		});
 		const options = input();
 		const old = Array.from(
-			{ length: 6 },
+			{ length: 8 },
 			(_, i) => `- OLD-${i} ` + "x".repeat(1300),
 		).join("\n\n");
 		options.context.messages = [
@@ -516,7 +516,6 @@ describe("measured summary checkpoints", () => {
 			r.startsWith("Merge these adjacent"),
 		);
 		expect(reductions.length).toBeGreaterThan(0);
-		expect(new Set(reductions).size).toBe(reductions.length);
 		const content = (result!.messages[0].content as { text: string }[])[0].text;
 		expect(content.length).toBeLessThanOrEqual(4000);
 		expect(content).toMatch(
@@ -574,6 +573,96 @@ describe("measured summary checkpoints", () => {
 		expect(next.startsWith(summary)).toBe(true);
 		expect(next).toContain("And these are all the notes from rounds 1 & 2.");
 		expect(next).toContain("And these are all the notes from round 4.");
+	});
+	function balancedOptions(quota: number) {
+		const options = input();
+		options.context.budget.request.summaryTokens = quota;
+		const summary = ["A", "B", "C", "D"]
+			.map(
+				(letter, i) =>
+					`### Next chronological history section (round ${i + 1})\n\n- SOURCE-${letter} ${"x".repeat(1600)}\n\nAnd these are all the notes from round ${i + 1}.`,
+			)
+			.join("\n\n");
+		options.context.messages = [
+			buildSummaryMessage({
+				summary,
+				fileOps: { readFiles: [], modifiedFiles: [] },
+				tokensBefore: 20000,
+				userRunSpan: 1,
+			}),
+			{ role: "assistant", content: "One new completed window." },
+			{ role: "assistant", content: "Recent" },
+		];
+		mocks.generate.mockImplementation(async function* (_system, messages) {
+			const request = messages[0].content as string;
+			if (request.startsWith("Merge these adjacent")) {
+				const letters = Array.from(
+					new Set(
+						[...request.matchAll(/(?:SOURCE|MERGED)-([A-D]+)/g)].flatMap(
+							(m) => [...m[1]],
+						),
+					),
+				)
+					.sort()
+					.join("");
+				yield { type: "text", text: `- MERGED-${letters} ` + "m".repeat(300) };
+			} else yield { type: "text", text: "- NEW-WINDOW " + "n".repeat(120) };
+			yield { type: "done", success: true };
+		});
+		return options;
+	}
+	it("pairs A+B, then C+D, then AB+CD instead of repeatedly rewriting A", async () => {
+		const options = balancedOptions(1300);
+		const result = await runAgenticCompaction(options);
+		const reductions = generationRequests().filter((r) =>
+			r.startsWith("Merge these adjacent"),
+		);
+		expect(reductions).toHaveLength(3);
+		expect(reductions[0]).toContain("SOURCE-A");
+		expect(reductions[0]).toContain("SOURCE-B");
+		expect(reductions[0]).not.toContain("SOURCE-C");
+		expect(reductions[1]).toContain("SOURCE-C");
+		expect(reductions[1]).toContain("SOURCE-D");
+		expect(reductions[1]).not.toContain("MERGED-AB");
+		expect(reductions[2]).toContain("MERGED-AB");
+		expect(reductions[2]).toContain("MERGED-CD");
+		expect(reductions.every((r) => !r.includes("compaction-merge-level"))).toBe(
+			true,
+		);
+		const summary = result!.messages[0].metadata!.summary as string;
+		expect(summary).toContain("<!-- compaction-merge-level: 2 -->");
+		expect(summary).toContain("And these are all the notes from rounds 1–4.");
+		expect(
+			(result!.messages[0].content as { text: string }[])[0].text.length,
+		).toBeLessThanOrEqual(1300);
+	});
+	it("remembers the AB merge across compactions and pairs C+D next", async () => {
+		const options = balancedOptions(5000);
+		const first = await runAgenticCompaction(options);
+		let reductions = generationRequests().filter((r) =>
+			r.startsWith("Merge these adjacent"),
+		);
+		expect(reductions).toHaveLength(1);
+		const firstSummary = first!.messages[0].metadata!.summary as string;
+		expect(firstSummary).toContain("<!-- compaction-merge-level: 1 -->");
+		options.context.messages = [
+			first!.messages[0],
+			{ role: "assistant", content: "Another new window." },
+			{ role: "assistant", content: "Recent" },
+		];
+		options.context.budget.request.summaryTokens = 4000;
+		mocks.generate.mockClear();
+		const second = await runAgenticCompaction(options);
+		reductions = generationRequests().filter((r) =>
+			r.startsWith("Merge these adjacent"),
+		);
+		expect(reductions).toHaveLength(1);
+		expect(reductions[0]).toContain("SOURCE-C");
+		expect(reductions[0]).toContain("SOURCE-D");
+		expect(reductions[0]).not.toContain("MERGED-AB");
+		const summary = second!.messages[0].metadata!.summary as string;
+		expect(summary).toContain("And these are all the notes from rounds 1 & 2.");
+		expect(summary).toContain("And these are all the notes from rounds 3 & 4.");
 	});
 	it("does not split nested bullets or fenced code while partitioning summaries", () => {
 		const text =
