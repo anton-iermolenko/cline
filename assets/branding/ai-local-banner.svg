@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1120" height="340" viewBox="0 0 1120 340" role="img" aria-labelledby="title description">
   <title id="title">Cline / AI Local</title>
-  <desc id="description">Keep the thread. Follow the evidence. Memory, research and execution for local AI workflows.</desc>
+  <desc id="description">Cline / AI Local. Memory, research and execution for local AI workflows.</desc>
   <rect x="1" y="1" width="1118" height="338" rx="28" fill="#101f2b" stroke="#29404d" stroke-width="2"/>
   <path d="M832 2V338M976 2V338" stroke="#d6eee4" stroke-opacity=".035"/>
   <path d="M2 270H1118" stroke="#d6eee4" stroke-opacity=".08"/>
@@ -10,8 +10,7 @@
   <g font-family="Arial, Helvetica, sans-serif">
     <text x="310" y="73" fill="#91e7c7" font-size="12" font-weight="700" letter-spacing="3.1">BUILT FOR LOCAL AI</text>
     <text x="306" y="149" font-size="65" font-weight="700" letter-spacing="-1.8"><tspan fill="#f0f4f5">Cline</tspan><tspan dx="15" fill="#64808e" font-weight="400">/</tspan><tspan dx="15" fill="#91e7c7">AI Local</tspan></text>
-    <text x="310" y="202" fill="#cfdbdf" font-size="25">Keep the thread. Follow the evidence.</text>
-    <text x="310" y="237" fill="#8ca4b0" font-size="16">A workflow for sustained coding and investigation.</text>
+    <text x="310" y="207" fill="#8ca4b0" font-size="16">A workflow for sustained coding and investigation.</text>
     <g fill="#c3d2d8" font-size="12" font-weight="700" letter-spacing="2">
       <text x="75" y="311">MEMORY</text><text x="438" y="311">RESEARCH</text><text x="805" y="311">EXECUTION</text>
     </g>

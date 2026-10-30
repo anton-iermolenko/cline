@@ -1,55 +1,43 @@
 <!-- AI Local fork introduction. Preserve the upstream README below its marker. -->
 <p align="center">
-  <img src="assets/branding/ai-local-banner.png" width="100%" alt="Cline / AI Local — keep the thread, follow the evidence" />
+  <img src="assets/branding/ai-local-banner.png" width="100%" alt="Cline / AI Local" />
 </p>
 
 <p align="center">
   <strong>Keep the thread. Follow the evidence. Finish the work.</strong>
 </p>
 
-**Cline / AI Local** brings session memory, focused research, and execution you can follow to local-model workflows in the **CLI and VS Code**. It grows out of everyday coding and investigation with models running on your own hardware: keeping useful knowledge across sessions, finding the right evidence, and following a command through to its result.
+**Cline / AI Local** adapts Cline's **CLI and VS Code extension** for sustained work with local models: clearer budgets, practical compaction, leaner tools, and reliable session recovery.
 
-Context is one part of that workflow. The aim is to make the model, its working memory, and its tools work well together over sustained tasks.
+### What this fork provides
 
-### See and control your model's working budget
-
-The native model configuration screen puts **context allocation, compaction, output and reasoning controls** in one place. Its breakdown shows tools and instructions, summarized history, raw recent history, output including thinking, counting margin, and the space reserved for further iterations.
-
-**Default, Profile 1 and Profile 2 are saved per provider/server/model.** Switch between a long investigation and a tighter working budget without rebuilding the settings each time. Grey italic values distinguish server/calculated defaults from your overrides. CLI model selection uses the same saved slots, and both clients display the selected model ID and profile.
+- **See your context budget.** vLLM and llama.cpp settings distinguish server-reported defaults from your overrides. See how instructions, compaction, preserved recent history, output, safety margin, and new work share the total context.
+- **Count requests before sending.** Native preflight counting measures prepared requests, keeping safety margins small and leaving more context available for useful work.
+- **Switch saved model profiles.** Default, P1 and P2 settings are saved per provider, server and model. CLI and editor share profiles and show the selected model ID and profile.
+- **Compaction for local models.** Whole-message batches preserve findings and decisions. Retries and gradual reductions accommodate models that miss requested lengths or overgeneralize below output limits. Measured budgets guide retention; full saved history remains available.
+- **Explore files and pages.** Search saved pages and read files in focused chunks. Revisit relevant passages without filling context with entire documents, keeping long investigations manageable for local models.
+- **Run commands through completion.** Native/headless commands outlasting the foreground wait continue under the same PID. Command/wait pairs follow captured logs and results, reducing repeated work and abrupt stops.
+- **Edit with guarded drafts.** Chunked drafts, exact-range edits, file hashes and conflict checks help prevent failed edits and repeated work. Previews and applied changes use the same editing engine.
+- **Bootstrap your working setup.** The optional [bootstrap kit](bootstrap/README.md) supplies portable rules, explicitly requested Codex expert consultation and [notification templates](bootstrap/notifications/README.md). Add [SearXNG search](docs/sdk/web-research.mdx#searxng-plugin) for self-hosted research. Each integration is opt-in.
+- **Restore sessions more reliably.** Resume, Undo, checkpoints and edited messages preserve compaction state. Code-server logging and transport fixes improve stability across long sessions and recovery.
 
 <p align="center">
   <img src="assets/screenshots/local-model-settings.png" width="720" alt="Native model configuration showing Default, Profile 1 and Profile 2, editable context settings, and the complete context budget breakdown" />
 </p>
 
-*The actual settings component, rendered with example values and Profile 1 selected. Tools/instructions and recent-history allocations are estimates; supported native counters verify the prepared request at runtime. [Screenshot details](assets/screenshots/README.md).*
+*Settings shown with example values. Grey italics indicate inherited defaults; regular text shows overrides. Allocation estimates are verified against prepared requests by supported native counters. [Screenshot details](assets/screenshots/README.md).*
 
-### What this fork provides
-
-- **Native model configuration.** vLLM and llama.cpp controls expose sampling, thinking, context/output limits and compaction budgets. Per-model profile slots, editable token-cost estimates, model discovery and visible IDs keep the CLI and editor aligned. HyperQwen uses the vLLM provider; llama-swap can route requests without Cline guessing the inference engine.
-- **Memory built from the work.** Compaction records actions and results, user requirements, design and API knowledge learned from code/docs, corrections, and unresolved work. Whole messages and tool exchanges stay together. Oldest notes are reduced together only when the summary exceeds its budget. Model-generated summaries remain imperfect; full saved history is retained.
-- **Continuity across recovery and revisions.** Resume, checkpoint/Undo and edited-message fixes preserve validated compaction state and the working context. Prepared requests retain stable summarized prefixes where possible, supporting prefix-cache reuse.
-- **Research with evidence in reach.** Search, save pages outside the conversation, find relevant passages, and read only the lines needed. The model can revisit sources without carrying whole pages in context. Search and page acquisition have configurable providers, including the optional SearXNG plugin.
-- **Commands that remain trackable.** Native/headless commands that outlast the foreground wait continue under the same PID, with captured output and a log for later results. Identity-aware process waits and verified expert-status waits avoid repeated shell polling and false loop failures. Visible VS Code terminals retain their own terminal-specific handoff.
-- **Native editing with staged drafts.** Bounded reads, file hashes, exact-range edits and conflict checks are built into the toolset. Large content can be assembled in chunks before a guarded apply; editor previews and commits use the same underlying engine.
-- **A reusable setup for sustained work.** The opt-in [bootstrap kit](bootstrap/README.md) includes portable rule supplements, a Codex-backed `consult-expert` MCP for explicitly requested expert assignments, and CLI hooks for completion, errors and questions waiting for an answer. These are supplied as setup material, not silently activated by installing Cline.
-
-Underneath those workflows are native request counting and budget admission, bounded reasoning previews, code-server logging and transport repairs, and matched CLI/extension builds with source provenance. The [fork modification inventory](docs/fork-differences.md) maps these changes to their implementation and integration history.
+The [fork modification inventory](docs/fork-differences.md) links these features and supporting fixes to their implementation and integration history.
 
 ### Why this fork exists
 
-The first change addressed a code-server memory leak: closing the output channel could trigger recursive logging during logout. That repair is documented in [PR #15066 — prevent closed output channel logging recursion](https://github.com/cline/cline/pull/15066).
-
-The scope has grown into an integrated environment for working with local models. The improvements come from actual failures and repeated friction in long coding and research sessions, rather than treating a larger context window as the solution to every problem.
-
-This remains a Cline fork. It continues to integrate upstream development, preserves Cline's authorship and license, and can retire local changes as upstream provides equivalent or better behavior.
+It started with a [code-server logging recursion fix](https://github.com/cline/cline/pull/15066) and grew through everyday coding and research on local hardware. The focus is making context, memory and tools work together across sustained tasks.
 
 ### Builds and upstream
 
-CLI and extension releases share one fork version, **`year.month.release`** (for example, `2026.10.1`). Development builds record their exact source commit without moving a release tag. Both clients are built from the same committed SDK source, with provenance, a shared runtime fingerprint and artifact hashes.
+CLI and extension builds share one committed SDK source and a **`year.month.release`** version, with source provenance, runtime fingerprints and artifact hashes. See [builds and releases](local/README.md), the [development workflow](LOCAL_DEVELOPMENT.md), and [branding assets](assets/branding/README.md).
 
-See [local builds and releases](local/README.md), the [development workflow](LOCAL_DEVELOPMENT.md), and the [fork's branding assets](assets/branding/README.md). The capabilities above describe this fork's current source; use the build receipt to identify what an installed package contains.
-
-The original Cline README follows. Its installation commands and product links describe **upstream Cline**; they do not install this fork. Cline's original authorship and license are preserved.
+This fork continues integrating upstream Cline and preserves its authorship and license. The original README follows; its installation commands and product links describe **upstream Cline**, not this fork.
 
 ---
 
