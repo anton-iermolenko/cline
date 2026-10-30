@@ -139,7 +139,7 @@ describe("measured summary checkpoints", () => {
 	});
 	const source = (request: string) =>
 		request.split("<new_messages>\n")[1]?.split("\n</new_messages>")[0];
-	it("batches whole new history toward 16K and appends additions to read-only reference notes", async () => {
+	it("summarizes independent whole history windows toward 16K and appends notes locally", async () => {
 		const options = input(),
 			original = JSON.stringify(options.context.messages);
 		const result = await runAgenticCompaction(options),
@@ -147,8 +147,9 @@ describe("measured summary checkpoints", () => {
 		expect(requests.length).toBeGreaterThan(2);
 		for (let i = 0; i < requests.length; i++) {
 			expect(source(requests[i])!.length).toBeLessThanOrEqual(16000);
-			for (let earlier = 1; earlier <= i; earlier++)
-				expect(requests[i]).toContain(`UNIQUE-NOTE-${earlier}:`);
+			expect(requests[i]).not.toContain("Old checkpoint evidence");
+			expect(requests[i]).not.toContain("UNIQUE-NOTE-");
+			expect(requests[i]).not.toContain("<saved_summary>");
 		}
 		for (let i = 0; i < 6; i++) {
 			const containing = requests.filter((r) =>
@@ -167,7 +168,8 @@ describe("measured summary checkpoints", () => {
 		for (const [, messages] of mocks.generate.mock.calls) {
 			expect(messages).toHaveLength(1);
 			expect(messages[0].role).toBe("user");
-			expect(messages[0].content).toContain("<saved_summary>");
+			expect(messages[0].content).toContain("<new_messages>");
+			expect(messages[0].content).not.toContain("<saved_summary>");
 		}
 		expect(mocks.configs.every((c) => !c.continueAssistantMessage)).toBe(true);
 		expect(mocks.configs[0].maxOutputTokens).toBe(5000);

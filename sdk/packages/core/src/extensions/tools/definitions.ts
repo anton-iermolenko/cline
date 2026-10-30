@@ -196,9 +196,16 @@ async function executeShellCommands(
 			async (command, commandIndex): Promise<ToolOperationResult> => {
 				const startedAt = Date.now();
 				const query = formatRunCommandQueryPreview(command);
+				const cancellation = new AbortController();
+				const executionContext = {
+					...context,
+					signal: context.signal
+						? AbortSignal.any([context.signal, cancellation.signal])
+						: cancellation.signal,
+				};
 				const commandContext: AgentToolContext = context.emitUpdate
 					? {
-							...context,
+							...executionContext,
 							emitUpdate: (update) => {
 								const payload =
 									update && typeof update === "object" && !Array.isArray(update)
@@ -211,7 +218,7 @@ async function executeShellCommands(
 								});
 							},
 						}
-					: context;
+					: executionContext;
 				try {
 					const output = await withTimeout(
 						executor(command, cwd, commandContext),
@@ -225,6 +232,7 @@ async function executeShellCommands(
 					};
 				} catch (error) {
 					if (error instanceof TimeoutError) {
+						cancellation.abort(error);
 						captureRunCommandsTimeoutFromContext(telemetry, context, {
 							effectiveTimeoutMs: error.timeoutMs,
 							timeoutSource,
@@ -246,7 +254,10 @@ async function executeShellCommands(
 					const msg = formatError(error);
 					return {
 						query,
-						result: "",
+						result:
+							error instanceof TimeoutError
+								? "Foreground command timed out; cancellation was requested. This is not a background handoff or proof of completion. Separately detached or remote jobs may still run; inspect their actual PID/log before retrying. Use wait_for_process for an existing background PID instead of shell sleep."
+								: "",
 						error: `Command failed: ${msg}`,
 						success: false,
 					};
@@ -446,7 +457,9 @@ const POWERSHELL_QUOTING_INSTRUCTIONS =
 export function buildRunCommandsDescription(
 	shell: string,
 	isWindows: boolean,
+	timeoutMs = 30_000,
 ): string {
+	const deadline = `Each foreground command has a ${timeoutMs / 1000}-second deadline (${timeoutMs} ms). At the deadline foreground cancellation is requested; it does not continue as a managed background job. Do not use shell sleep to wait for background work. Launch long work with redirected output and capture its PID, then use wait_for_process(pid, log_path, wait_seconds=60); a quiet wait leaves the process running. Remote jobs require their remote status/log or a local watcher PID, not a remote PID passed to the local wait tool. `;
 	const shellKind = getShellKind(shell);
 	if (shellKind === "powershell" || shellKind === "cmd") {
 		const edition = getPowerShellEdition(shell);
@@ -469,6 +482,7 @@ export function buildRunCommandsDescription(
 		return (
 			`Run non-interactive shell commands from the root of the workspace${isWindows ? " in Windows environment" : ""}. ` +
 			RUN_COMMANDS_SHARED_INSTRUCTIONS +
+			deadline +
 			`Output beyond ~${Math.round(MAX_COMMAND_OUTPUT_CHARS / 1000)}k characters is middle-truncated (start and end preserved); filter output when you need specific sections. ` +
 			`Commands run through ${shellName}; quote paths and arguments for ${executable} and use ${sequencingOperator} to sequence commands. ` +
 			`Write commands directly; do not wrap them in another ${wrapper} invocation. ` +
@@ -487,6 +501,7 @@ export function buildRunCommandsDescription(
 	return (
 		"Run non-interactive shell commands from the root of the workspace. " +
 		RUN_COMMANDS_SHARED_INSTRUCTIONS +
+		deadline +
 		environmentNote +
 		"Commands should be properly shell-escaped and targeted to avoid error or timeout. Include multiple commands in the same call when they are independent complete shell commands and safe to run concurrently; multiline scripts and heredocs must be a single command string. When independent reads, searches, or edits are also needed, call those tools in the same response. " +
 		`Output beyond ~${Math.round(MAX_COMMAND_OUTPUT_CHARS / 1000)}k characters is middle-truncated (start and end preserved); pipe through grep/head/tail when you need specific sections of large output. ` +
@@ -527,7 +542,8 @@ export function createShellTool(
 		typeof configShell === "function"
 			? configShell
 			: () => configShell ?? getDefaultShell(process.platform);
-	const describe = () => buildRunCommandsDescription(resolveShell(), isWindows);
+	const describe = () =>
+		buildRunCommandsDescription(resolveShell(), isWindows, timeoutMs);
 
 	const tool = createTool<unknown, ToolOperationResult[]>({
 		name: "run_commands",

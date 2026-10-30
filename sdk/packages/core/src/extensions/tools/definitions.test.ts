@@ -683,6 +683,25 @@ describe("run_commands tool description", () => {
 });
 
 describe("default run_commands tool", () => {
+	it("advertises the configured command deadline and cancels a timed-out executor", async () => {
+		let signal: AbortSignal | undefined;
+		const executor = vi.fn((_command, _cwd, context) => {
+			signal = context.signal;
+			return new Promise<string>(() => {});
+		});
+		const tool = createShellTool(executor, { bashTimeoutMs: 20 });
+		expect(tool.description).toContain("20 ms");
+		expect(tool.description).toContain("wait_for_process");
+		const result = await tool.execute(
+			{ commands: ["long-work"] },
+			{ agentId: "test", iteration: 1 },
+		);
+		expect(signal?.aborted).toBe(true);
+		expect(result[0].success).toBe(false);
+		expect(result[0].result).toContain("cancellation was requested");
+		expect(result[0].result).toContain("remote jobs may still run");
+	});
+
 	function createTelemetryStub(): ITelemetryService {
 		return {
 			capture: vi.fn(),

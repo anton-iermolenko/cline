@@ -885,6 +885,7 @@ function spawnAndCollect(
 			)?.unref?.();
 			const notice = [
 				`[Command is still running. Output will continue in ${detachedLog.path}]`,
+				`[Background PID: ${childPid}. Use wait_for_process with this pid and log_path; do not rerun the command.]`,
 				combineOutput
 					? currentOut.text +
 						(currentErr.text ? `\n[stderr]\n${currentErr.text}` : "")
