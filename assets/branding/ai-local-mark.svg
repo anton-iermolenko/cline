@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 256 256" role="img" aria-labelledby="title description">
+  <title id="title">Cline / AI Local fork mark</title>
+  <desc id="description">An open C-shaped workspace surrounds joined paths and a forward arrow: knowledge and evidence carried into action.</desc>
+  <rect width="256" height="256" rx="56" fill="#101f2b"/>
+  <path d="M184 64H96C78.3 64 64 78.3 64 96V160C64 177.7 78.3 192 96 192H184" fill="none" stroke="#f0f4f5" stroke-width="16" stroke-linecap="round"/>
+    <path d="M104 96V112C104 122 110 128 120 128H184M104 160V144C104 134 110 128 120 128M168 112L184 128L168 144" fill="none" stroke="#91e7c7" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+    <g fill="#91e7c7"><circle cx="104" cy="96" r="8"/><circle cx="104" cy="160" r="8"/><circle cx="140" cy="128" r="7"/></g>
+</svg>

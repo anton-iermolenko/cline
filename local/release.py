@@ -16,6 +16,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parent.parent
 MANIFESTS = {"cli": "apps/cli/package.json", "extension": "apps/vscode/package.json"}
+README_IMAGES = ("assets/branding/ai-local-banner.png", "assets/screenshots/local-model-settings.png")
 
 
 def run(root, *args):
@@ -65,9 +66,10 @@ def stamped_manifests(root, release):
     originals = {root / path: (root / path).read_bytes() for path in MANIFESTS.values()}
     readme = root / "apps/vscode/README.md"
     originals[readme] = readme.read_bytes()
-    banner = root / "apps/vscode/assets/branding/ai-local-banner.png"
-    if banner.exists():
-        raise ValueError("Remove the stale generated extension banner before rebuilding")
+    images = [(root / relative, root / "apps/vscode" / relative) for relative in README_IMAGES]
+    for _source, target in images:
+        if target.exists():
+            raise ValueError(f"Remove the stale generated extension README image before rebuilding: {target.name}")
     try:
         for path in [root / p for p in MANIFESTS.values()]:
             manifest = json.loads(originals[path])
@@ -79,13 +81,15 @@ def stamped_manifests(root, release):
                 manifest["bugs"] = {"url": release["repository"] + "/issues"}
             path.write_text(json.dumps(manifest, indent="\t", ensure_ascii=False) + "\n")
         readme.write_bytes((root / "README.md").read_bytes())
-        banner.parent.mkdir(parents=True, exist_ok=True)
-        banner.write_bytes((root / "assets/branding/ai-local-banner.png").read_bytes())
+        for source, target in images:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(source.read_bytes())
         yield
     finally:
         for path, contents in originals.items():
             path.write_bytes(contents)
-        banner.unlink(missing_ok=True)
+        for _source, target in images:
+            target.unlink(missing_ok=True)
 
 
 def write_provenance(root, record, package):
@@ -108,8 +112,9 @@ def verify_artifacts(root, record, package, vsix):
             raise ValueError("Packaged extension version or preserved identity is incorrect")
         if json.loads(archive.read("extension/dist/source-provenance.json")) != record:
             raise ValueError("VSIX provenance does not match the CLI")
-        if archive.read("extension/assets/branding/ai-local-banner.png") != (root / "assets/branding/ai-local-banner.png").read_bytes():
-            raise ValueError("VSIX is missing the fork banner")
+        for relative in README_IMAGES:
+            if archive.read("extension/" + relative) != (root / relative).read_bytes():
+                raise ValueError(f"VSIX is missing its fork README image: {relative}")
         if "What this fork provides" not in archive.read(next(name for name in archive.namelist() if name.lower() == "extension/readme.md")).decode():
             raise ValueError("VSIX is missing the fork introduction")
         runtime = record["coreRuntimeBuildId"].encode()
