@@ -1,7 +1,127 @@
-import { describe, expect, it } from "vitest"
+import { fileURLToPath } from "node:url"
+import { createSessionCompactionState, projectSessionCompactionState } from "@cline/core"
+import type { AgentMessage, MessageWithMetadata } from "@cline/shared"
+import { describe, expect, it, vi } from "vitest"
 import { sanitizeInitialMessagesForSessionStart } from "./initial-message-sanitizer"
 
+// Exercise Core's real internal codec without including SDK source in the
+// extension's TypeScript root or adding a production export solely for tests.
+const { agentMessagesToMessagesWithMetadata, messagesToAgentMessages } = await vi.importActual<{
+	agentMessagesToMessagesWithMetadata: (messages: readonly AgentMessage[]) => MessageWithMetadata[]
+	messagesToAgentMessages: (messages: readonly MessageWithMetadata[]) => AgentMessage[]
+}>(fileURLToPath(new URL("../../../../sdk/packages/core/src/runtime/config/agent-message-codec.ts", import.meta.url)))
+
 describe("sanitizeInitialMessagesForSessionStart", () => {
+	it("preserves checkpoint projection through resume with parallel results, hook context and human follow-ups", () => {
+		const input: MessageWithMetadata[] = [
+			{
+				id: "calls",
+				role: "assistant",
+				content: [
+					{ type: "tool_use", id: "a", name: "read_files", input: {} },
+					{ type: "tool_use", id: "b", name: "read_files", input: {} },
+				],
+			},
+			{
+				id: "result-a",
+				role: "user",
+				content: [{ type: "tool_result", tool_use_id: "a", name: "read_files", content: "A" }],
+			},
+			{
+				id: "result-b",
+				role: "user",
+				content: [{ type: "tool_result", tool_use_id: "b", name: "read_files", content: "B" }],
+			},
+			{
+				id: "hook",
+				role: "user",
+				ts: 10,
+				metadata: { userRunSpan: 0, displayRole: "system" },
+				content: [{ type: "text", text: '<hook_context source="ToolSuccess">Continue.</hook_context>' }],
+			},
+			{
+				id: "human",
+				role: "user",
+				ts: 20,
+				metadata: { kind: "human_input", humanInput: true, userRunSpan: 1 },
+				content: [{ type: "text", text: "Check this next." }],
+			},
+		]
+		const original = structuredClone(input)
+		const summary: MessageWithMetadata[] = [{ role: "user", content: "Saved notes." }]
+		const checkpoint = createSessionCompactionState({ sourceMessages: input, compactedMessages: summary })
+		const imageFollowup: MessageWithMetadata = {
+			id: "image-followup",
+			role: "user",
+			content: [
+				{ type: "text", text: "What about this?" },
+				{ type: "image", mediaType: "image/png", data: "fixture" },
+			],
+		}
+		const cleaned = sanitizeInitialMessagesForSessionStart([...input, imageFollowup])
+		const resumed = agentMessagesToMessagesWithMetadata(messagesToAgentMessages(cleaned))
+		expect(cleaned).toContain(input[3])
+		expect(cleaned).toContain(input[4])
+		expect(cleaned).toContain(imageFollowup)
+		expect(projectSessionCompactionState(checkpoint, resumed)).toEqual([
+			...checkpoint.messages,
+			expect.objectContaining(imageFollowup),
+		])
+		const twice = agentMessagesToMessagesWithMetadata(
+			messagesToAgentMessages(sanitizeInitialMessagesForSessionStart(resumed)),
+		)
+		expect(projectSessionCompactionState(checkpoint, twice)).toEqual(projectSessionCompactionState(checkpoint, resumed))
+		expect(input).toEqual(original)
+	})
+
+	it("keeps separate human and system envelopes when a legacy tool result is missing", () => {
+		const human = { id: "human", role: "user", ts: 20, metadata: { humanInput: true }, content: "continue" }
+		const system = { id: "system", role: "user", metadata: { displayRole: "system" }, content: "runtime note" }
+		const input = [
+			{ role: "assistant", content: [{ type: "tool_use", id: "a", name: "read_files", input: {} }] },
+			human,
+			system,
+		]
+		const result = sanitizeInitialMessagesForSessionStart(input)
+		expect(result).toHaveLength(4)
+		expect(result[1]).toMatchObject({ role: "user", content: [{ type: "tool_result", tool_use_id: "a" }] })
+		expect(result[1]).not.toHaveProperty("metadata")
+		expect(result[2]).toBe(human)
+		expect(result[3]).toBe(system)
+	})
+
+	it("preserves metadata and distinct identities when splitting mixed legacy content", () => {
+		const input = [
+			{
+				role: "assistant",
+				content: [
+					{ type: "tool_use", id: "a", name: "read_files", input: {} },
+					{ type: "tool_use", id: "b", name: "read_files", input: {} },
+				],
+			},
+			{
+				id: "mixed",
+				role: "user",
+				ts: 20,
+				metadata: { userRunSpan: 1, humanInput: true },
+				content: [
+					{ type: "tool_result", tool_use_id: "a", name: "read_files", content: "A" },
+					{ type: "text", text: "continue" },
+				],
+			},
+		]
+		const result = sanitizeInitialMessagesForSessionStart(input) as MessageWithMetadata[]
+		expect(result[2]).toMatchObject({
+			id: "mixed",
+			ts: 20,
+			metadata: input[1].metadata,
+			content: [{ type: "text", text: "continue" }],
+		})
+		expect(result[1].metadata).toMatchObject({ userRunSpan: 0 })
+		const resumed = messagesToAgentMessages(result)
+		expect(new Set(resumed.map((message) => message.id)).size).toBe(resumed.length)
+	})
+
 	it("returns original array when no tool_use blocks exist", () => {
 		const input = [
 			{ role: "user", content: "hello" },

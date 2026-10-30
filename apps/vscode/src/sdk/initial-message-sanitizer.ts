@@ -117,6 +117,9 @@ export function sanitizeInitialMessagesForSessionStart(messages: unknown[]): unk
 		const toolUseIdSet = new Set(toolUseIds)
 		const matchingToolResults = new Map<string, GenericContentBlock>()
 		const otherBlocks: GenericContentBlock[] = []
+		const otherMessages: Record<string, unknown>[] = []
+		let toolResultEnvelope: Record<string, unknown> | undefined
+		let splitToolResultEnvelope = false
 		let userSpan = 0 // how many consecutive user messages we consumed
 
 		for (let j = i + 1; j < sanitized.length; j++) {
@@ -126,11 +129,13 @@ export function sanitizeInitialMessagesForSessionStart(messages: unknown[]): unk
 			}
 
 			const blocks = toBlocks(msg.content)
+			const remainingBlocks: GenericContentBlock[] = []
 			for (const block of blocks) {
 				let matched = false
 				for (const toolUseId of toolUseIds) {
 					if (!matchingToolResults.has(toolUseId) && isToolResultForId(block, toolUseId)) {
 						matchingToolResults.set(toolUseId, withToolResultName(block, toolUseNames.get(toolUseId)))
+						toolResultEnvelope ??= msg
 						matched = true
 						break
 					}
@@ -146,8 +151,13 @@ export function sanitizeInitialMessagesForSessionStart(messages: unknown[]): unk
 						// Duplicate tool_result for an ID we already matched — skip it
 					} else {
 						otherBlocks.push(block)
+						remainingBlocks.push(block)
 					}
 				}
+			}
+			if (remainingBlocks.length > 0) {
+				otherMessages.push(remainingBlocks.length === blocks.length ? msg : { ...msg, content: remainingBlocks })
+				splitToolResultEnvelope ||= msg === toolResultEnvelope
 			}
 			userSpan++
 		}
@@ -163,18 +173,25 @@ export function sanitizeInitialMessagesForSessionStart(messages: unknown[]): unk
 		// Move any existing non-tool-result content into a follow-up user message.
 		const hasMigrationPlaceholder = orderedToolResults.some(isMigrationPlaceholderToolResult)
 		if (missingToolResultIds.length > 0 || hasMigrationPlaceholder || userSpan > 1) {
-			// Replace the span of user messages with a single consolidated message
-			sanitized.splice(i + 1, userSpan, {
-				...next,
+			const toolResultMessage: Record<string, unknown> = {
+				...(toolResultEnvelope ?? { role: "user" }),
 				content: orderedToolResults,
-			})
-			if (otherBlocks.length > 0) {
-				sanitized.splice(i + 2, 0, {
-					role: "user",
-					content: otherBlocks,
-				})
-				i += 1
 			}
+			if (toolResultEnvelope && splitToolResultEnvelope) {
+				// A mixed legacy envelope now represents two messages. Mirror the
+				// agent codec's split identity and count its human input only once.
+				if (orderedToolResults.length === 1 && typeof toolResultEnvelope.id === "string") {
+					toolResultMessage.id = `${toolResultEnvelope.id}_tool_${toolUseIds[0]}`
+				}
+				if (isRecord(toolResultEnvelope.metadata) && typeof toolResultEnvelope.metadata.userRunSpan === "number") {
+					toolResultMessage.metadata = { ...toolResultEnvelope.metadata, userRunSpan: 0 }
+				}
+			}
+			// Keep each non-tool envelope intact: hook/system metadata participates
+			// in saved compaction fingerprints, and human follow-ups have their own
+			// identity and provenance. An anonymous combined message loses both.
+			sanitized.splice(i + 1, userSpan, toolResultMessage, ...otherMessages)
+			i += otherMessages.length
 			changed = true
 			continue
 		}
