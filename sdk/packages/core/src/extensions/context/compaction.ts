@@ -857,12 +857,10 @@ export function createContextCompactionPrepareTurn(
 						)
 					: undefined;
 			afterMeasurement = await measure(result);
-			const protectedPrompts = isLocal
-				? context.messages.filter(isTurnStartMessage)
-				: [...context.messages]
-						.reverse()
-						.filter(isTurnStartMessage)
-						.slice(0, 1);
+			const protectedPrompts = [...context.messages]
+				.reverse()
+				.filter(isTurnStartMessage)
+				.slice(0, 1);
 			const protectsCurrentPrompt = (
 				candidate: CoreCompactionResult | undefined,
 			) =>

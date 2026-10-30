@@ -109,6 +109,9 @@ export async function runAgenticCompaction(options: {
 			options.context.budget.messages.targetTokens - summaryReserveTokens,
 		),
 	);
+	// Older human messages are summarized in place with their replies. Only the
+	// latest instruction is reinserted if the cut reaches into its active turn.
+	const latestPrompt = [...messages].reverse().find(isTurnStartMessage);
 	let cutIndex = findCutIndex(
 		messages,
 		preserveRecentTokens,
@@ -118,7 +121,7 @@ export async function runAgenticCompaction(options: {
 	for (;;) {
 		const reserved = messages
 			.slice(0, cutIndex)
-			.filter(isTurnStartMessage)
+			.filter((message) => message === latestPrompt)
 			.reduce(
 				(total, message) => total + options.estimateMessageTokens(message),
 				0,
@@ -163,10 +166,10 @@ export async function runAgenticCompaction(options: {
 					fileOps: extractFileOps(folded),
 					tokensBefore: options.context.budget.request.inputTokens,
 					userRunSpan: countUserRunMessages(
-						folded.filter((message) => !isTurnStartMessage(message)),
+						folded.filter((message) => message !== latestPrompt),
 					),
 				}),
-				...folded.filter(isTurnStartMessage),
+				...folded.filter((message) => message === latestPrompt),
 				...messages.slice(cut),
 			]);
 			options.context.abortSignal?.throwIfAborted();
@@ -204,7 +207,9 @@ export async function runAgenticCompaction(options: {
 	}
 
 	const messagesToSummarize = messages.slice(0, cutIndex);
-	const protectedPrompts = messagesToSummarize.filter(isTurnStartMessage);
+	const protectedPrompts = messagesToSummarize.filter(
+		(message) => message === latestPrompt,
+	);
 	const latestSummaryIndex = findLatestSummaryIndex(messagesToSummarize);
 	const previousSummary =
 		latestSummaryIndex >= 0
@@ -246,7 +251,7 @@ export async function runAgenticCompaction(options: {
 					fileOps,
 					tokensBefore: options.context.budget.request.inputTokens,
 					userRunSpan: countUserRunMessages(
-						folded.filter((message) => !isTurnStartMessage(message)),
+						folded.filter((message) => message !== latestPrompt),
 					),
 				}),
 				...protectedPrompts,
@@ -400,7 +405,7 @@ export async function runAgenticCompaction(options: {
 			fileOps,
 			tokensBefore,
 			userRunSpan: countUserRunMessages(
-				messagesToSummarize.filter((message) => !isTurnStartMessage(message)),
+				messagesToSummarize.filter((message) => message !== latestPrompt),
 			),
 		}),
 		...protectedPrompts,

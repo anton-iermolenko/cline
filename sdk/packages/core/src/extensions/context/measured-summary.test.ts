@@ -181,18 +181,80 @@ describe("measured summary checkpoints", () => {
 			thinking: false,
 		});
 	});
-	it("preserves original human inputs alongside the summary and recent history", async () => {
-		const options = input(),
-			humans = options.context.messages.filter(
-				(m) => m.id === "first" || m.id === "latest",
-			);
+	it("summarizes older human inputs with their replies and retains only the latest folded instruction", async () => {
+		const options = input();
+		const first = options.context.messages.find((m) => m.id === "first")!;
+		const latest = options.context.messages.find((m) => m.id === "latest")!;
 		const result = await runAgenticCompaction(options);
-		for (const human of humans) {
-			expect(generationRequests().join("\n")).toContain(human.content);
-			expect(result!.messages.filter((m) => m.id === human.id)).toEqual([
-				human,
-			]);
+		const sources = generationRequests().map(source).join("\n");
+		expect(sources).toContain(first.content);
+		expect(sources.indexOf(first.content as string)).toBeLessThan(
+			sources.indexOf("BEGIN-0"),
+		);
+		expect(result!.messages.some((m) => m.id === first.id)).toBe(false);
+		expect(result!.messages.filter((m) => m.id === latest.id)).toEqual([
+			latest,
+		]);
+		expect(countUserRunMessages(result!.messages)).toBe(
+			countUserRunMessages(options.context.messages),
+		);
+	});
+	it("compacts accumulated large user messages without splitting or reinserting them", async () => {
+		const options = input();
+		const older = Array.from({ length: 4 }, (_, i) => [
+			{
+				id: `large-user-${i}`,
+				role: "user" as const,
+				content:
+					`USER-START-${i} ` +
+					"attached evidence ".repeat(1300) +
+					` USER-END-${i}`,
+			},
+			{ role: "assistant" as const, content: `REPLY-${i}` },
+		]).flat();
+		options.context.messages.splice(1, 1, ...older);
+		const before = JSON.stringify(options.context.messages);
+		const result = await runAgenticCompaction(options);
+		const sources = generationRequests().map(source).join("\n");
+		for (let i = 0; i < 4; i++) {
+			const containing = generationRequests().filter((r) =>
+				source(r)?.includes(`USER-START-${i}`),
+			);
+			expect(containing).toHaveLength(1);
+			expect(source(containing[0])).toContain(`USER-END-${i}`);
+			expect(sources.indexOf(`USER-END-${i}`)).toBeLessThan(
+				sources.indexOf(`REPLY-${i}`),
+			);
+			expect(result!.messages.some((m) => m.id === `large-user-${i}`)).toBe(
+				false,
+			);
 		}
+		expect(result!.messages.filter((m) => m.id === "latest")).toHaveLength(1);
+		expect(countUserRunMessages(result!.messages)).toBe(
+			countUserRunMessages(options.context.messages),
+		);
+		expect(JSON.stringify(options.context.messages)).toBe(before);
+	});
+	it("retains recent user messages in their normal chronological positions", async () => {
+		const options = input();
+		const recent = {
+			id: "recent-user",
+			role: "user" as const,
+			content: "Recent correction",
+		};
+		options.context.messages.splice(-2, 0, recent, {
+			role: "assistant",
+			content: "Recent correction acknowledged",
+		});
+		options.preserveRecentTokens = 200;
+		const result = await runAgenticCompaction(options);
+		const recentIndex = result!.messages.indexOf(recent);
+		expect(recentIndex).toBeGreaterThan(0);
+		expect(result!.messages[recentIndex + 1].content).toBe(
+			"Recent correction acknowledged",
+		);
+		expect(result!.messages[recentIndex + 2].id).toBe("latest");
+		expect(result!.messages.filter((m) => m.id === "latest")).toHaveLength(1);
 		expect(countUserRunMessages(result!.messages)).toBe(
 			countUserRunMessages(options.context.messages),
 		);
